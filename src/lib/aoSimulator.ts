@@ -133,6 +133,40 @@ export function generateInitialSeries(symbol: TradingSymbol, count = 100): M5Bar
   return recalculateAwesomeOscillator(rawBars);
 }
 
+function buildBarWithExactMedian(
+  index: number,
+  barDate: Date,
+  open: number,
+  targetMedian: number,
+  spec: SymbolSpec,
+  dir: 'BUY' | 'SELL'
+): Omit<M5Bar, 'ao' | 'aoRising' | 'signal'> {
+  const halfSpan = Math.max(
+    Math.abs(targetMedian - open) + spec.stepSize * 0.28,
+    spec.stepSize * 0.45
+  );
+  const high = roundToDigits(targetMedian + halfSpan, spec.digits);
+  const low = roundToDigits(targetMedian - halfSpan, spec.digits);
+  const actualMedian = (high + low) / 2;
+  const bodyShift = Math.min(halfSpan * 0.65, spec.stepSize * 0.55);
+  const closeRaw = dir === 'BUY' ? actualMedian + bodyShift : actualMedian - bodyShift;
+  const close = roundToDigits(
+    Math.max(low + 1 / Math.pow(10, spec.digits), Math.min(high - 1 / Math.pow(10, spec.digits), closeRaw)),
+    spec.digits
+  );
+
+  return {
+    index,
+    timeLabel: formatM5Time(barDate),
+    timestampIso: barDate.toISOString(),
+    open: roundToDigits(Math.max(low, Math.min(high, open)), spec.digits),
+    high,
+    low,
+    close,
+    median: actualMedian,
+  };
+}
+
 export function appendNextM5Bar(
   existingBars: M5Bar[],
   symbol: TradingSymbol,
@@ -143,102 +177,68 @@ export function appendNextM5Bar(
     ({ ao: _ao, aoRising: _r, signal: _s, ...rest }) => rest
   );
 
-  // If user requested a deterministic Zero-Line Cross test, push enough momentum bars
-  // or calibrate the next candle(s) so AO cleanly crosses above/below 0.00000
-  const stepsToAdd = forceCross ? 1 : 1;
-
-  for (let s = 0; s < stepsToAdd; s++) {
-    const last = rawBars[rawBars.length - 1];
-    const lastDate = new Date(last.timestampIso);
-    const nextDate = new Date(lastDate.getTime() + 5 * 60 * 1000);
-    const idx = last.index + 1;
-
-    let delta =
-      Math.sin(idx * 0.24) * spec.stepSize * 0.85 +
-      Math.cos(idx * 0.11) * spec.stepSize * 0.45 +
-      (((Math.sin(idx * 1.3 + rawBars.length) + 1) * 0.5 - 0.5) * spec.stepSize * 0.4);
-
-    if (forceCross) {
-      // Calculate current SMA34 and SMA5 medians to nudge median price smoothly past zero
-      const prevCalculated = recalculateAwesomeOscillator(rawBars);
-      const currentAo = prevCalculated[prevCalculated.length - 1].ao;
-
-      // Sum of last 4 medians and last 33 medians
+  if (forceCross) {
+    const calcMZero = (barsList: Array<Omit<M5Bar, 'ao' | 'aoRising' | 'signal'>>): number => {
       let sum4 = 0;
-      for (let k = rawBars.length - 4; k < rawBars.length; k++) {
-        sum4 += rawBars[k].median;
-      }
+      for (let k = barsList.length - 4; k < barsList.length; k++) sum4 += barsList[k].median;
       let sum33 = 0;
-      for (let k = rawBars.length - 33; k < rawBars.length; k++) {
-        sum33 += rawBars[k].median;
-      }
-      // We want (sum4 + M)/5 - (sum33 + M)/34 > 0 (for BUY) or < 0 (for SELL)
-      // Solve M * (1/5 - 1/34) = sum33/34 - sum4/5 => M_zero = (sum33/34 - sum4/5) / (29/170)
-      const mZero = (sum33 / 34 - sum4 / 5) / (29 / 170);
-      const offset = spec.stepSize * 0.45;
-      const targetMedian = forceCross === 'BUY' ? mZero + offset : mZero - offset;
+      for (let k = barsList.length - 33; k < barsList.length; k++) sum33 += barsList[k].median;
+      return (sum33 / 34 - sum4 / 5) / (29 / 170);
+    };
 
-      // If current AO is already on the target side, first reset slightly to opposite side
-      if ((forceCross === 'BUY' && currentAo > 0) || (forceCross === 'SELL' && currentAo < 0)) {
-        // Insert a preceding counter-bar first so the crossover transition is unmistakably visible
-        const preOffset = forceCross === 'BUY' ? -spec.stepSize * 0.35 : spec.stepSize * 0.35;
-        const preMedian = mZero + preOffset;
-        const preOpen = last.close;
-        const preClose = roundToDigits(preMedian + (preMedian - preOpen) * 0.4, spec.digits);
-        const preHigh = roundToDigits(Math.max(preOpen, preClose, preMedian) + spec.stepSize * 0.15, spec.digits);
-        const preLow = roundToDigits(Math.min(preOpen, preClose, preMedian) - spec.stepSize * 0.15, spec.digits);
-        rawBars.push({
-          index: idx,
-          timeLabel: formatM5Time(nextDate),
-          timestampIso: nextDate.toISOString(),
-          open: preOpen,
-          high: preHigh,
-          low: preLow,
-          close: preClose,
-          median: (preHigh + preLow) / 2,
-        });
+    const prevCalculated = recalculateAwesomeOscillator(rawBars);
+    const currentAo = prevCalculated[prevCalculated.length - 1].ao;
 
-        // Recompute for the actual crossing bar
-        const nextDate2 = new Date(nextDate.getTime() + 5 * 60 * 1000);
-        let sum4b = 0;
-        for (let k = rawBars.length - 4; k < rawBars.length; k++) sum4b += rawBars[k].median;
-        let sum33b = 0;
-        for (let k = rawBars.length - 33; k < rawBars.length; k++) sum33b += rawBars[k].median;
-        const mZero2 = (sum33b / 34 - sum4b / 5) / (29 / 170);
-        const crossMedian = forceCross === 'BUY' ? mZero2 + spec.stepSize * 0.55 : mZero2 - spec.stepSize * 0.55;
-        const cOpen = preClose;
-        const cClose = roundToDigits(crossMedian + (crossMedian - cOpen) * 0.5, spec.digits);
-        const cHigh = roundToDigits(Math.max(cOpen, cClose, crossMedian) + spec.stepSize * 0.2, spec.digits);
-        const cLow = roundToDigits(Math.min(cOpen, cClose, crossMedian) - spec.stepSize * 0.2, spec.digits);
-        rawBars.push({
-          index: idx + 1,
-          timeLabel: formatM5Time(nextDate2),
-          timestampIso: nextDate2.toISOString(),
-          open: cOpen,
-          high: cHigh,
-          low: cLow,
-          close: cClose,
-          median: (cHigh + cLow) / 2,
-        });
-        break;
-      } else {
-        const open = last.close;
-        const close = roundToDigits(targetMedian + (targetMedian - open) * 0.45, spec.digits);
-        const high = roundToDigits(Math.max(open, close, targetMedian) + spec.stepSize * 0.2, spec.digits);
-        const low = roundToDigits(Math.min(open, close, targetMedian) - spec.stepSize * 0.2, spec.digits);
-        rawBars.push({
-          index: idx,
-          timeLabel: formatM5Time(nextDate),
-          timestampIso: nextDate.toISOString(),
-          open,
-          high,
-          low,
-          close,
-          median: (high + low) / 2,
-        });
-        break;
-      }
+    // Ensure the immediately preceding bar is strictly on the opposite side of 0
+    if ((forceCross === 'BUY' && currentAo > 0) || (forceCross === 'SELL' && currentAo < 0) || currentAo === 0) {
+      const last = rawBars[rawBars.length - 1];
+      const preDate = new Date(new Date(last.timestampIso).getTime() + 5 * 60 * 1000);
+      const mZero = calcMZero(rawBars);
+      const preTargetMedian =
+        forceCross === 'BUY'
+          ? mZero - spec.stepSize * 0.6
+          : mZero + spec.stepSize * 0.6;
+      const preBar = buildBarWithExactMedian(
+        last.index + 1,
+        preDate,
+        last.close,
+        preTargetMedian,
+        spec,
+        forceCross === 'BUY' ? 'SELL' : 'BUY'
+      );
+      rawBars.push(preBar);
     }
+
+    const lastBeforeCross = rawBars[rawBars.length - 1];
+    const crossDate = new Date(new Date(lastBeforeCross.timestampIso).getTime() + 5 * 60 * 1000);
+    const mZeroCross = calcMZero(rawBars);
+    const crossTargetMedian =
+      forceCross === 'BUY'
+        ? mZeroCross + spec.stepSize * 0.75
+        : mZeroCross - spec.stepSize * 0.75;
+    const crossBar = buildBarWithExactMedian(
+      lastBeforeCross.index + 1,
+      crossDate,
+      lastBeforeCross.close,
+      crossTargetMedian,
+      spec,
+      forceCross
+    );
+    rawBars.push(crossBar);
+
+    const trimmed = rawBars.slice(-110);
+    return recalculateAwesomeOscillator(trimmed);
+  }
+
+  const last = rawBars[rawBars.length - 1];
+  const lastDate = new Date(last.timestampIso);
+  const nextDate = new Date(lastDate.getTime() + 5 * 60 * 1000);
+  const idx = last.index + 1;
+
+  const delta =
+    Math.sin(idx * 0.24) * spec.stepSize * 0.85 +
+    Math.cos(idx * 0.11) * spec.stepSize * 0.45 +
+    (((Math.sin(idx * 1.3 + rawBars.length) + 1) * 0.5 - 0.5) * spec.stepSize * 0.4);
 
     const open = last.close;
     const close = roundToDigits(open + delta, spec.digits);
