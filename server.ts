@@ -966,7 +966,7 @@ async function getLiveM5Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
   const data = await fetchYahooM5(symbol);
 
   feedCache.set(symbol, {
-    expiresAt: Date.now() + 15000,
+    expiresAt: Date.now() + 8000,
     data,
   });
   return data;
@@ -1206,82 +1206,84 @@ async function runBackgroundMonitorCycle() {
         const bars = feed.bars;
         if (bars.length < 3) continue;
 
-        const closedBar = bars[bars.length - 2];
-        const prevBar = bars[bars.length - 3];
-        if (!closedBar || !prevBar) continue;
+        // Check both the live forming M5 candle (immediate cross) and previous closed candle (fallback)
+        const candidates: Array<{ targetBar: M5Candle; prevBar: M5Candle }> = [
+          { targetBar: bars[bars.length - 1], prevBar: bars[bars.length - 2] },
+          { targetBar: bars[bars.length - 2], prevBar: bars[bars.length - 3] },
+        ];
 
-        if (monitorRuntime.lastBarBySymbol[sym] === closedBar.timestampIso) {
-          continue;
+        for (const { targetBar, prevBar } of candidates) {
+          if (!targetBar || !prevBar || !targetBar.signal) continue;
+
+          // Skip stale bars (e.g. Friday's close when market is closed on weekend)
+          const barAgeMinutes =
+            (Date.now() - new Date(targetBar.timestampIso).getTime()) / 60000;
+          if (barAgeMinutes > 20) continue;
+
+          if (persisted.direction === 'buy_only' && targetBar.signal !== 'BUY') continue;
+          if (persisted.direction === 'sell_only' && targetBar.signal !== 'SELL') continue;
+
+          const dedupeKey = `live-${sym}-${targetBar.timestampIso}-${targetBar.signal}`;
+          if (monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)) {
+            continue;
+          }
+          markLiveSignalDispatched(dedupeKey);
+          monitorRuntime.lastBarBySymbol[sym] = `${targetBar.timestampIso}:${targetBar.signal}`;
+
+          const title = `AO M5 ${targetBar.signal}: ${sym}`;
+          const body = `${sym} M5 ${targetBar.signal} | AO ${prevBar.ao.toFixed(
+            5
+          )} → ${targetBar.ao.toFixed(5)} | ราคา ${targetBar.close}`;
+
+          const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
+            broadcastWebPush({
+              title,
+              body,
+              tag: `ao-${sym}-${targetBar.timestampIso}-${targetBar.signal}`,
+              url: '/',
+            }),
+            persisted.ntfyTopic
+              ? sendNtfyPush(persisted.ntfyTopic, title, body)
+              : Promise.resolve(false),
+          ]);
+
+          const shouldSendTelegram =
+            Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
+            (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
+
+          const tgRes = shouldSendTelegram
+            ? await sendTelegramPush(
+                persisted.telegramBotToken,
+                persisted.telegramChatId,
+                formatTelegramSignalMessage({
+                  symbol: sym,
+                  timeframe: 'M5',
+                  signal: targetBar.signal,
+                  aoPrev: prevBar.ao,
+                  aoCurr: targetBar.ao,
+                  mode: 'live',
+                  timestampIso: targetBar.timestampIso,
+                }),
+                'HTML'
+              )
+            : { ok: false };
+
+          persisted.events.unshift({
+            id: `${sym}-${targetBar.timestampIso}-${targetBar.signal}`,
+            timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+            symbol: sym,
+            signal: targetBar.signal,
+            aoPrev: prevBar.ao,
+            aoCurr: targetBar.ao,
+            price: targetBar.close,
+            deliveredToNtfy,
+            deliveredToTelegram: tgRes.ok,
+            deliveredWebPushCount,
+          });
+          persisted.events = persisted.events.slice(0, 30);
+          syncPersistence();
+          scheduleGithubAutoSync('signal-event', 1000);
         }
-        monitorRuntime.lastBarBySymbol[sym] = closedBar.timestampIso;
-
-        // Skip stale bars (e.g. Friday's close when market is closed on weekend)
-        const barAgeMinutes =
-          (Date.now() - new Date(closedBar.timestampIso).getTime()) / 60000;
-        if (barAgeMinutes > 20) continue;
-
-        if (!closedBar.signal) continue;
-        if (persisted.direction === 'buy_only' && closedBar.signal !== 'BUY') continue;
-        if (persisted.direction === 'sell_only' && closedBar.signal !== 'SELL') continue;
-
-        const title = `AO M5 ${closedBar.signal}: ${sym}`;
-        const body = `${sym} M5 ${closedBar.signal} | AO ${prevBar.ao.toFixed(
-          5
-        )} → ${closedBar.ao.toFixed(5)} | ราคา ${closedBar.close}`;
-
-        const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
-          broadcastWebPush({
-            title,
-            body,
-            tag: `ao-${sym}-${closedBar.timestampIso}`,
-            url: '/',
-          }),
-          persisted.ntfyTopic
-            ? sendNtfyPush(persisted.ntfyTopic, title, body)
-            : Promise.resolve(false),
-        ]);
-
-        const dedupeKey = `live-${sym}-${closedBar.timestampIso}`;
-        const alreadySentFromClient = monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey);
-        markLiveSignalDispatched(dedupeKey);
-
-        const shouldSendTelegram =
-          !alreadySentFromClient &&
-          Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
-          (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
-
-        const tgRes = shouldSendTelegram
-          ? await sendTelegramPush(
-              persisted.telegramBotToken,
-              persisted.telegramChatId,
-              formatTelegramSignalMessage({
-                symbol: sym,
-                timeframe: 'M5',
-                signal: closedBar.signal,
-                aoPrev: prevBar.ao,
-                aoCurr: closedBar.ao,
-                mode: 'live',
-                timestampIso: closedBar.timestampIso,
-              }),
-              'HTML'
-            )
-          : { ok: false };
-
-        persisted.events.unshift({
-          id: `${sym}-${closedBar.timestampIso}`,
-          timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
-          symbol: sym,
-          signal: closedBar.signal,
-          aoPrev: prevBar.ao,
-          aoCurr: closedBar.ao,
-          price: closedBar.close,
-          deliveredToNtfy,
-          deliveredToTelegram: tgRes.ok,
-          deliveredWebPushCount,
-        });
-        persisted.events = persisted.events.slice(0, 30);
-        syncPersistence();
-        scheduleGithubAutoSync('signal-event', 1000);
       } catch {
         // Keep polling remaining symbols
       }
@@ -1293,7 +1295,7 @@ async function runBackgroundMonitorCycle() {
 
 setInterval(() => {
   void runBackgroundMonitorCycle();
-}, 30000);
+}, 10000);
 
 setTimeout(() => {
   void runBackgroundMonitorCycle();
@@ -1304,7 +1306,7 @@ async function startServer() {
   app.use(express.json());
 
   app.get('/api/health', async (_req, res) => {
-    if (persisted.enabled && Date.now() - monitorRuntime.lastCheckedMs > 20000) {
+    if (persisted.enabled && Date.now() - monitorRuntime.lastCheckedMs > 8000) {
       void runBackgroundMonitorCycle();
     }
     res.json({
@@ -1638,7 +1640,7 @@ async function startServer() {
     const timestampIso = String(body.timestampIso || new Date().toISOString());
 
     if (mode === 'live') {
-      const dedupeKey = `live-${symbol}-${timestampIso}`;
+      const dedupeKey = `live-${symbol}-${timestampIso}-${signal}`;
       if (monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)) {
         res.json({ ok: true, deduplicated: true });
         return;

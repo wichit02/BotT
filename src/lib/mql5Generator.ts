@@ -27,7 +27,7 @@ export const DEFAULT_MQL5_CONFIG: Mql5Config = {
   artifactType: 'indicator',
   alertDirection: 'both',
   lockM5: true,
-  triggerMode: 'closed_bar',
+  triggerMode: 'live_bar',
   pushDurationMode: 'custom_sound_10s',
   enablePush: true,
   enablePopup: true,
@@ -593,15 +593,18 @@ void CheckAllWatchers()
       if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0)
       {
          DispatchSignalAlert(sym, "BUY", aoPrev, aoCurr);
+         watchers[i].lastBarTime = currentBarTime;
       }
       // SELL: AO ตัดเส้น 0 ลง
       else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0)
       {
          DispatchSignalAlert(sym, "SELL", aoPrev, aoCurr);
-      }
-
-      if(InpConfirmClose)
          watchers[i].lastBarTime = currentBarTime;
+      }
+      else if(InpConfirmClose)
+      {
+         watchers[i].lastBarTime = currentBarTime;
+      }
    }
 }
 

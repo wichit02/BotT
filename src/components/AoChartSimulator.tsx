@@ -332,28 +332,39 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         setMarketState(data.marketState);
         setFeedSource(data.source);
 
-        const closedBar = data.bars[data.bars.length - 2];
-        const prevBar = data.bars[data.bars.length - 3];
-        if (closedBar && prevBar && closedBar.signal) {
+        // Trigger alert immediately when current forming M5 candle crosses 0 (no need to wait for close)
+        const candidates: Array<{ targetBar: M5Bar; prevBar: M5Bar }> = [
+          {
+            targetBar: data.bars[data.bars.length - 1],
+            prevBar: data.bars[data.bars.length - 2],
+          },
+          {
+            targetBar: data.bars[data.bars.length - 2],
+            prevBar: data.bars[data.bars.length - 3],
+          },
+        ];
+
+        for (const { targetBar, prevBar } of candidates) {
+          if (!targetBar || !prevBar || !targetBar.signal) continue;
           const barAgeMinutes =
-            (Date.now() - new Date(closedBar.timestampIso).getTime()) / 60000;
-          const key = `${targetSymbol}-${closedBar.timestampIso}`;
+            (Date.now() - new Date(targetBar.timestampIso).getTime()) / 60000;
+          const key = `${targetSymbol}-${targetBar.timestampIso}-${targetBar.signal}`;
           const shouldNotify =
             barAgeMinutes <= 20 &&
             (alertDirection === 'both' ||
-              (alertDirection === 'buy_only' && closedBar.signal === 'BUY') ||
-              (alertDirection === 'sell_only' && closedBar.signal === 'SELL'));
+              (alertDirection === 'buy_only' && targetBar.signal === 'BUY') ||
+              (alertDirection === 'sell_only' && targetBar.signal === 'SELL'));
 
           if (shouldNotify && !alertedLiveBarsRef.current.has(key)) {
             alertedLiveBarsRef.current.add(key);
             emitAlert(
               targetSymbol,
-              closedBar.signal,
+              targetBar.signal,
               prevBar.ao,
-              closedBar.ao,
-              closedBar.close,
-              closedBar.timeLabel,
-              closedBar.timestampIso,
+              targetBar.ao,
+              targetBar.close,
+              targetBar.timeLabel,
+              targetBar.timestampIso,
               'Live M5 Alert',
               'live'
             );
@@ -368,13 +379,13 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
     [alertDirection, emitAlert]
   );
 
-  // Poll live market every 15s when in Live mode
+  // Poll live market every 8s when in Live mode
   useEffect(() => {
     if (feedMode !== 'live') return;
     void fetchLiveBars(symbol);
     const id = window.setInterval(() => {
       void fetchLiveBars(symbol);
-    }, 15000);
+    }, 8000);
     return () => window.clearInterval(id);
   }, [feedMode, symbol, fetchLiveBars]);
 
