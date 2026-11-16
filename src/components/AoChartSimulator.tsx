@@ -81,6 +81,23 @@ function formatBarCountdown(): string {
   return `${mm}:${ss}`;
 }
 
+function normalizeM5BarKey(sym: string, timestampIso: string): string {
+  const ms = Date.parse(timestampIso);
+  if (Number.isFinite(ms)) {
+    const bucketMs = Math.floor(ms / 300000) * 300000;
+    return `${sym}-${new Date(bucketMs).toISOString()}`;
+  }
+  return `${sym}-${timestampIso}`;
+}
+
+function normalizeStoredBarKey(rawKey: string): string {
+  const dashIdx = rawKey.indexOf('-');
+  if (dashIdx <= 0) return rawKey;
+  const sym = rawKey.slice(0, dashIdx);
+  const ts = rawKey.slice(dashIdx + 1);
+  return normalizeM5BarKey(sym, ts);
+}
+
 export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
   alertDirection,
   lockM5,
@@ -133,7 +150,9 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         if (raw) {
           const arr = JSON.parse(raw);
           if (Array.isArray(arr)) {
-            return new Set(arr.filter((x): x is string => typeof x === 'string'));
+            return new Set(
+              arr.filter((x): x is string => typeof x === 'string').map(normalizeStoredBarKey)
+            );
           }
         }
       } catch {
@@ -324,7 +343,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         setTelegramConfigured(Boolean(data.telegramConfigured));
         if (Array.isArray(data.alertedBarKeys)) {
           for (const k of data.alertedBarKeys) {
-            if (typeof k === 'string') alertedLiveBarsRef.current.add(k);
+            if (typeof k === 'string') alertedLiveBarsRef.current.add(normalizeStoredBarKey(k));
           }
         }
         if (data.lastLiveDirection === 'BUY' || data.lastLiveDirection === 'SELL') {
@@ -381,7 +400,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
           if (!targetBar || !prevBar || !targetBar.signal) continue;
           const barAgeMinutes =
             (Date.now() - new Date(targetBar.timestampIso).getTime()) / 60000;
-          const key = `${targetSymbol}-${targetBar.timestampIso}`;
+          const key = normalizeM5BarKey(targetSymbol, targetBar.timestampIso);
           const alreadyAlertedBar = alertedLiveBarsRef.current.has(key);
           const sameDirectionAsLast = lastLiveDirectionRef.current === targetBar.signal;
           const shouldNotify =
