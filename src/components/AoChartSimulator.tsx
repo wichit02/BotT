@@ -126,7 +126,32 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
   const [monitorNote, setMonitorNote] = useState<string | null>(null);
 
   const countdownRef = useRef<number | null>(null);
-  const alertedLiveBarsRef = useRef<Set<string>>(new Set());
+  const alertedLiveBarsRef = useRef<Set<string>>(
+    (() => {
+      try {
+        const raw = window.localStorage.getItem('ao_alerted_bars_v1');
+        if (raw) {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr)) {
+            return new Set(arr.filter((x): x is string => typeof x === 'string'));
+          }
+        }
+      } catch {
+        // Ignore storage errors
+      }
+      return new Set<string>();
+    })()
+  );
+  const lastLiveDirectionRef = useRef<'BUY' | 'SELL' | null>(
+    (() => {
+      try {
+        const savedDir = window.localStorage.getItem('ao_last_live_direction_v1');
+        return savedDir === 'BUY' || savedDir === 'SELL' ? savedDir : null;
+      } catch {
+        return null;
+      }
+    })()
+  );
   const barsRef = useRef<M5Bar[]>(bars);
   barsRef.current = bars;
   const spec = SYMBOL_SPECS[symbol];
@@ -297,6 +322,14 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
           setNtfyTopic(data.ntfyTopic);
         }
         setTelegramConfigured(Boolean(data.telegramConfigured));
+        if (Array.isArray(data.alertedBarKeys)) {
+          for (const k of data.alertedBarKeys) {
+            if (typeof k === 'string') alertedLiveBarsRef.current.add(k);
+          }
+        }
+        if (data.lastLiveDirection === 'BUY' || data.lastLiveDirection === 'SELL') {
+          lastLiveDirectionRef.current = data.lastLiveDirection;
+        }
       })
       .catch(() => {});
 
@@ -332,7 +365,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         setMarketState(data.marketState);
         setFeedSource(data.source);
 
-        // Trigger alert immediately when current forming M5 candle crosses 0 (no need to wait for close)
+        // Trigger strictly ONCE per zero-line crossover on the live forming candle
         const candidates: Array<{ targetBar: M5Bar; prevBar: M5Bar }> = [
           {
             targetBar: data.bars[data.bars.length - 1],
@@ -348,15 +381,27 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
           if (!targetBar || !prevBar || !targetBar.signal) continue;
           const barAgeMinutes =
             (Date.now() - new Date(targetBar.timestampIso).getTime()) / 60000;
-          const key = `${targetSymbol}-${targetBar.timestampIso}-${targetBar.signal}`;
+          const key = `${targetSymbol}-${targetBar.timestampIso}`;
+          const alreadyAlertedBar = alertedLiveBarsRef.current.has(key);
+          const sameDirectionAsLast = lastLiveDirectionRef.current === targetBar.signal;
           const shouldNotify =
-            barAgeMinutes <= 20 &&
+            barAgeMinutes <= 12 &&
+            !alreadyAlertedBar &&
+            !sameDirectionAsLast &&
             (alertDirection === 'both' ||
               (alertDirection === 'buy_only' && targetBar.signal === 'BUY') ||
               (alertDirection === 'sell_only' && targetBar.signal === 'SELL'));
 
-          if (shouldNotify && !alertedLiveBarsRef.current.has(key)) {
+          if (shouldNotify) {
             alertedLiveBarsRef.current.add(key);
+            lastLiveDirectionRef.current = targetBar.signal;
+            try {
+              const recentKeys = Array.from(alertedLiveBarsRef.current).slice(-60);
+              window.localStorage.setItem('ao_alerted_bars_v1', JSON.stringify(recentKeys));
+              window.localStorage.setItem('ao_last_live_direction_v1', targetBar.signal);
+            } catch {
+              // Ignore storage quota errors
+            }
             emitAlert(
               targetSymbol,
               targetBar.signal,
@@ -368,6 +413,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
               'Live M5 Alert',
               'live'
             );
+            break;
           }
         }
       } catch (err: any) {

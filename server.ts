@@ -82,6 +82,8 @@ interface PersistedServerState {
   githubLastSyncAt: string | null;
   githubLastCommitUrl: string | null;
   githubLastError: string | null;
+  alertedBarKeys: string[];
+  lastLiveDirectionBySymbol: Partial<Record<TradingSymbol, 'BUY' | 'SELL'>>;
 }
 
 const YAHOO_SYMBOL_MAP: Record<TradingSymbol, { ticker: string; digits: number }> = {
@@ -171,6 +173,13 @@ function loadPersistedState(): PersistedServerState {
           typeof parsed.githubLastCommitUrl === 'string' ? parsed.githubLastCommitUrl : null,
         githubLastError:
           typeof parsed.githubLastError === 'string' ? parsed.githubLastError : null,
+        alertedBarKeys: Array.isArray(parsed.alertedBarKeys)
+          ? parsed.alertedBarKeys.filter((k): k is string => typeof k === 'string').slice(0, 60)
+          : [],
+        lastLiveDirectionBySymbol:
+          parsed.lastLiveDirectionBySymbol && typeof parsed.lastLiveDirectionBySymbol === 'object'
+            ? parsed.lastLiveDirectionBySymbol
+            : {},
       };
     }
   } catch {
@@ -204,6 +213,8 @@ function loadPersistedState(): PersistedServerState {
     githubLastSyncAt: null,
     githubLastCommitUrl: null,
     githubLastError: null,
+    alertedBarKeys: [],
+    lastLiveDirectionBySymbol: {},
   };
   savePersistedState(initial);
   return initial;
@@ -240,6 +251,34 @@ function markLiveSignalDispatched(key: string) {
     const first = monitorRuntime.dispatchedLiveSignalKeys.values().next().value;
     if (first) monitorRuntime.dispatchedLiveSignalKeys.delete(first);
   }
+}
+
+function hasLiveBarBeenAlerted(
+  sym: TradingSymbol,
+  barTimestampIso: string,
+  signal: 'BUY' | 'SELL'
+): boolean {
+  const runtimeKey = `live-${sym}-${barTimestampIso}`;
+  const persistedKey = `${sym}-${barTimestampIso}`;
+  if (monitorRuntime.dispatchedLiveSignalKeys.has(runtimeKey)) return true;
+  if (persisted.alertedBarKeys.includes(persistedKey)) return true;
+  if (persisted.lastLiveDirectionBySymbol[sym] === signal) return true;
+  return false;
+}
+
+function recordLiveBarAlerted(
+  sym: TradingSymbol,
+  barTimestampIso: string,
+  signal: 'BUY' | 'SELL'
+): void {
+  const runtimeKey = `live-${sym}-${barTimestampIso}`;
+  const persistedKey = `${sym}-${barTimestampIso}`;
+  markLiveSignalDispatched(runtimeKey);
+  if (!persisted.alertedBarKeys.includes(persistedKey)) {
+    persisted.alertedBarKeys = [persistedKey, ...persisted.alertedBarKeys].slice(0, 60);
+  }
+  persisted.lastLiveDirectionBySymbol[sym] = signal;
+  syncPersistence();
 }
 
 function syncPersistence() {
@@ -1223,11 +1262,10 @@ async function runBackgroundMonitorCycle() {
           if (persisted.direction === 'buy_only' && targetBar.signal !== 'BUY') continue;
           if (persisted.direction === 'sell_only' && targetBar.signal !== 'SELL') continue;
 
-          const dedupeKey = `live-${sym}-${targetBar.timestampIso}-${targetBar.signal}`;
-          if (monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)) {
+          if (hasLiveBarBeenAlerted(sym, targetBar.timestampIso, targetBar.signal)) {
             continue;
           }
-          markLiveSignalDispatched(dedupeKey);
+          recordLiveBarAlerted(sym, targetBar.timestampIso, targetBar.signal);
           monitorRuntime.lastBarBySymbol[sym] = `${targetBar.timestampIso}:${targetBar.signal}`;
 
           const title = `AO M5 ${targetBar.signal}: ${sym}`;
@@ -1239,7 +1277,7 @@ async function runBackgroundMonitorCycle() {
             broadcastWebPush({
               title,
               body,
-              tag: `ao-${sym}-${targetBar.timestampIso}-${targetBar.signal}`,
+              tag: `ao-${sym}-${targetBar.timestampIso}`,
               url: '/',
             }),
             persisted.ntfyTopic
@@ -1283,6 +1321,7 @@ async function runBackgroundMonitorCycle() {
           persisted.events = persisted.events.slice(0, 30);
           syncPersistence();
           scheduleGithubAutoSync('signal-event', 1000);
+          break;
         }
       } catch {
         // Keep polling remaining symbols
@@ -1423,6 +1462,8 @@ async function startServer() {
       subscribersCount: persisted.subscriptions.length,
       lastCheckedAt: monitorRuntime.lastCheckedAt,
       events: persisted.events,
+      alertedBarKeys: persisted.alertedBarKeys,
+      lastLiveDirection: persisted.lastLiveDirectionBySymbol.US100 || null,
     });
   });
 
@@ -1640,12 +1681,12 @@ async function startServer() {
     const timestampIso = String(body.timestampIso || new Date().toISOString());
 
     if (mode === 'live') {
-      const dedupeKey = `live-${symbol}-${timestampIso}-${signal}`;
-      if (monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)) {
+      const symTyped = (symbol in YAHOO_SYMBOL_MAP ? symbol : 'US100') as TradingSymbol;
+      if (hasLiveBarBeenAlerted(symTyped, timestampIso, signal)) {
         res.json({ ok: true, deduplicated: true });
         return;
       }
-      markLiveSignalDispatched(dedupeKey);
+      recordLiveBarAlerted(symTyped, timestampIso, signal);
     }
 
     const text = formatTelegramSignalMessage({
