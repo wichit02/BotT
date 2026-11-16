@@ -44,7 +44,7 @@ interface AoChartSimulatorProps {
   telegramSyncedReady?: boolean | null;
 }
 
-const SYMBOLS: TradingSymbol[] = ['US100', 'US30', 'US500', 'XAUUSD', 'BTCUSD'];
+const SYMBOLS: TradingSymbol[] = ['US100'];
 
 interface LiveFeedResponse {
   symbol: TradingSymbol;
@@ -52,6 +52,32 @@ interface LiveFeedResponse {
   marketState: string;
   fetchedAt: string;
   bars: M5Bar[];
+}
+
+function formatMt5AxisDate(timestampIso: string): string {
+  const dt = new Date(timestampIso);
+  if (Number.isNaN(dt.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Bangkok',
+  }).formatToParts(dt);
+  const day = parts.find((p) => p.type === 'day')?.value || '';
+  const month = parts.find((p) => p.type === 'month')?.value || '';
+  const hour = parts.find((p) => p.type === 'hour')?.value || '';
+  const minute = parts.find((p) => p.type === 'minute')?.value || '';
+  return `${day} ${month} ${hour}:${minute}`;
+}
+
+function formatBarCountdown(): string {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const remaining = 300 - (nowSec % 300);
+  const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
+  const ss = String(remaining % 60).padStart(2, '0');
+  return `${mm}:${ss}`;
 }
 
 export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
@@ -65,12 +91,13 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
   telegramSyncedReady,
 }) => {
   const [feedMode, setFeedMode] = useState<'live' | 'sim'>('live');
-  const [symbol, setSymbol] = useState<TradingSymbol>('US100');
+  const symbol: TradingSymbol = 'US100';
   const [bars, setBars] = useState<M5Bar[]>(() => generateInitialSeries('US100'));
   const [marketState, setMarketState] = useState<string>('');
   const [feedSource, setFeedSource] = useState<string>('');
   const [isLoadingLive, setIsLoadingLive] = useState(false);
   const [liveError, setLiveError] = useState<string | null>(null);
+  const [barCountdown, setBarCountdown] = useState<string>(() => formatBarCountdown());
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -101,6 +128,13 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
   const barsRef = useRef<M5Bar[]>(bars);
   barsRef.current = bars;
   const spec = SYMBOL_SPECS[symbol];
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setBarCountdown(formatBarCountdown());
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const stopAudioAndTimer = () => {
     stop10SecondSound();
@@ -196,7 +230,6 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         }
       }
 
-      // Forward indicator alert to Telegram for both Live and Simulator modes
       void fetch('/api/monitor/notify-signal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -270,7 +303,6 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         if (sub) {
           setPushSubscribed(true);
           setPushEndpoint(sub.endpoint);
-          // Re-sync with server in case container restarted
           void fetch('/api/push/subscribe', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -298,7 +330,6 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         setMarketState(data.marketState);
         setFeedSource(data.source);
 
-        // Check confirmed closed M5 bar (second to last bar) for fresh crossover
         const closedBar = data.bars[data.bars.length - 2];
         const prevBar = data.bars[data.bars.length - 3];
         if (closedBar && prevBar && closedBar.signal) {
@@ -344,17 +375,6 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
     }, 15000);
     return () => window.clearInterval(id);
   }, [feedMode, symbol, fetchLiveBars]);
-
-  const handleChangeSymbol = (nextSymbol: TradingSymbol) => {
-    setIsPlaying(false);
-    setSymbol(nextSymbol);
-    setHoveredIdx(null);
-    if (feedMode === 'sim') {
-      setBars(generateInitialSeries(nextSymbol));
-      setMarketState('');
-      setFeedSource('');
-    }
-  };
 
   const handleChangeFeedMode = (nextMode: 'live' | 'sim') => {
     setIsPlaying(false);
@@ -467,7 +487,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
       setMonitorEnabled(Boolean(data.enabled));
       setMonitorNote(
         data.enabled
-          ? 'เซิร์ฟเวอร์เฝ้า 5 สินทรัพย์ M5 อัตโนมัติแล้ว'
+          ? 'เซิร์ฟเวอร์เฝ้ากราฟ US100 M5 อัตโนมัติแล้ว'
           : 'หยุดพักการเฝ้ากราฟบนเซิร์ฟเวอร์'
       );
     } catch {
@@ -508,25 +528,27 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
 
   const aoDigits = spec.digits + 1;
 
-  // Display last 60 bars (matching standard MT5 M5 viewport)
-  const visibleBars = useMemo(() => bars.slice(-60), [bars]);
+  // Match MT5 mobile chart density & right-side shift spacing (~72 candles + ~28% right breathing gap)
+  const visibleBars = useMemo(() => bars.slice(-72), [bars]);
 
   const chartMetrics = useMemo(() => {
     const highs = visibleBars.map((b) => b.high);
     const lows = visibleBars.map((b) => b.low);
     const maxPrice = Math.max(...highs);
     const minPrice = Math.min(...lows);
-    const pricePad = (maxPrice - minPrice) * 0.18 || spec.stepSize;
+    const span = maxPrice - minPrice || spec.stepSize;
+    const pricePadTop = span * 0.14;
+    const pricePadBottom = span * 0.14;
 
     const aoValues = visibleBars.map((b) => b.ao);
     const rawMaxAo = Math.max(0, ...aoValues);
     const rawMinAo = Math.min(0, ...aoValues);
     const aoSpan = Math.max(rawMaxAo - rawMinAo, 0.001);
-    const aoPad = aoSpan * 0.16;
+    const aoPad = aoSpan * 0.14;
 
     return {
-      priceTop: maxPrice + pricePad,
-      priceBottom: minPrice - pricePad,
+      priceTop: maxPrice + pricePadTop,
+      priceBottom: minPrice - pricePadBottom,
       aoTop: rawMaxAo + aoPad,
       aoBottom: rawMinAo - aoPad,
     };
@@ -540,34 +562,42 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
   const latestClosedBar = visibleBars[visibleBars.length - 1];
   const detectedInVisible = visibleBars.filter((b) => b.signal !== null).length;
 
-  const svgW = 880;
-  const priceH = 256;
-  const aoH = 160;
-  const gapH = 12;
-  const totalH = priceH + gapH + aoH + 30;
-  const padL = 20;
-  const padR = 90;
-  const plotInsetL = 14;
-  const plotInsetR = 22;
-  const plotStart = padL + plotInsetL;
-  const plotW = svgW - padL - padR - plotInsetL - plotInsetR;
-  const slotW = plotW / visibleBars.length;
-  const candleW = Math.max(3.5, Math.min(8.5, slotW * 0.62));
-  const aoBarW = Math.max(2, Math.min(3.5, slotW * 0.36));
+  // Geometry matching MT5 mobile chart proportions & right-side chart shift
+  const svgW = 860;
+  const priceH = 290;
+  const dividerY = priceH;
+  const aoH = 165;
+  const xAxisY = dividerY + aoH;
+  const totalH = xAxisY + 26;
+
+  const padL = 8;
+  const padR = 96; // Right scale gutter
+  const plotLeft = padL;
+  const plotRight = svgW - padR;
+  const totalPlotW = plotRight - plotLeft;
+
+  // Reserve ~28% empty space on the right like MT5 Chart Shift in the screenshot
+  const activeCandlesW = totalPlotW * 0.7;
+  const slotW = activeCandlesW / visibleBars.length;
+  const candleW = Math.max(2.6, Math.min(4.8, slotW * 0.56));
+  const aoBarW = Math.max(1.6, Math.min(2.6, slotW * 0.34));
 
   const priceToY = (p: number) => {
-    const ratio = (chartMetrics.priceTop - p) / (chartMetrics.priceTop - chartMetrics.priceBottom);
-    return 36 + ratio * (priceH - 52);
+    const ratio =
+      (chartMetrics.priceTop - p) / (chartMetrics.priceTop - chartMetrics.priceBottom);
+    return 12 + ratio * (priceH - 22);
   };
 
-  const aoTopY = priceH + gapH;
   const aoToY = (ao: number) => {
     const ratio =
       (chartMetrics.aoTop - ao) / (chartMetrics.aoTop - chartMetrics.aoBottom);
-    return aoTopY + 24 + ratio * (aoH - 40);
+    return dividerY + 18 + ratio * (aoH - 32);
   };
   const aoZeroY = aoToY(0);
   const latestCloseY = priceToY(latestClosedBar.close);
+
+  // 7 crisp horizontal price scale levels on the right axis matching MT5
+  const priceTickRatios = [0.06, 0.21, 0.36, 0.51, 0.66, 0.81, 0.94];
 
   return (
     <section className="space-y-6">
@@ -601,22 +631,13 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
             </button>
           </div>
 
-          {/* Symbols */}
-          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1">
-            {SYMBOLS.map((sym) => (
-              <button
-                key={sym}
-                type="button"
-                onClick={() => handleChangeSymbol(sym)}
-                className={`h-8 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-colors ${
-                  symbol === sym
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {sym}
-              </button>
-            ))}
+          {/* Single Primary Asset Badge: US100 only */}
+          <div className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3.5 text-xs">
+            <span className="font-semibold text-blue-700">US100</span>
+            <span className="text-slate-400">·</span>
+            <span className="font-medium text-slate-600">
+              {lockM5 ? 'M5' : 'Chart'} · {spec.label}
+            </span>
           </div>
         </div>
 
@@ -747,35 +768,36 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         </div>
       )}
 
-      {/* Main Split: Chart Left + Android Push & Background Watcher Right */}
+      {/* Main Split: MT5 Black Chart Left + Android Push & Background Monitor Right */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-stretch">
-        {/* Interactive Price + AO Chart (MT5 Dark Terminal Style) */}
-        <div className="lg:col-span-8 flex flex-col rounded-xl border border-slate-800 bg-[#0b0f17] p-5 sm:p-6 text-slate-200 shadow-sm">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/90 px-1 pb-3 text-xs">
+        {/* Interactive Price + AO Chart (MT5 Black Mobile Terminal Layout & Spacing) */}
+        <div className="lg:col-span-8 flex flex-col rounded-xl border border-neutral-800 bg-black p-3 sm:p-4 text-neutral-200 shadow-sm">
+          {/* Compact Top Readout Strip */}
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-neutral-900 px-1 pb-2 text-xs">
             <div className="flex items-center gap-2.5">
-              <span className="font-semibold text-sky-400">
-                {symbol} · {lockM5 ? 'M5' : 'Chart'}
+              <span className="font-semibold text-[#1e90ff]">
+                US100Cash# · {lockM5 ? 'M5' : 'Chart'}
               </span>
               {feedMode === 'live' && marketState && (
-                <span className="inline-flex items-center gap-1.5 text-slate-400">
+                <span className="inline-flex items-center gap-1.5 text-neutral-400">
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${
-                      marketState === 'MARKET CLOSED' ? 'bg-slate-500' : 'bg-emerald-400'
+                      marketState === 'MARKET CLOSED' ? 'bg-neutral-500' : 'bg-emerald-400'
                     }`}
                   />
                   {marketState === 'MARKET CLOSED' ? 'ตลาดปิด (ล่าสุด)' : marketState}
                 </span>
               )}
               {feedMode === 'sim' && (
-                <span className="text-slate-400">· โหมดจำลอง</span>
+                <span className="text-neutral-400">· โหมดจำลอง</span>
               )}
             </div>
             <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] tabular-nums">
-              <span className="text-slate-400">{activeBar.timeLabel}</span>
-              <span className="hidden sm:inline text-slate-400">
+              <span className="text-neutral-400">{activeBar.timeLabel}</span>
+              <span className="hidden sm:inline text-neutral-400">
                 O {activeBar.open.toFixed(spec.digits)} · H {activeBar.high.toFixed(spec.digits)} · L {activeBar.low.toFixed(spec.digits)}
               </span>
-              <span className="text-slate-100 font-medium">
+              <span className="text-neutral-100 font-medium">
                 C {activeBar.close.toFixed(spec.digits)}
               </span>
               <span
@@ -788,53 +810,47 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
             </div>
           </div>
 
-          <div className="relative w-full overflow-x-auto px-1 py-1">
+          <div className="relative w-full overflow-x-auto">
             <svg
               viewBox={`0 0 ${svgW} ${totalH}`}
-              className="h-auto w-full min-w-[620px] select-none"
+              className="h-auto w-full min-w-[600px] select-none"
               role="img"
-              aria-label={`กราฟราคาและ Awesome Oscillator ของ ${symbol} กรอบเวลา M5`}
+              aria-label="กราฟราคาและ Awesome Oscillator ของ US100 กรอบเวลา M5"
             >
-              {/* Subtle dark chart background & right Y-axis divider */}
-              <rect
-                x={0}
-                y={0}
-                width={svgW}
-                height={totalH}
-                fill="#0b0f17"
-                rx="6"
-              />
+              {/* Pure Black MT5 Canvas */}
+              <rect x={0} y={0} width={svgW} height={totalH} fill="#000000" />
+
+              {/* Vertical Right Y-Axis Divider */}
               <line
-                x1={svgW - padR}
-                y1={8}
-                x2={svgW - padR}
-                y2={totalH - 26}
-                stroke="#1e293b"
+                x1={plotRight}
+                y1={0}
+                x2={plotRight}
+                y2={xAxisY}
+                stroke="#3a3a3a"
                 strokeWidth="1"
               />
 
-              {/* Horizontal price grid + right-axis scale */}
-              {[0.14, 0.37, 0.6, 0.83].map((ratio, idx) => {
-                const y = 36 + ratio * (priceH - 52);
+              {/* Right-axis horizontal price scale (clean, no noisy interior lines) */}
+              {priceTickRatios.map((ratio, idx) => {
+                const y = 12 + ratio * (priceH - 22);
                 const priceVal =
                   chartMetrics.priceTop -
                   ratio * (chartMetrics.priceTop - chartMetrics.priceBottom);
                 return (
-                  <g key={`p-grid-${idx}`}>
+                  <g key={`p-tick-${idx}`}>
                     <line
-                      x1={padL}
+                      x1={plotRight}
                       y1={y}
-                      x2={svgW - padR}
+                      x2={plotRight + 4}
                       y2={y}
-                      stroke="#161f30"
+                      stroke="#525252"
                       strokeWidth="1"
-                      strokeDasharray="2 3"
                     />
                     <text
-                      x={svgW - padR + 10}
-                      y={y + 3.5}
-                      fontSize="10"
-                      fill="#94a3b8"
+                      x={plotRight + 7}
+                      y={y + 4}
+                      fontSize="12"
+                      fill="#9ca3af"
                       className="font-mono tabular-nums"
                     >
                       {priceVal.toFixed(spec.digits)}
@@ -843,113 +859,72 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                 );
               })}
 
-              {/* Top-left MT5 chart watermark */}
-              <text
-                x={padL + 10}
-                y={20}
-                fontSize="12"
-                fontWeight="700"
-                fill="#3b82f6"
-                className="font-sans"
-              >
-                {symbol}
-                <tspan fill="#94a3b8" fontWeight="500">
-                  {' '}
-                  · {lockM5 ? 'M5' : 'Chart'}
-                </tspan>
-              </text>
-              <text
-                x={padL + 10}
-                y={33}
-                fontSize="9.5"
-                fill="#64748b"
-                className="font-sans"
-              >
-                {spec.label}
-              </text>
-
-              {/* Separator line between Price pane and AO sub-window */}
+              {/* Horizontal separator between Price pane and AO pane */}
               <line
-                x1={padL}
-                y1={priceH + gapH / 2}
-                x2={svgW - 8}
-                y2={priceH + gapH / 2}
-                stroke="#263244"
-                strokeWidth="1.2"
+                x1={plotLeft}
+                y1={dividerY}
+                x2={svgW}
+                y2={dividerY}
+                stroke="#4b5563"
+                strokeWidth="1"
               />
 
-              {/* AO Sub-window readout + scale */}
-              <text
-                x={padL + 10}
-                y={aoTopY + 15}
-                fontSize="10.5"
-                fontWeight="600"
-                fill="#94a3b8"
-                className="font-mono tabular-nums"
-              >
-                AO{' '}
-                <tspan fill={activeBar.ao >= 0 ? '#34d399' : '#fb7185'}>
-                  {activeBar.ao.toFixed(aoDigits)}
-                </tspan>
-              </text>
+              {/* Bottom X-axis line */}
+              <line
+                x1={plotLeft}
+                y1={xAxisY}
+                x2={plotRight}
+                y2={xAxisY}
+                stroke="#4b5563"
+                strokeWidth="1"
+              />
 
+              {/* Subtle AO Zero reference line */}
+              <line
+                x1={plotLeft}
+                y1={aoZeroY}
+                x2={plotRight}
+                y2={aoZeroY}
+                stroke="#1f2937"
+                strokeWidth="1"
+              />
+
+              {/* AO Right-Axis Scale Labels (Max, 0.000, Min) */}
               <text
-                x={svgW - padR + 10}
-                y={aoTopY + 24}
-                fontSize="10"
-                fill="#94a3b8"
+                x={plotRight + 7}
+                y={dividerY + 18}
+                fontSize="12"
+                fill="#9ca3af"
                 className="font-mono tabular-nums"
               >
                 {chartMetrics.aoTop.toFixed(aoDigits)}
               </text>
-
-              <line
-                x1={padL}
-                y1={aoZeroY}
-                x2={svgW - padR}
-                y2={aoZeroY}
-                stroke="#334155"
-                strokeWidth="1"
-                strokeDasharray="3 3"
-              />
               <text
-                x={svgW - padR + 10}
-                y={aoZeroY + 3.5}
-                fontSize="10"
-                fontWeight="600"
-                fill="#cbd5e1"
+                x={plotRight + 7}
+                y={aoZeroY + 4}
+                fontSize="12"
+                fill="#9ca3af"
                 className="font-mono tabular-nums"
               >
                 {Number(0).toFixed(aoDigits)}
               </text>
-
               <text
-                x={svgW - padR + 10}
-                y={aoTopY + aoH - 12}
-                fontSize="10"
-                fill="#94a3b8"
+                x={plotRight + 7}
+                y={xAxisY - 6}
+                fontSize="12"
+                fill="#9ca3af"
                 className="font-mono tabular-nums"
               >
                 {chartMetrics.aoBottom.toFixed(aoDigits)}
               </text>
 
-              {/* X-axis top border */}
-              <line
-                x1={padL}
-                y1={totalH - 26}
-                x2={svgW - 8}
-                y2={totalH - 26}
-                stroke="#1e293b"
-                strokeWidth="1"
-              />
-
-              {/* Candlesticks & AO Histogram */}
+              {/* Candlesticks & AO Histogram (occupying left 70% with generous right whitespace) */}
               {visibleBars.map((bar, idx) => {
-                const xCenter = plotStart + idx * slotW + slotW / 2;
+                const xCenter = plotLeft + 6 + idx * slotW + slotW / 2;
                 const isBull = bar.close >= bar.open;
-                // MT5 Mobile Dark Blue/White candlestick palette from screenshot
-                const bodyColor = isBull ? '#2f8cf7' : '#e2e8f0';
-                const wickColor = isBull ? '#60a5fa' : '#cbd5e1';
+                // MT5 Mobile Blue (bull) / Crisp White (bear) candles
+                const bodyColor = isBull ? '#1e88e5' : '#e5e7eb';
+                const wickColor = isBull ? '#38bdf8' : '#e5e7eb';
                 const yHigh = priceToY(bar.high);
                 const yLow = priceToY(bar.low);
                 const yOpen = priceToY(bar.open);
@@ -960,9 +935,11 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                 const aoY = aoToY(bar.ao);
                 const aoRectTop = bar.ao >= 0 ? aoY : aoZeroY;
                 const aoRectH = Math.max(1.5, Math.abs(aoY - aoZeroY));
-                const aoColor = bar.ao >= 0 ? '#22c55e' : '#f43f5e';
+                // User rule: Green when >= 0 (cut up), Red when < 0 (cut down)
+                const aoColor = bar.ao >= 0 ? '#22c55e' : '#ef4444';
 
                 const isHovered = hoveredIdx === idx;
+                const showXTick = idx === 2 || idx === 22 || idx === 42 || idx === 62;
 
                 return (
                   <g
@@ -971,23 +948,12 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                     onMouseLeave={() => setHoveredIdx(null)}
                     className="cursor-crosshair"
                   >
-                    {idx % 10 === 0 && (
-                      <line
-                        x1={xCenter}
-                        y1={8}
-                        x2={xCenter}
-                        y2={totalH - 26}
-                        stroke="#131b2b"
-                        strokeWidth="1"
-                      />
-                    )}
-
-                    {/* Invisible wider hover target per slot */}
+                    {/* Hover hit target */}
                     <rect
                       x={xCenter - slotW / 2}
-                      y={8}
+                      y={0}
                       width={slotW}
-                      height={totalH - 34}
+                      height={xAxisY}
                       fill="transparent"
                     />
 
@@ -995,149 +961,181 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                       <g>
                         <line
                           x1={xCenter}
-                          y1={8}
+                          y1={0}
                           x2={xCenter}
-                          y2={totalH - 26}
-                          stroke="#475569"
+                          y2={xAxisY}
+                          stroke="#525252"
                           strokeWidth="1"
                           strokeDasharray="3 3"
                         />
                         <line
-                          x1={padL}
+                          x1={plotLeft}
                           y1={yClose}
-                          x2={svgW - padR}
+                          x2={plotRight}
                           y2={yClose}
-                          stroke="#475569"
+                          stroke="#525252"
                           strokeWidth="1"
                           strokeDasharray="3 3"
                         />
                       </g>
                     )}
 
+                    {/* Wick */}
                     <line
                       x1={xCenter}
                       y1={yHigh}
                       x2={xCenter}
                       y2={yLow}
                       stroke={wickColor}
-                      strokeWidth="1.1"
+                      strokeWidth="1"
                     />
+
+                    {/* Body */}
                     <rect
                       x={xCenter - candleW / 2}
                       y={bodyTop}
                       width={candleW}
                       height={bodyH}
                       fill={bodyColor}
-                      rx="0.5"
                     />
 
+                    {/* AO Bar */}
                     <rect
                       x={xCenter - aoBarW / 2}
                       y={aoRectTop}
                       width={aoBarW}
                       height={aoRectH}
                       fill={aoColor}
-                      opacity={isHovered ? 1 : 0.92}
+                      opacity={isHovered ? 1 : 0.94}
                     />
 
+                    {/* Crossover Marker */}
                     {bar.signal === 'BUY' && (
-                      <g>
-                        <line
-                          x1={xCenter}
-                          y1={yLow + 3}
-                          x2={xCenter}
-                          y2={aoZeroY}
-                          stroke="#22c55e"
-                          strokeWidth="1"
-                          strokeDasharray="2 2"
-                          opacity={0.45}
-                        />
-                        <circle cx={xCenter} cy={aoZeroY} r="3" fill="#22c55e" />
-                        <text
-                          x={xCenter}
-                          y={aoTopY + aoH - 4}
-                          textAnchor="middle"
-                          fontSize="8.5"
-                          fontWeight="700"
-                          fill="#4ade80"
-                        >
-                          BUY
-                        </text>
-                      </g>
+                      <circle cx={xCenter} cy={aoZeroY} r="2.8" fill="#22c55e" />
                     )}
-
                     {bar.signal === 'SELL' && (
+                      <circle cx={xCenter} cy={aoZeroY} r="2.8" fill="#ef4444" />
+                    )}
+
+                    {/* Bottom X-axis tick + MT5 timestamp */}
+                    {showXTick && (
                       <g>
                         <line
                           x1={xCenter}
-                          y1={yHigh - 3}
+                          y1={xAxisY}
                           x2={xCenter}
-                          y2={aoZeroY}
-                          stroke="#f43f5e"
+                          y2={xAxisY + 4}
+                          stroke="#525252"
                           strokeWidth="1"
-                          strokeDasharray="2 2"
-                          opacity={0.45}
                         />
-                        <circle cx={xCenter} cy={aoZeroY} r="3" fill="#f43f5e" />
                         <text
                           x={xCenter}
-                          y={aoTopY + 13}
+                          y={xAxisY + 18}
                           textAnchor="middle"
-                          fontSize="8.5"
-                          fontWeight="700"
-                          fill="#fb7185"
+                          fontSize="11.5"
+                          fill="#9ca3af"
+                          className="font-sans tabular-nums"
                         >
-                          SELL
+                          {formatMt5AxisDate(bar.timestampIso)}
                         </text>
                       </g>
-                    )}
-
-                    {idx % 10 === 0 && (
-                      <text
-                        x={xCenter}
-                        y={totalH - 9}
-                        textAnchor="middle"
-                        fontSize="10"
-                        fill="#64748b"
-                        className="font-mono tabular-nums"
-                      >
-                        {bar.timeLabel}
-                      </text>
                     )}
                   </g>
                 );
               })}
 
-              {/* Current / Latest Close horizontal line + MT5-style right-axis price tag */}
+              {/* Top-left MT5 Watermark (rendered cleanly above bars like screenshot) */}
+              <text
+                x={plotLeft + 8}
+                y={22}
+                fontSize="14"
+                fontWeight="700"
+                fill="#1e88e5"
+                className="font-sans"
+              >
+                US100Cash#
+                <tspan fill="#9ca3af" fontWeight="400" fontSize="13">
+                  {' '}
+                  ▾ M5
+                </tspan>
+              </text>
+              <text
+                x={plotLeft + 8}
+                y={39}
+                fontSize="12.5"
+                fill="#9ca3af"
+                className="font-sans"
+              >
+                US 100 Index Cash
+              </text>
+
+              {/* AO Readout top-left of AO sub-window */}
+              <text
+                x={plotLeft + 8}
+                y={dividerY + 19}
+                fontSize="12.5"
+                fill="#9ca3af"
+                className="font-sans tabular-nums"
+              >
+                AO{' '}
+                <tspan fill={activeBar.ao >= 0 ? '#22c55e' : '#ef4444'}>
+                  {activeBar.ao.toFixed(aoDigits)}
+                </tspan>
+              </text>
+
+              {/* Horizontal Bid/Close Price Lines + MT5 Dark Gray Price & M5 Countdown Badge */}
               <line
-                x1={padL}
-                y1={latestCloseY}
-                x2={svgW - padR}
-                y2={latestCloseY}
-                stroke="#ef4444"
+                x1={plotLeft}
+                y1={latestCloseY - 1.5}
+                x2={svgW}
+                y2={latestCloseY - 1.5}
+                stroke="#b91c1c"
                 strokeWidth="0.9"
-                opacity={0.75}
+                opacity={0.85}
               />
-              <g transform={`translate(${svgW - padR + 4}, ${latestCloseY - 9})`}>
+              <line
+                x1={plotLeft}
+                y1={latestCloseY}
+                x2={plotRight}
+                y2={latestCloseY}
+                stroke="#6b7280"
+                strokeWidth="0.9"
+                opacity={0.8}
+              />
+
+              <g
+                transform={`translate(${plotRight + 2}, ${Math.min(
+                  Math.max(latestCloseY - 12, 6),
+                  priceH - 36
+                )})`}
+              >
                 <rect
                   x={0}
                   y={0}
-                  width={padR - 10}
-                  height={18}
-                  rx="2"
-                  fill="#334155"
-                  stroke="#475569"
+                  width={padR - 4}
+                  height={33}
+                  fill="#404040"
+                  stroke="#525252"
                   strokeWidth="0.75"
                 />
                 <text
                   x={6}
-                  y={12.5}
-                  fontSize="10"
-                  fontWeight="600"
-                  fill="#f8fafc"
+                  y={14}
+                  fontSize="12.5"
+                  fontWeight="500"
+                  fill="#ffffff"
                   className="font-mono tabular-nums"
                 >
                   {latestClosedBar.close.toFixed(spec.digits)}
+                </text>
+                <text
+                  x={6}
+                  y={28}
+                  fontSize="11.5"
+                  fill="#e5e7eb"
+                  className="font-mono tabular-nums"
+                >
+                  {feedMode === 'live' ? barCountdown : '00:00'}
                 </text>
               </g>
             </svg>
@@ -1188,7 +1186,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
               ) : (
                 <p className="py-1.5 text-xs text-slate-400">
                   {feedMode === 'live'
-                    ? 'กำลังติดตามกราฟจริง M5 อัตโนมัติ'
+                    ? 'กำลังติดตามกราฟจริง US100 M5 อัตโนมัติ'
                     : 'กด “ทดสอบ BUY” หรือ “ทดสอบ SELL”'}
                 </p>
               )}
@@ -1204,7 +1202,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                     }`}
                   />
                   <span className="text-xs font-semibold text-slate-800">
-                    เซิร์ฟเวอร์เฝ้ากราฟ M5 อัตโนมัติ
+                    เซิร์ฟเวอร์เฝ้ากราฟ US100 M5 อัตโนมัติ
                   </span>
                 </div>
                 <button

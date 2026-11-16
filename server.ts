@@ -14,7 +14,7 @@ const webpush = require('web-push') as typeof webpushTypes;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-type TradingSymbol = 'BTCUSD' | 'XAUUSD' | 'US30' | 'US100' | 'US500';
+type TradingSymbol = 'US100';
 
 interface M5Candle {
   index: number;
@@ -85,14 +85,10 @@ interface PersistedServerState {
 }
 
 const YAHOO_SYMBOL_MAP: Record<TradingSymbol, { ticker: string; digits: number }> = {
-  BTCUSD: { ticker: 'BTC-USD', digits: 2 },
-  XAUUSD: { ticker: 'GC=F', digits: 2 },
-  US30: { ticker: 'YM=F', digits: 2 },
   US100: { ticker: 'NQ=F', digits: 2 },
-  US500: { ticker: 'ES=F', digits: 2 },
 };
 
-const ALL_SYMBOLS: TradingSymbol[] = ['US100', 'US30', 'US500', 'XAUUSD', 'BTCUSD'];
+const ALL_SYMBOLS: TradingSymbol[] = ['US100'];
 const STATE_DIR = path.resolve(__dirname, '.data');
 const STATE_FILE = path.join(STATE_DIR, 'ao-server-state.json');
 
@@ -123,10 +119,7 @@ function loadPersistedState(): PersistedServerState {
       return {
         vapidKeys,
         enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : true,
-        symbols:
-          Array.isArray(parsed.symbols) && parsed.symbols.length > 0
-            ? parsed.symbols.filter((s): s is TradingSymbol => s in YAHOO_SYMBOL_MAP)
-            : ALL_SYMBOLS,
+        symbols: ALL_SYMBOLS,
         ntfyTopic:
           typeof parsed.ntfyTopic === 'string' && parsed.ntfyTopic
             ? parsed.ntfyTopic
@@ -891,63 +884,6 @@ function computeAwesomeOscillator(
   return out;
 }
 
-async function fetchCoinbaseBtcM5(): Promise<MarketFeedResult> {
-  const res = await fetch(
-    'https://api.coinbase.com/api/v3/brokerage/market/products/BTC-USD/candles?granularity=FIVE_MINUTE',
-    {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(8000),
-    }
-  );
-  if (!res.ok) {
-    throw new Error(`Coinbase feed error (${res.status})`);
-  }
-  const json = (await res.json()) as {
-    candles?: Array<{
-      start: string;
-      open: string;
-      high: string;
-      low: string;
-      close: string;
-    }>;
-  };
-  // Reverse full Coinbase history (oldest -> newest) so SMA(34) has complete warmup
-  const candles = (json.candles || []).slice().reverse();
-  if (candles.length < 36) {
-    throw new Error('ข้อมูลแท่งเทียน BTCUSD ยังไม่พอสำหรับคำนวณ AO (34)');
-  }
-
-  const raw = candles.map((c, idx) => {
-    const dt = new Date(Number(c.start) * 1000);
-    const open = roundTo(Number(c.open), 2);
-    const high = roundTo(Number(c.high), 2);
-    const low = roundTo(Number(c.low), 2);
-    const close = roundTo(Number(c.close), 2);
-    return {
-      index: idx,
-      timeLabel: formatTimeLabel(dt),
-      timestampIso: dt.toISOString(),
-      open,
-      high,
-      low,
-      close,
-      median: (high + low) / 2,
-    };
-  });
-
-  const computed = computeAwesomeOscillator(raw)
-    .slice(-90)
-    .map((b, idx) => ({ ...b, index: idx }));
-
-  return {
-    symbol: 'BTCUSD',
-    source: 'Coinbase Live M5',
-    marketState: 'OPEN 24/7',
-    fetchedAt: new Date().toISOString(),
-    bars: computed,
-  };
-}
-
 async function fetchYahooM5(symbol: TradingSymbol): Promise<MarketFeedResult> {
   const mapping = YAHOO_SYMBOL_MAP[symbol];
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
@@ -963,9 +899,6 @@ async function fetchYahooM5(symbol: TradingSymbol): Promise<MarketFeedResult> {
   });
 
   if (!res.ok) {
-    if (symbol === 'BTCUSD') {
-      return fetchCoinbaseBtcM5();
-    }
     throw new Error(`Market feed HTTP ${res.status}`);
   }
 
@@ -1004,9 +937,6 @@ async function fetchYahooM5(symbol: TradingSymbol): Promise<MarketFeedResult> {
 
   const warmupSlice = cleaned.slice(-180).map((b, idx) => ({ ...b, index: idx }));
   if (warmupSlice.length < 36) {
-    if (symbol === 'BTCUSD') {
-      return fetchCoinbaseBtcM5();
-    }
     throw new Error('ข้อมูล M5 ไม่เพียงพอสำหรับคำนวณ AO');
   }
 
@@ -1033,10 +963,7 @@ async function getLiveM5Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
     return cached.data;
   }
 
-  const data =
-    symbol === 'BTCUSD'
-      ? await fetchCoinbaseBtcM5().catch(() => fetchYahooM5('BTCUSD'))
-      : await fetchYahooM5(symbol);
+  const data = await fetchYahooM5(symbol);
 
   feedCache.set(symbol, {
     expiresAt: Date.now() + 15000,
@@ -1680,7 +1607,7 @@ async function startServer() {
         '✅ ทดสอบระบบแจ้งเตือน AO (M5)',
         '──────────────',
         'สถานะ: เชื่อมต่อ Telegram สำเร็จ',
-        'สินทรัพย์: BTCUSD · XAUUSD · US30 · US100 · US500',
+        'สินทรัพย์: US100 (US 100 Index Cash)',
       ].join('\n')
     );
     if (!tgRes.ok) {
@@ -1747,7 +1674,7 @@ async function startServer() {
     persisted.events.unshift({
       id: `${mode}-${symbol}-${Date.now()}`,
       timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
-      symbol: (symbol in YAHOO_SYMBOL_MAP ? symbol : 'BTCUSD') as TradingSymbol,
+      symbol: (symbol in YAHOO_SYMBOL_MAP ? symbol : 'US100') as TradingSymbol,
       signal,
       aoPrev,
       aoCurr,
