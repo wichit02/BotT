@@ -24,7 +24,7 @@ import {
 } from '../lib/aoSimulator';
 import type { SignalLogRecord } from '../lib/sheetsApi';
 import type { AlertDirection } from '../lib/mql5Generator';
-import { play10SecondSound, stop10SecondSound } from '../lib/audioAlert';
+import { play10SecondSound, stop10SecondSound, unlockAlertAudio } from '../lib/audioAlert';
 import {
   getExistingPushSubscription,
   isWebPushSupported,
@@ -497,7 +497,9 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
     setHoveredIdx(null);
     setLiveError(null);
     if (nextMode === 'sim') {
-      setBars(generateInitialSeries(symbol));
+      const initBars = generateInitialSeries(symbol);
+      barsRef.current = initBars;
+      setBars(initBars);
       setMarketState('');
       setFeedSource('');
     }
@@ -534,13 +536,16 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
     }
   };
 
+  const advanceBarRef = useRef(advanceBar);
+  advanceBarRef.current = advanceBar;
+
   useEffect(() => {
     if (feedMode !== 'sim' || !isPlaying) return;
     const timer = window.setInterval(() => {
-      advanceBar();
-    }, 1100);
+      advanceBarRef.current();
+    }, 750);
     return () => window.clearInterval(timer);
-  });
+  }, [feedMode, isPlaying]);
 
   const handleEnableWebPush = async () => {
     setMonitorBusy(true);
@@ -792,7 +797,14 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
 
               <button
                 type="button"
-                onClick={() => setIsPlaying((p) => !p)}
+                onClick={() => {
+                  const nextPlaying = !isPlaying;
+                  if (nextPlaying) {
+                    if (soundEnabled) unlockAlertAudio();
+                    advanceBar();
+                  }
+                  setIsPlaying(nextPlaying);
+                }}
                 className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-medium whitespace-nowrap transition-colors ${
                   isPlaying
                     ? 'bg-slate-900 text-white hover:bg-slate-800'
@@ -818,7 +830,9 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                 onClick={() => {
                   setIsPlaying(false);
                   stopAudioAndTimer();
-                  setBars(generateInitialSeries(symbol));
+                  const resetBars = generateInitialSeries(symbol);
+                  barsRef.current = resetBars;
+                  setBars(resetBars);
                   setLastPushBanner(null);
                 }}
                 aria-label="รีเซ็ตกราฟ"

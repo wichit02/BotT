@@ -105,8 +105,8 @@ export function generateInitialSeries(symbol: TradingSymbol, count = 100): M5Bar
     const barTime = new Date(now.getTime() - (count - 1 - i) * 5 * 60 * 1000);
     // Sinusoidal + realistic momentum cycles so AO naturally crosses zero a couple times
     const wave =
-      Math.sin(i * 0.24) * spec.stepSize * 0.85 +
-      Math.cos(i * 0.11) * spec.stepSize * 0.45;
+      Math.sin(i * 0.34) * spec.stepSize * 1.15 +
+      Math.cos(i * 0.16) * spec.stepSize * 0.45;
     const micro = ((Math.sin(i * 1.7 + symbol.length) + 1) * 0.5 - 0.5) * spec.stepSize * 0.5;
     const open = roundToDigits(price, spec.digits);
     const close = roundToDigits(open + wave + micro, spec.digits);
@@ -236,8 +236,8 @@ export function appendNextM5Bar(
   const idx = last.index + 1;
 
   const delta =
-    Math.sin(idx * 0.24) * spec.stepSize * 0.85 +
-    Math.cos(idx * 0.11) * spec.stepSize * 0.45 +
+    Math.sin(idx * 0.34) * spec.stepSize * 1.15 +
+    Math.cos(idx * 0.16) * spec.stepSize * 0.45 +
     (((Math.sin(idx * 1.3 + rawBars.length) + 1) * 0.5 - 0.5) * spec.stepSize * 0.4);
 
   const open = last.close;
