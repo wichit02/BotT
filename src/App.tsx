@@ -129,12 +129,12 @@ export default function App() {
     handleSignalDetected({
       id: `sample-${Date.now()}`,
       timestamp: nowStr,
-      symbol: 'XAUUSD',
+      symbol: 'US100',
       timeframe: mql5Config.lockM5 ? 'M5' : 'Current',
       signal: isBuy ? 'BUY' : 'SELL',
-      aoPrev: isBuy ? -0.1842 : 0.2145,
-      aoCurr: isBuy ? 0.1425 : -0.163,
-      price: isBuy ? 2644.8 : 2641.2,
+      aoPrev: isBuy ? -18.42 : 21.45,
+      aoCurr: isBuy ? 14.25 : -16.3,
+      price: isBuy ? 27726.62 : 27710.4,
       pushStatus: 'Android Push Sent',
       note: isBuy ? 'AO ตัด 0 ขึ้น' : 'AO ตัด 0 ลง',
       syncedToSheet: false,
@@ -292,7 +292,7 @@ export default function App() {
       <footer className="border-t border-slate-200/80 bg-white py-4">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 text-xs text-slate-400 sm:px-6 lg:px-8">
           <span>AO Signal Studio</span>
-          <span>US100 · US30 · US500 · XAUUSD · BTCUSD (M5)</span>
+          <span>US100 · M5 (US 100 Index Cash)</span>
         </div>
       </footer>
       <OfflineIndicator />
