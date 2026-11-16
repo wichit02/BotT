@@ -253,15 +253,32 @@ function markLiveSignalDispatched(key: string) {
   }
 }
 
+function normalizeM5BarKey(sym: TradingSymbol, barTimestampIso: string): string {
+  const ms = Date.parse(barTimestampIso);
+  if (Number.isFinite(ms)) {
+    const bucketMs = Math.floor(ms / 300000) * 300000;
+    return `${sym}-${new Date(bucketMs).toISOString()}`;
+  }
+  return `${sym}-${barTimestampIso}`;
+}
+
 function hasLiveBarBeenAlerted(
   sym: TradingSymbol,
   barTimestampIso: string,
   signal: 'BUY' | 'SELL'
 ): boolean {
-  const runtimeKey = `live-${sym}-${barTimestampIso}`;
-  const persistedKey = `${sym}-${barTimestampIso}`;
+  const normalizedKey = normalizeM5BarKey(sym, barTimestampIso);
+  const runtimeKey = `live-${normalizedKey}`;
   if (monitorRuntime.dispatchedLiveSignalKeys.has(runtimeKey)) return true;
-  if (persisted.alertedBarKeys.includes(persistedKey)) return true;
+  if (
+    persisted.alertedBarKeys.some((k) => {
+      if (k === normalizedKey) return true;
+      const prefix = `${sym}-`;
+      return k.startsWith(prefix) && normalizeM5BarKey(sym, k.slice(prefix.length)) === normalizedKey;
+    })
+  ) {
+    return true;
+  }
   if (persisted.lastLiveDirectionBySymbol[sym] === signal) return true;
   return false;
 }
@@ -271,11 +288,11 @@ function recordLiveBarAlerted(
   barTimestampIso: string,
   signal: 'BUY' | 'SELL'
 ): void {
-  const runtimeKey = `live-${sym}-${barTimestampIso}`;
-  const persistedKey = `${sym}-${barTimestampIso}`;
+  const normalizedKey = normalizeM5BarKey(sym, barTimestampIso);
+  const runtimeKey = `live-${normalizedKey}`;
   markLiveSignalDispatched(runtimeKey);
-  if (!persisted.alertedBarKeys.includes(persistedKey)) {
-    persisted.alertedBarKeys = [persistedKey, ...persisted.alertedBarKeys].slice(0, 60);
+  if (!persisted.alertedBarKeys.includes(normalizedKey)) {
+    persisted.alertedBarKeys = [normalizedKey, ...persisted.alertedBarKeys].slice(0, 60);
   }
   persisted.lastLiveDirectionBySymbol[sym] = signal;
   syncPersistence();
