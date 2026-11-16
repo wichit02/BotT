@@ -888,7 +888,7 @@ async function fetchYahooM5(symbol: TradingSymbol): Promise<MarketFeedResult> {
   const mapping = YAHOO_SYMBOL_MAP[symbol];
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     mapping.ticker
-  )}?interval=5m&range=2d`;
+  )}?interval=5m&range=5d`;
 
   const res = await fetch(url, {
     headers: {
