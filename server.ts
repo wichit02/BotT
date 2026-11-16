@@ -1381,8 +1381,13 @@ async function startServer() {
       return;
     }
     try {
-      const data = await getLiveM5Feed(rawSymbol as TradingSymbol);
-      res.json(data);
+      const sym = rawSymbol as TradingSymbol;
+      const data = await getLiveM5Feed(sym);
+      res.json({
+        ...data,
+        alertedBarKeys: persisted.alertedBarKeys,
+        lastLiveDirection: persisted.lastLiveDirectionBySymbol[sym] || null,
+      });
     } catch (err: any) {
       res.status(502).json({
         error: err?.message || 'ไม่สามารถดึงข้อมูลกราฟจริงได้ในขณะนี้',

@@ -53,6 +53,8 @@ interface LiveFeedResponse {
   marketState: string;
   fetchedAt: string;
   bars: M5Bar[];
+  alertedBarKeys?: string[];
+  lastLiveDirection?: 'BUY' | 'SELL' | null;
 }
 
 function formatMt5AxisDate(timestampIso: string): string {
@@ -383,6 +385,15 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         setBars(data.bars);
         setMarketState(data.marketState);
         setFeedSource(data.source);
+
+        if (Array.isArray(data.alertedBarKeys)) {
+          for (const k of data.alertedBarKeys) {
+            if (typeof k === 'string') alertedLiveBarsRef.current.add(normalizeStoredBarKey(k));
+          }
+        }
+        if (data.lastLiveDirection === 'BUY' || data.lastLiveDirection === 'SELL') {
+          lastLiveDirectionRef.current = data.lastLiveDirection;
+        }
 
         // Trigger strictly ONCE per zero-line crossover on the live forming candle
         const candidates: Array<{ targetBar: M5Bar; prevBar: M5Bar }> = [
