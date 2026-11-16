@@ -4,9 +4,21 @@
     "US100"
   ],
   "direction": "both",
-  "totalCapturedSignals": 1,
-  "latestSignalAt": "16/11/2569 23:35:08",
+  "totalCapturedSignals": 2,
+  "latestSignalAt": "16/11/2569 23:35:18",
   "events": [
+    {
+      "id": "US100-2026-11-16T16:25:15.000Z-BUY",
+      "timestamp": "16/11/2569 23:35:18",
+      "symbol": "US100",
+      "signal": "BUY",
+      "aoPrev": -9.215441176471359,
+      "aoCurr": 0.40955882352864137,
+      "price": 27587.25,
+      "deliveredToTelegram": true,
+      "deliveredToNtfy": false,
+      "deliveredWebPushCount": 0
+    },
     {
       "id": "US100-2026-11-16T16:25:05.000Z-BUY",
       "timestamp": "16/11/2569 23:35:08",
