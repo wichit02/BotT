@@ -1687,11 +1687,6 @@ async function startServer() {
   });
 
   app.post('/api/monitor/notify-signal', async (req, res) => {
-    if (!persisted.telegramBotToken || !persisted.telegramChatId) {
-      res.json({ ok: false, skipped: true, reason: 'not_configured' });
-      return;
-    }
-
     const body = req.body || {};
     const symbol = String(body.symbol || 'US100').toUpperCase();
     const timeframe = String(body.timeframe || 'M5');
@@ -1702,6 +1697,15 @@ async function startServer() {
     const mode = body.mode === 'live' ? 'live' : 'sim';
     const timestampIso = String(body.timestampIso || new Date().toISOString());
 
+    const hasTelegram = Boolean(persisted.telegramBotToken && persisted.telegramChatId);
+    const hasWebPush = persisted.subscriptions.length > 0;
+    const hasNtfy = Boolean(persisted.ntfyTopic);
+
+    if (!hasTelegram && !hasWebPush && !hasNtfy) {
+      res.json({ ok: false, skipped: true, reason: 'not_configured' });
+      return;
+    }
+
     if (mode === 'live') {
       const symTyped = (symbol in YAHOO_SYMBOL_MAP ? symbol : 'US100') as TradingSymbol;
       if (hasLiveBarBeenAlerted(symTyped, timestampIso, signal)) {
@@ -1711,27 +1715,52 @@ async function startServer() {
       recordLiveBarAlerted(symTyped, timestampIso, signal);
     }
 
-    const text = formatTelegramSignalMessage({
-      symbol,
-      timeframe,
-      signal,
-      aoPrev,
-      aoCurr,
-      mode,
-      timestampIso,
-    });
+    const modeBadge = mode === 'sim' ? '[จำลอง] ' : '';
+    const title = `${modeBadge}AO ${timeframe} ${signal}: ${symbol}`;
+    const pushBody = `${symbol} ${timeframe} ${signal} | AO ${aoPrev.toFixed(
+      3
+    )} → ${aoCurr.toFixed(3)} | ราคา ${price}`;
 
-    const tgRes = await sendTelegramPush(
-      persisted.telegramBotToken,
-      persisted.telegramChatId,
-      text,
-      'HTML'
-    );
+    const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
+      hasWebPush
+        ? broadcastWebPush({
+            title,
+            body: pushBody,
+            tag: `ao-${mode}-${symbol}-${Date.now()}`,
+            url: '/',
+          })
+        : Promise.resolve(0),
+      hasNtfy ? sendNtfyPush(persisted.ntfyTopic, title, pushBody) : Promise.resolve(false),
+    ]);
 
-    if (!tgRes.ok) {
+    let deliveredToTelegram = false;
+    let tgError: string | undefined;
+
+    if (hasTelegram) {
+      const text = formatTelegramSignalMessage({
+        symbol,
+        timeframe,
+        signal,
+        aoPrev,
+        aoCurr,
+        mode,
+        timestampIso,
+      });
+
+      const tgRes = await sendTelegramPush(
+        persisted.telegramBotToken,
+        persisted.telegramChatId,
+        text,
+        'HTML'
+      );
+      deliveredToTelegram = tgRes.ok;
+      tgError = tgRes.error;
+    }
+
+    if (!deliveredToTelegram && deliveredWebPushCount === 0 && !deliveredToNtfy) {
       res.status(502).json({
         ok: false,
-        error: tgRes.error || 'ส่งสัญญาณเข้า Telegram ไม่สำเร็จ',
+        error: tgError || 'ส่งสัญญาณแจ้งเตือนไม่สำเร็จ',
       });
       return;
     }
@@ -1744,15 +1773,20 @@ async function startServer() {
       aoPrev,
       aoCurr,
       price,
-      deliveredToNtfy: false,
-      deliveredToTelegram: true,
-      deliveredWebPushCount: 0,
+      deliveredToNtfy,
+      deliveredToTelegram,
+      deliveredWebPushCount,
     });
     persisted.events = persisted.events.slice(0, 30);
     syncPersistence();
     scheduleGithubAutoSync('signal-event', 1000);
 
-    res.json({ ok: true });
+    res.json({
+      ok: true,
+      deliveredToTelegram,
+      deliveredWebPushCount,
+      deliveredToNtfy,
+    });
   });
 
   app.get('/api/github/status', (_req, res) => {

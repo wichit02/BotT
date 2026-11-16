@@ -266,15 +266,28 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         typeof Notification !== 'undefined' &&
         Notification.permission === 'granted'
       ) {
-        try {
-          const aoDigits = symSpec.digits + 1;
-          new Notification(`${customPrefix} | ${sym} ${timeframe} ${signal}`, {
-            body: `AO: ${aoPrev.toFixed(aoDigits)} → ${aoCurr.toFixed(aoDigits)} · ราคา ${price.toFixed(
-              symSpec.digits
-            )}`,
-          });
-        } catch {
-          // Ignore browser notification failure
+        const notifTitle = `${customPrefix} | ${sym} ${timeframe} ${signal}`;
+        const notifBody = `AO: ${aoPrev.toFixed(aoDigits)} → ${aoCurr.toFixed(aoDigits)} · ราคา ${price.toFixed(
+          symSpec.digits
+        )}`;
+        const showFallbackNotification = () => {
+          try {
+            new Notification(notifTitle, { body: notifBody });
+          } catch {
+            // Android browsers disallow new Notification() without ServiceWorkerRegistration
+          }
+        };
+        if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+          navigator.serviceWorker.ready
+            .then((reg) =>
+              reg.showNotification(notifTitle, {
+                body: notifBody,
+                tag: `ao-local-${mode}-${sym}`,
+              })
+            )
+            .catch(showFallbackNotification);
+        } else {
+          showFallbackNotification();
         }
       }
 
@@ -296,23 +309,36 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         .then(async (r) => {
           const resData = await r.json().catch(() => null);
           if (!r.ok) {
-            setMonitorNote(resData?.error || 'ส่งสัญญาณเข้า Telegram ไม่สำเร็จ');
+            setMonitorNote(resData?.error || 'ส่งสัญญาณแจ้งเตือนไม่สำเร็จ');
             return;
           }
           if (resData?.skipped && resData?.reason === 'not_configured') {
             setTelegramConfigured(false);
             setMonitorNote(
-              'ยังไม่ได้เชื่อมต่อ Telegram (กรุณากรอก Bot Token ในแท็บ Telegram)'
+              mode === 'sim'
+                ? `จำลอง ${sym} ${signal} แล้ว (ยังไม่ได้เชื่อมต่อ Telegram/มือถือ)`
+                : 'ยังไม่ได้เชื่อมต่อ Telegram (กรุณากรอก Bot Token ในแท็บ Telegram)'
             );
             return;
           }
           if (resData?.ok && !resData?.deduplicated) {
-            setTelegramConfigured(true);
-            setMonitorNote(`ส่งสัญญาณ ${sym} ${signal} เข้า Telegram แล้ว`);
+            if (resData.deliveredToTelegram) {
+              setTelegramConfigured(true);
+            }
+            const channels: string[] = [];
+            if (resData.deliveredToTelegram) channels.push('Telegram');
+            if (resData.deliveredWebPushCount > 0) channels.push('มือถือ');
+            if (resData.deliveredToNtfy) channels.push('ntfy');
+            const channelText = channels.length > 0 ? channels.join(' + ') : 'แจ้งเตือน';
+            setMonitorNote(
+              mode === 'sim'
+                ? `จำลอง ${sym} ${signal} → ส่งเข้า ${channelText} แล้ว`
+                : `ส่งสัญญาณ ${sym} ${signal} เข้า ${channelText} แล้ว`
+            );
           }
         })
         .catch(() => {
-          setMonitorNote('เชื่อมต่อเซิร์ฟเวอร์สำหรับส่ง Telegram ไม่สำเร็จ');
+          setMonitorNote('เชื่อมต่อเซิร์ฟเวอร์สำหรับส่งแจ้งเตือนไม่สำเร็จ');
         });
 
       onSignalDetected({
@@ -487,6 +513,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
 
     if (latestClosed && previousClosed && latestClosed.signal) {
       const shouldNotify =
+        Boolean(forceCross) ||
         alertDirection === 'both' ||
         (alertDirection === 'buy_only' && latestClosed.signal === 'BUY') ||
         (alertDirection === 'sell_only' && latestClosed.signal === 'SELL');
