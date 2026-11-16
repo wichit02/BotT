@@ -42,6 +42,7 @@ interface AoChartSimulatorProps {
   onGoToSheets: () => void;
   onGoToTelegram: () => void;
   telegramSyncedReady?: boolean | null;
+  isWebMode?: boolean;
 }
 
 const SYMBOLS: TradingSymbol[] = ['US100'];
@@ -89,6 +90,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
   onGoToSheets,
   onGoToTelegram,
   telegramSyncedReady,
+  isWebMode = false,
 }) => {
   const [feedMode, setFeedMode] = useState<'live' | 'sim'>('live');
   const symbol: TradingSymbol = 'US100';
@@ -571,7 +573,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
   const totalH = xAxisY + 26;
 
   const padL = 8;
-  const padR = 96; // Right scale gutter
+  const padR = isWebMode ? 8 : 96; // Clean full-width canvas in web mode vs MT5 right scale gutter in Studio
   const plotLeft = padL;
   const plotRight = svgW - padR;
   const totalPlotW = plotRight - plotLeft;
@@ -820,44 +822,47 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
               {/* Pure Black MT5 Canvas */}
               <rect x={0} y={0} width={svgW} height={totalH} fill="#000000" />
 
-              {/* Vertical Right Y-Axis Divider */}
-              <line
-                x1={plotRight}
-                y1={0}
-                x2={plotRight}
-                y2={xAxisY}
-                stroke="#3a3a3a"
-                strokeWidth="1"
-              />
+              {/* Vertical Right Y-Axis Divider & Scale (Studio mode only) */}
+              {!isWebMode && (
+                <>
+                  <line
+                    x1={plotRight}
+                    y1={0}
+                    x2={plotRight}
+                    y2={xAxisY}
+                    stroke="#3a3a3a"
+                    strokeWidth="1"
+                  />
 
-              {/* Right-axis horizontal price scale (clean, no noisy interior lines) */}
-              {priceTickRatios.map((ratio, idx) => {
-                const y = 12 + ratio * (priceH - 22);
-                const priceVal =
-                  chartMetrics.priceTop -
-                  ratio * (chartMetrics.priceTop - chartMetrics.priceBottom);
-                return (
-                  <g key={`p-tick-${idx}`}>
-                    <line
-                      x1={plotRight}
-                      y1={y}
-                      x2={plotRight + 4}
-                      y2={y}
-                      stroke="#525252"
-                      strokeWidth="1"
-                    />
-                    <text
-                      x={plotRight + 7}
-                      y={y + 4}
-                      fontSize="12"
-                      fill="#9ca3af"
-                      className="font-mono tabular-nums"
-                    >
-                      {priceVal.toFixed(spec.digits)}
-                    </text>
-                  </g>
-                );
-              })}
+                  {priceTickRatios.map((ratio, idx) => {
+                    const y = 12 + ratio * (priceH - 22);
+                    const priceVal =
+                      chartMetrics.priceTop -
+                      ratio * (chartMetrics.priceTop - chartMetrics.priceBottom);
+                    return (
+                      <g key={`p-tick-${idx}`}>
+                        <line
+                          x1={plotRight}
+                          y1={y}
+                          x2={plotRight + 4}
+                          y2={y}
+                          stroke="#525252"
+                          strokeWidth="1"
+                        />
+                        <text
+                          x={plotRight + 7}
+                          y={y + 4}
+                          fontSize="12"
+                          fill="#9ca3af"
+                          className="font-mono tabular-nums"
+                        >
+                          {priceVal.toFixed(spec.digits)}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </>
+              )}
 
               {/* Horizontal separator between Price pane and AO pane */}
               <line
@@ -889,34 +894,38 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                 strokeWidth="1"
               />
 
-              {/* AO Right-Axis Scale Labels (Max, 0.000, Min) */}
-              <text
-                x={plotRight + 7}
-                y={dividerY + 18}
-                fontSize="12"
-                fill="#9ca3af"
-                className="font-mono tabular-nums"
-              >
-                {chartMetrics.aoTop.toFixed(aoDigits)}
-              </text>
-              <text
-                x={plotRight + 7}
-                y={aoZeroY + 4}
-                fontSize="12"
-                fill="#9ca3af"
-                className="font-mono tabular-nums"
-              >
-                {Number(0).toFixed(aoDigits)}
-              </text>
-              <text
-                x={plotRight + 7}
-                y={xAxisY - 6}
-                fontSize="12"
-                fill="#9ca3af"
-                className="font-mono tabular-nums"
-              >
-                {chartMetrics.aoBottom.toFixed(aoDigits)}
-              </text>
+              {/* AO Right-Axis Scale Labels (Studio mode only) */}
+              {!isWebMode && (
+                <>
+                  <text
+                    x={plotRight + 7}
+                    y={dividerY + 18}
+                    fontSize="12"
+                    fill="#9ca3af"
+                    className="font-mono tabular-nums"
+                  >
+                    {chartMetrics.aoTop.toFixed(aoDigits)}
+                  </text>
+                  <text
+                    x={plotRight + 7}
+                    y={aoZeroY + 4}
+                    fontSize="12"
+                    fill="#9ca3af"
+                    className="font-mono tabular-nums"
+                  >
+                    {Number(0).toFixed(aoDigits)}
+                  </text>
+                  <text
+                    x={plotRight + 7}
+                    y={xAxisY - 6}
+                    fontSize="12"
+                    fill="#9ca3af"
+                    className="font-mono tabular-nums"
+                  >
+                    {chartMetrics.aoBottom.toFixed(aoDigits)}
+                  </text>
+                </>
+              )}
 
               {/* Candlesticks & AO Histogram (occupying left 70% with generous right whitespace) */}
               {visibleBars.map((bar, idx) => {
@@ -935,8 +944,9 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                 const aoY = aoToY(bar.ao);
                 const aoRectTop = bar.ao >= 0 ? aoY : aoZeroY;
                 const aoRectH = Math.max(1.5, Math.abs(aoY - aoZeroY));
-                // User rule: Green when >= 0 (cut up), Red when < 0 (cut down)
-                const aoColor = bar.ao >= 0 ? '#22c55e' : '#ef4444';
+                // User rule: Green when > 0 (cut up), Red when < 0 (cut down), muted on exact 0
+                const aoColor =
+                  bar.ao > 0 ? '#22c55e' : bar.ao < 0 ? '#ef4444' : '#374151';
 
                 const isHovered = hoveredIdx === idx;
                 const showXTick = idx === 2 || idx === 22 || idx === 42 || idx === 62;
@@ -1103,57 +1113,63 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                 opacity={0.8}
               />
 
-              <g
-                transform={`translate(${plotRight + 2}, ${Math.min(
-                  Math.max(latestCloseY - 12, 6),
-                  priceH - 36
-                )})`}
-              >
-                <rect
-                  x={0}
-                  y={0}
-                  width={padR - 4}
-                  height={33}
-                  fill="#404040"
-                  stroke="#525252"
-                  strokeWidth="0.75"
-                />
-                <text
-                  x={6}
-                  y={14}
-                  fontSize="12.5"
-                  fontWeight="500"
-                  fill="#ffffff"
-                  className="font-mono tabular-nums"
+              {!isWebMode && (
+                <g
+                  transform={`translate(${plotRight + 2}, ${Math.min(
+                    Math.max(latestCloseY - 12, 6),
+                    priceH - 36
+                  )})`}
                 >
-                  {latestClosedBar.close.toFixed(spec.digits)}
-                </text>
-                <text
-                  x={6}
-                  y={28}
-                  fontSize="11.5"
-                  fill="#e5e7eb"
-                  className="font-mono tabular-nums"
-                >
-                  {feedMode === 'live' ? barCountdown : '00:00'}
-                </text>
-              </g>
+                  <rect
+                    x={0}
+                    y={0}
+                    width={padR - 4}
+                    height={33}
+                    fill="#404040"
+                    stroke="#525252"
+                    strokeWidth="0.75"
+                  />
+                  <text
+                    x={6}
+                    y={14}
+                    fontSize="12.5"
+                    fontWeight="500"
+                    fill="#ffffff"
+                    className="font-mono tabular-nums"
+                  >
+                    {latestClosedBar.close.toFixed(spec.digits)}
+                  </text>
+                  <text
+                    x={6}
+                    y={28}
+                    fontSize="11.5"
+                    fill="#e5e7eb"
+                    className="font-mono tabular-nums"
+                  >
+                    {feedMode === 'live' ? barCountdown : '00:00'}
+                  </text>
+                </g>
+              )}
             </svg>
           </div>
         </div>
 
-        {/* Right Column: Android Preview + Autonomous Background Monitor */}
+        {/* Right Column: Notification Preview + Autonomous Background Monitor */}
         <div className="lg:col-span-4 flex flex-col justify-between gap-5 rounded-xl border border-slate-200 bg-white p-5">
           <div>
             <div className="flex items-center justify-between gap-2 pb-3">
               <div className="flex items-center gap-2">
                 <Smartphone className="h-4 w-4 text-slate-600" />
                 <h3 className="text-sm font-semibold text-slate-900">
-                  แจ้งเตือนบน Android
+                  {isWebMode ? 'แจ้งเตือน' : 'แจ้งเตือนบน Android'}
                 </h3>
               </div>
               <span className="font-mono text-[11px] text-slate-400">
-                {feedSource || 'M5'}
+                {isWebMode
+                  ? feedMode === 'live'
+                    ? 'Live M5'
+                    : 'M5'
+                  : feedSource || 'M5'}
               </span>
             </div>
 
@@ -1355,38 +1371,40 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         </div>
       </div>
 
-      {/* 4-Column Summary Strip */}
-      <div className="grid grid-cols-2 gap-4 rounded-xl border border-slate-200 bg-white p-5 lg:grid-cols-4">
-        <div>
-          <p className="text-xs text-slate-500">สินทรัพย์</p>
-          <p className="mt-1 text-base font-semibold text-slate-900 tabular-nums">
-            {symbol}
-          </p>
+      {/* 4-Column Summary Strip (shown in Studio mode only) */}
+      {!isWebMode && (
+        <div className="grid grid-cols-2 gap-4 rounded-xl border border-slate-200 bg-white p-5 lg:grid-cols-4">
+          <div>
+            <p className="text-xs text-slate-500">สินทรัพย์</p>
+            <p className="mt-1 text-base font-semibold text-slate-900 tabular-nums">
+              {symbol}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">แหล่งข้อมูล</p>
+            <p className="mt-1 text-base font-semibold text-slate-900 tabular-nums">
+              {feedMode === 'live' ? 'กราฟจริง M5' : 'จำลอง M5'}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">AO ล่าสุด (5, 34)</p>
+            <p
+              className={`mt-1 font-mono text-base font-semibold tabular-nums ${
+                latestClosedBar.ao >= 0 ? 'text-emerald-700' : 'text-rose-700'
+              }`}
+            >
+              {latestClosedBar.ao >= 0 ? '+' : ''}
+              {latestClosedBar.ao.toFixed(aoDigits)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">จุดตัดบนกราฟ</p>
+            <p className="mt-1 text-base font-semibold text-slate-900 tabular-nums">
+              {detectedInVisible} ครั้ง
+            </p>
+          </div>
         </div>
-        <div>
-          <p className="text-xs text-slate-500">แหล่งข้อมูล</p>
-          <p className="mt-1 text-base font-semibold text-slate-900 tabular-nums">
-            {feedMode === 'live' ? 'กราฟจริง M5' : 'จำลอง M5'}
-          </p>
-        </div>
-        <div>
-          <p className="text-xs text-slate-500">AO ล่าสุด (5, 34)</p>
-          <p
-            className={`mt-1 font-mono text-base font-semibold tabular-nums ${
-              latestClosedBar.ao >= 0 ? 'text-emerald-700' : 'text-rose-700'
-            }`}
-          >
-            {latestClosedBar.ao >= 0 ? '+' : ''}
-            {latestClosedBar.ao.toFixed(aoDigits)}
-          </p>
-        </div>
-        <div>
-          <p className="text-xs text-slate-500">จุดตัดบนกราฟ</p>
-          <p className="mt-1 text-base font-semibold text-slate-900 tabular-nums">
-            {detectedInVisible} ครั้ง
-          </p>
-        </div>
-      </div>
+      )}
     </section>
   );
 };

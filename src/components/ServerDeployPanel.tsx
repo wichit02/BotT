@@ -43,7 +43,13 @@ interface GithubSyncStatus {
   repoUrl: string | null;
 }
 
-export const ServerDeployPanel: React.FC = () => {
+interface ServerDeployPanelProps {
+  onPreviewWebMode?: () => void;
+}
+
+export const ServerDeployPanel: React.FC<ServerDeployPanelProps> = ({
+  onPreviewWebMode,
+}) => {
   const [fileCount, setFileCount] = useState<number | null>(null);
   const [filesPreview, setFilesPreview] = useState<string[]>([]);
   const [downloading, setDownloading] = useState(false);
@@ -318,7 +324,17 @@ TELEGRAM_MODE=always`;
             </div>
           </div>
 
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            {onPreviewWebMode && (
+              <button
+                type="button"
+                onClick={onPreviewWebMode}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                ดูตัวอย่างหน้าเว็บออนไลน์
+              </button>
+            )}
             {ghStatus?.connected ? (
               <span className="inline-flex items-center gap-1.5 font-medium text-emerald-700">
                 <CheckCircle2 className="h-4 w-4" />

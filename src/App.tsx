@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Download } from 'lucide-react';
+import { ArrowLeft, Download } from 'lucide-react';
 import { AoChartSimulator } from './components/AoChartSimulator';
 import { Mql5Studio } from './components/Mql5Studio';
 import { AndroidSetupGuide } from './components/AndroidSetupGuide';
@@ -36,6 +36,18 @@ export default function App() {
   const [mql5Config, setMql5Config] = useState<Mql5Config>(DEFAULT_MQL5_CONFIG);
   const [signals, setSignals] = useState<SignalLogRecord[]>([]);
   const [telegramSyncedReady, setTelegramSyncedReady] = useState<boolean | null>(null);
+  const [devPreviewWeb, setDevPreviewWeb] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('view') === 'web';
+  });
+
+  const forceStudio =
+    typeof window !== 'undefined' &&
+    ['1', 'true'].includes(
+      new URLSearchParams(window.location.search).get('studio') || ''
+    );
+  const isWebMode = (import.meta.env.PROD && !forceStudio) || devPreviewWeb;
 
   useEffect(() => {
     let cancelled = false;
@@ -159,26 +171,65 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
-      {/* Top Bar Contract: 3 zones separated by gap-8 */}
-      <header className="border-b border-slate-200/80 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-8 px-4 py-4 sm:px-6 lg:px-8">
-          {/* Zone 1: Brand wordmark only */}
-          <a
-            href="#top"
-            onClick={(e) => {
-              e.preventDefault();
-              setActiveSection('simulator');
-            }}
-            className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
-          >
-            AO Signal Studio
-          </a>
+      {/* Studio Top Bar: hidden on deployed online web view to match clean live UI */}
+      {!isWebMode && (
+        <header className="border-b border-slate-200/80 bg-white">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-8 px-4 py-4 sm:px-6 lg:px-8">
+            {/* Zone 1: Brand wordmark only */}
+            <a
+              href="#top"
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveSection('simulator');
+              }}
+              className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
+            >
+              AO Signal Studio
+            </a>
 
-          {/* Zone 2: concise single-line nav links */}
-          <nav
-            aria-label="เมนูหลัก"
-            className="hidden md:flex items-center gap-6 text-sm font-medium"
-          >
+            {/* Zone 2: concise single-line nav links */}
+            <nav
+              aria-label="เมนูหลัก"
+              className="hidden md:flex items-center gap-6 text-sm font-medium"
+            >
+              {NAV_ITEMS.map((item) => {
+                const isActive = activeSection === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setActiveSection(item.id)}
+                    className={`py-1 whitespace-nowrap shrink-0 border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${
+                      isActive
+                        ? 'border-blue-600 text-slate-900'
+                        : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
+                    }`}
+                  >
+                    {item.label}
+                    {item.id === 'sheets' && unsyncedCount > 0
+                      ? ` (${unsyncedCount})`
+                      : ''}
+                  </button>
+                );
+              })}
+            </nav>
+
+            {/* Zone 3: 1 primary action + optional PWA install */}
+            <div className="flex items-center gap-2 shrink-0">
+              <PWAInstallButton />
+              <button
+                type="button"
+                onClick={handleQuickDownload}
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-medium text-white whitespace-nowrap shrink-0 transition-colors hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-blue-600"
+              >
+                <Download className="h-3.5 w-3.5" />
+                ดาวน์โหลด .mq5
+              </button>
+            </div>
+          </div>
+
+          {/* Mobile Nav Switcher */}
+          <div className="flex md:hidden items-center gap-2 overflow-x-auto border-t border-slate-100 px-4 py-2">
             {NAV_ITEMS.map((item) => {
               const isActive = activeSection === item.id;
               return (
@@ -186,66 +237,70 @@ export default function App() {
                   key={item.id}
                   type="button"
                   onClick={() => setActiveSection(item.id)}
-                  className={`py-1 whitespace-nowrap shrink-0 border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${
+                  className={`h-9 rounded-md px-3 text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
                     isActive
-                      ? 'border-blue-600 text-slate-900'
-                      : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
                   {item.label}
-                  {item.id === 'sheets' && unsyncedCount > 0
-                    ? ` (${unsyncedCount})`
-                    : ''}
                 </button>
               );
             })}
-          </nav>
-
-          {/* Zone 3: 1 primary action + optional PWA install */}
-          <div className="flex items-center gap-2 shrink-0">
-            <PWAInstallButton />
-            <button
-              type="button"
-              onClick={handleQuickDownload}
-              className="inline-flex h-9 items-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-medium text-white whitespace-nowrap shrink-0 transition-colors hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-blue-600"
-            >
-              <Download className="h-3.5 w-3.5" />
-              ดาวน์โหลด .mq5
-            </button>
           </div>
-        </div>
-
-        {/* Mobile Nav Switcher */}
-        <div className="flex md:hidden items-center gap-2 overflow-x-auto border-t border-slate-100 px-4 py-2">
-          {NAV_ITEMS.map((item) => {
-            const isActive = activeSection === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setActiveSection(item.id)}
-                className={`h-9 rounded-md px-3 text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
-                  isActive
-                    ? 'bg-slate-900 text-white'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-      </header>
+        </header>
+      )}
 
       {/* Main Workspace */}
-      <main id="top" className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 lg:px-8">
+      <main
+        id="top"
+        className={`mx-auto w-full max-w-6xl flex-1 px-4 sm:px-6 lg:px-8 ${
+          isWebMode ? 'py-5' : 'py-8'
+        }`}
+      >
+        {/* Dev preview exit pill (only visible when previewing web mode inside Dev Studio) */}
+        {devPreviewWeb && !import.meta.env.PROD && (
+          <div className="mb-3 flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            <span>กำลังดูตัวอย่างหน้าตาเว็บจริง (เมื่อนำขึ้น GitHub / Server ออนไลน์)</span>
+            <button
+              type="button"
+              onClick={() => {
+                setDevPreviewWeb(false);
+                setActiveSection('deploy');
+              }}
+              className="inline-flex items-center gap-1 font-semibold text-blue-700 hover:underline"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              กลับหน้า Studio
+            </button>
+          </div>
+        )}
+
+        {/* Back button when opening Telegram/Sheets sub-view from deployed web UI */}
+        {isWebMode && activeSection !== 'simulator' && (
+          <div className="mb-4">
+            <button
+              type="button"
+              onClick={() => setActiveSection('simulator')}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              กลับหน้ากราฟ
+            </button>
+          </div>
+        )}
+
         {/* Clean Minimal Title */}
-        <div className="mb-7">
+        <div className={isWebMode ? 'mb-4' : 'mb-7'}>
           <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
-            แจ้งเตือน AO ตัดเส้น 0 ({mql5Config.lockM5 ? 'M5' : 'Chart'}) เข้ามือถือ Android
+            {isWebMode
+              ? 'แจ้งเตือน AO'
+              : `แจ้งเตือน AO ตัดเส้น 0 (${mql5Config.lockM5 ? 'M5' : 'Chart'}) เข้ามือถือ Android`}
           </h1>
           <p className="mt-1 text-xs text-slate-500">
-            MetaTrader 5 · BUY / SELL · เสียงแจ้งเตือน 10 วินาที · Google Sheets
+            {isWebMode
+              ? 'MetaTrader 5 · BUY / SELL'
+              : 'MetaTrader 5 · BUY / SELL · เสียงแจ้งเตือน 10 วินาที · Google Sheets'}
           </p>
         </div>
 
@@ -260,6 +315,7 @@ export default function App() {
             onGoToSheets={() => setActiveSection('sheets')}
             onGoToTelegram={() => setActiveSection('telegram')}
             telegramSyncedReady={telegramSyncedReady}
+            isWebMode={isWebMode}
           />
         )}
 
@@ -285,16 +341,25 @@ export default function App() {
           />
         )}
 
-        {activeSection === 'deploy' && <ServerDeployPanel />}
+        {activeSection === 'deploy' && (
+          <ServerDeployPanel
+            onPreviewWebMode={() => {
+              setDevPreviewWeb(true);
+              setActiveSection('simulator');
+            }}
+          />
+        )}
       </main>
 
-      {/* Quiet Clean Footer */}
-      <footer className="border-t border-slate-200/80 bg-white py-4">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 text-xs text-slate-400 sm:px-6 lg:px-8">
-          <span>AO Signal Studio</span>
-          <span>US100 · M5 (US 100 Index Cash)</span>
-        </div>
-      </footer>
+      {/* Quiet Clean Footer (shown in Studio mode only) */}
+      {!isWebMode && (
+        <footer className="border-t border-slate-200/80 bg-white py-4">
+          <div className="mx-auto flex max-w-6xl items-center justify-between px-4 text-xs text-slate-400 sm:px-6 lg:px-8">
+            <span>AO Signal Studio</span>
+            <span>US100 · M5 (US 100 Index Cash)</span>
+          </div>
+        </footer>
+      )}
       <OfflineIndicator />
     </div>
   );
