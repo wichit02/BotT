@@ -92,14 +92,59 @@ export function download10SecondWav(kind: AlertToneKind = 'general'): void {
   URL.revokeObjectURL(url);
 }
 
-let activeAudioEl: HTMLAudioElement | null = null;
+let sharedAudioEl: HTMLAudioElement | null = null;
 let activeAudioUrl: string | null = null;
+let activeOnEnded: (() => void) | undefined;
+
+function getSharedAudioEl(): HTMLAudioElement | null {
+  if (typeof Audio === 'undefined') return null;
+  if (!sharedAudioEl) {
+    sharedAudioEl = new Audio();
+  }
+  return sharedAudioEl;
+}
+
+export function unlockAlertAudio(): void {
+  const el = getSharedAudioEl();
+  if (!el) return;
+  try {
+    // 10ms silent PCM WAV to unlock media playback on user gesture
+    const buf = new ArrayBuffer(44 + 440);
+    const v = new DataView(buf);
+    writeString(v, 0, 'RIFF');
+    v.setUint32(4, 36 + 440, true);
+    writeString(v, 8, 'WAVE');
+    writeString(v, 12, 'fmt ');
+    v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true);
+    v.setUint32(24, SAMPLE_RATE, true);
+    v.setUint32(28, SAMPLE_RATE * 2, true);
+    v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true);
+    writeString(v, 36, 'data');
+    v.setUint32(40, 440, true);
+    const url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    el.src = url;
+    void el.play()
+      .then(() => {
+        el.pause();
+        URL.revokeObjectURL(url);
+      })
+      .catch(() => {
+        URL.revokeObjectURL(url);
+      });
+  } catch {
+    // Ignore audio unlock errors
+  }
+}
 
 export function stop10SecondSound(): void {
-  if (activeAudioEl) {
-    activeAudioEl.pause();
-    activeAudioEl.currentTime = 0;
-    activeAudioEl = null;
+  activeOnEnded = undefined;
+  if (sharedAudioEl) {
+    sharedAudioEl.onended = null;
+    sharedAudioEl.pause();
+    sharedAudioEl.currentTime = 0;
   }
   if (activeAudioUrl) {
     URL.revokeObjectURL(activeAudioUrl);
@@ -112,20 +157,28 @@ export function play10SecondSound(
   onEnded?: () => void
 ): () => void {
   stop10SecondSound();
+  const audio = getSharedAudioEl();
+  if (!audio) {
+    onEnded?.();
+    return stop10SecondSound;
+  }
+
   const blob = build10SecondWavBlob(kind);
   const url = URL.createObjectURL(blob);
-  const audio = new Audio(url);
-  activeAudioEl = audio;
   activeAudioUrl = url;
+  activeOnEnded = onEnded;
+  audio.src = url;
 
   audio.onended = () => {
+    const cb = activeOnEnded;
     stop10SecondSound();
-    onEnded?.();
+    cb?.();
   };
 
   audio.play().catch(() => {
+    const cb = activeOnEnded;
     stop10SecondSound();
-    onEnded?.();
+    cb?.();
   });
 
   return stop10SecondSound;
