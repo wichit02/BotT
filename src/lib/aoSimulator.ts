@@ -1,4 +1,4 @@
-export type TradingSymbol = 'BTCUSD' | 'XAUUSD' | 'US30' | 'US100' | 'US500';
+export type TradingSymbol = 'US100';
 
 export interface SymbolSpec {
   symbol: TradingSymbol;
@@ -9,40 +9,12 @@ export interface SymbolSpec {
 }
 
 export const SYMBOL_SPECS: Record<TradingSymbol, SymbolSpec> = {
-  BTCUSD: {
-    symbol: 'BTCUSD',
-    basePrice: 67125.0,
-    stepSize: 165.0,
-    digits: 2,
-    label: 'Bitcoin / US Dollar',
-  },
-  XAUUSD: {
-    symbol: 'XAUUSD',
-    basePrice: 3890.0,
-    stepSize: 2.2,
-    digits: 2,
-    label: 'Gold / US Dollar',
-  },
-  US30: {
-    symbol: 'US30',
-    basePrice: 52400.0,
-    stepSize: 38.0,
-    digits: 2,
-    label: 'US30 (Dow Jones)',
-  },
   US100: {
     symbol: 'US100',
-    basePrice: 28030.0,
-    stepSize: 24.0,
+    basePrice: 27726.62,
+    stepSize: 22.0,
     digits: 2,
-    label: 'US100 (Nasdaq 100)',
-  },
-  US500: {
-    symbol: 'US500',
-    basePrice: 7580.0,
-    stepSize: 6.5,
-    digits: 2,
-    label: 'US500 (S&P 500)',
+    label: 'US 100 Index Cash',
   },
 };
 

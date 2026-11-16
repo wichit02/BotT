@@ -1,6 +1,6 @@
 # AO Signal Studio (M5 Awesome Oscillator Monitor)
 
-ระบบเฝ้าสัญญาณ **Awesome Oscillator (5, 34)** ตัดเส้น 0 บนกรอบเวลา **M5** ตลอด 24 ชั่วโมงสำหรับ `US100`, `US30`, `US500`, `XAUUSD`, และ `BTCUSD` พร้อมส่งแจ้งเตือนเข้า **Telegram** และ **Android Web Push**
+ระบบเฝ้าสัญญาณ **Awesome Oscillator (5, 34)** ตัดเส้น 0 บนกรอบเวลา **M5** ตลอด 24 ชั่วโมงสำหรับ **US100 (US 100 Index Cash)** พร้อมส่งแจ้งเตือนเข้า **Telegram** และ **Android Web Push**
 
 ---
 

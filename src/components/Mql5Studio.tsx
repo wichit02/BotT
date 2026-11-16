@@ -308,7 +308,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
               onChange={(e) =>
                 onChangeConfig({ ...config, watchlistSymbols: e.target.value })
               }
-              placeholder="BTCUSD,XAUUSD,US30,US100,US500"
+              placeholder="US100"
               className="h-9 w-full rounded-lg border border-slate-200 px-3 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
             />
           </div>
