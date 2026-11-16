@@ -1,0 +1,14 @@
+{
+  "app": "AO Signal Studio (M5)",
+  "monitoredSymbols": [
+    "US100",
+    "US30",
+    "US500",
+    "XAUUSD",
+    "BTCUSD"
+  ],
+  "direction": "both",
+  "totalCapturedSignals": 0,
+  "latestSignalAt": null,
+  "events": []
+}

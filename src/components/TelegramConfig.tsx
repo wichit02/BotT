@@ -1,0 +1,657 @@
+import React, { useEffect, useState } from 'react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Search,
+  Send,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react';
+import type { Mql5Config } from '../lib/mql5Generator';
+import {
+  clearSavedTelegramConfig,
+  loadSavedTelegramConfig,
+  saveTelegramConfigLocally,
+} from '../lib/telegramStorage';
+
+interface MonitorEventItem {
+  id: string;
+  timestamp: string;
+  symbol: string;
+  signal: 'BUY' | 'SELL';
+  price: number;
+  deliveredWebPushCount: number;
+  deliveredToTelegram?: boolean;
+}
+
+interface TelegramConfigProps {
+  mql5Config: Mql5Config;
+  onUpdateMql5Config: (next: Mql5Config) => void;
+  onConfiguredChange?: (configured: boolean) => void;
+}
+
+export const TelegramConfig: React.FC<TelegramConfigProps> = ({
+  mql5Config,
+  onUpdateMql5Config,
+  onConfiguredChange,
+}) => {
+  const [botToken, setBotToken] = useState(
+    () => mql5Config.telegramBotToken || loadSavedTelegramConfig()?.telegramBotToken || ''
+  );
+  const [chatId, setChatId] = useState(
+    () => mql5Config.telegramChatId || loadSavedTelegramConfig()?.telegramChatId || ''
+  );
+  const [showToken, setShowToken] = useState(false);
+  const [telegramMode, setTelegramMode] = useState<'fallback' | 'always'>('always');
+  const [syncToMql5, setSyncToMql5] = useState(true);
+
+  const [hasSavedToken, setHasSavedToken] = useState(false);
+  const [isConfigured, setIsConfigured] = useState(false);
+  const [subscribersCount, setSubscribersCount] = useState(0);
+  const [events, setEvents] = useState<MonitorEventItem[]>([]);
+  const [isBusy, setIsBusy] = useState(false);
+  const [botLink, setBotLink] = useState<{
+    username?: string;
+    url: string;
+  } | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{
+    type: 'ok' | 'err' | 'warn';
+    text: string;
+  } | null>(null);
+
+  const trimmedChatId = chatId.trim();
+  const isLikelyInvalidChatId =
+    trimmedChatId.length > 0 &&
+    !/^-?\d+$/.test(trimmedChatId) &&
+    !trimmedChatId.startsWith('@');
+
+  const loadStatus = async () => {
+    try {
+      const res = await fetch('/api/monitor/status');
+      if (!res.ok) return;
+      const data = await res.json();
+      setHasSavedToken(Boolean(data.telegramHasToken || data.telegramConfigured));
+      setIsConfigured(Boolean(data.telegramConfigured));
+      if (typeof data.telegramChatId === 'string' && data.telegramChatId) {
+        setChatId((prev) => prev || data.telegramChatId);
+      }
+      if (data.telegramMode === 'always' || data.telegramMode === 'fallback') {
+        setTelegramMode(data.telegramMode);
+      }
+      if (typeof data.subscribersCount === 'number') {
+        setSubscribersCount(data.subscribersCount);
+      }
+      if (Array.isArray(data.events)) {
+        setEvents(data.events);
+      }
+    } catch {
+      // Ignore transient network error on mount
+    }
+  };
+
+  useEffect(() => {
+    void loadStatus();
+  }, []);
+
+  const applyMql5SyncIfChecked = (tokenVal: string, chatVal: string) => {
+    if (!syncToMql5) return;
+    const effectiveToken = tokenVal.trim() || mql5Config.telegramBotToken;
+    onUpdateMql5Config({
+      ...mql5Config,
+      enableTelegram: Boolean(effectiveToken && chatVal.trim()),
+      telegramBotToken: effectiveToken,
+      telegramChatId: chatVal.trim(),
+    });
+  };
+
+  const handleAutoDetectChatId = async () => {
+    if (!botToken.trim() && !hasSavedToken) {
+      setStatusMessage({
+        type: 'err',
+        text: 'กรุณากรอก Bot Token จาก @BotFather ก่อนกดดึง Chat ID',
+      });
+      return;
+    }
+
+    setIsBusy(true);
+    setStatusMessage(null);
+    try {
+      const res = await fetch('/api/monitor/telegram-detect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telegramBotToken: botToken.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.botUrl) {
+        setBotLink({ username: data.botUsername, url: data.botUrl });
+      }
+      if (!res.ok) {
+        throw new Error(data.error || 'ดึง Chat ID ไม่สำเร็จ');
+      }
+
+      setHasSavedToken(true);
+
+      if (data.needsStart) {
+        setStatusMessage({
+          type: 'warn',
+          text:
+            data.message ||
+            'กรุณากดเปิดแชทบอทใน Telegram แล้วกดปุ่ม Start 1 ครั้ง จากนั้นกดปุ่มดึง Chat ID อีกครั้ง',
+        });
+        return;
+      }
+
+      if (data.detectedChatId) {
+        const detected = String(data.detectedChatId);
+        setChatId(detected);
+        setIsConfigured(true);
+        onConfiguredChange?.(true);
+        const effectiveToken = botToken.trim() || mql5Config.telegramBotToken;
+        if (effectiveToken) {
+          saveTelegramConfigLocally({
+            telegramBotToken: effectiveToken,
+            telegramChatId: detected,
+            telegramMode,
+          });
+        }
+        applyMql5SyncIfChecked(botToken, detected);
+
+        // Immediately send confirmation test message
+        const testRes = await fetch('/api/monitor/test-telegram', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            telegramBotToken: botToken.trim(),
+            telegramChatId: detected,
+          }),
+        });
+        if (testRes.ok) {
+          setStatusMessage({
+            type: 'ok',
+            text: `พบ Chat ID (${detected}) และส่งข้อความทดสอบเข้า Telegram สำเร็จแล้ว`,
+          });
+        } else {
+          setStatusMessage({
+            type: 'ok',
+            text: `ดึง Chat ID (${detected}) สำเร็จแล้ว กรุณากดบันทึกและทดสอบ`,
+          });
+        }
+      }
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'err',
+        text: err?.message || 'ดึง Chat ID ไม่สำเร็จ',
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleSaveOnly = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!trimmedChatId || (!botToken.trim() && !hasSavedToken)) {
+      setStatusMessage({
+        type: 'err',
+        text: 'กรุณากรอก Bot Token และ Chat ID ของ Telegram',
+      });
+      return;
+    }
+
+    setIsBusy(true);
+    setStatusMessage(null);
+    try {
+      const res = await fetch('/api/monitor/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telegramBotToken: botToken.trim(),
+          telegramChatId: trimmedChatId,
+          telegramMode,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'บันทึกการตั้งค่าไม่สำเร็จ');
+
+      setHasSavedToken(Boolean(data.telegramHasToken));
+      setIsConfigured(Boolean(data.telegramConfigured));
+      onConfiguredChange?.(Boolean(data.telegramConfigured));
+      const effectiveToken = botToken.trim() || mql5Config.telegramBotToken;
+      if (effectiveToken && trimmedChatId) {
+        saveTelegramConfigLocally({
+          telegramBotToken: effectiveToken,
+          telegramChatId: trimmedChatId,
+          telegramMode,
+        });
+      }
+      applyMql5SyncIfChecked(botToken, trimmedChatId);
+      setStatusMessage({
+        type: 'ok',
+        text: 'บันทึกการตั้งค่า Telegram เรียบร้อยแล้ว',
+      });
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'err',
+        text: err?.message || 'บันทึกการตั้งค่าไม่สำเร็จ',
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleSaveAndTest = async () => {
+    if (!trimmedChatId || (!botToken.trim() && !hasSavedToken)) {
+      setStatusMessage({
+        type: 'err',
+        text: 'กรุณากรอก Bot Token และ Chat ID ก่อนทดสอบ (หรือกดปุ่ม "ดึง Chat ID อัตโนมัติ")',
+      });
+      return;
+    }
+
+    setIsBusy(true);
+    setStatusMessage(null);
+    try {
+      await fetch('/api/monitor/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telegramBotToken: botToken.trim(),
+          telegramChatId: trimmedChatId,
+          telegramMode,
+        }),
+      });
+
+      const res = await fetch('/api/monitor/test-telegram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telegramBotToken: botToken.trim(),
+          telegramChatId: trimmedChatId,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (body.botUrl) {
+        setBotLink({ username: body.botUsername, url: body.botUrl });
+      }
+      if (!res.ok) {
+        throw new Error(body.error || 'ส่งข้อความเข้า Telegram ไม่สำเร็จ');
+      }
+
+      setHasSavedToken(true);
+      setIsConfigured(true);
+      onConfiguredChange?.(true);
+      const effectiveToken = botToken.trim() || mql5Config.telegramBotToken;
+      if (effectiveToken && trimmedChatId) {
+        saveTelegramConfigLocally({
+          telegramBotToken: effectiveToken,
+          telegramChatId: trimmedChatId,
+          telegramMode,
+        });
+      }
+      applyMql5SyncIfChecked(botToken, trimmedChatId);
+      setStatusMessage({
+        type: 'ok',
+        text: 'ส่งข้อความทดสอบเข้า Telegram สำเร็จ พร้อมรับสัญญาณ AO M5 แล้ว',
+      });
+      await loadStatus();
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'err',
+        text: err?.message || 'ส่งข้อความเข้า Telegram ไม่สำเร็จ',
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setIsBusy(true);
+    setStatusMessage(null);
+    try {
+      const res = await fetch('/api/monitor/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clearTelegram: true }),
+      });
+      if (!res.ok) throw new Error('ยกเลิกการเชื่อมต่อไม่สำเร็จ');
+      clearSavedTelegramConfig();
+      setHasSavedToken(false);
+      setIsConfigured(false);
+      onConfiguredChange?.(false);
+      setBotToken('');
+      setChatId('');
+      setBotLink(null);
+      if (syncToMql5) {
+        onUpdateMql5Config({
+          ...mql5Config,
+          enableTelegram: false,
+          telegramBotToken: '',
+          telegramChatId: '',
+        });
+      }
+      setStatusMessage({
+        type: 'ok',
+        text: 'ยกเลิกการเชื่อมต่อ Telegram แล้ว',
+      });
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'err',
+        text: err?.message || 'ยกเลิกไม่สำเร็จ',
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  return (
+    <section className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
+      {/* Main Form */}
+      <form
+        onSubmit={handleSaveOnly}
+        className="lg:col-span-7 rounded-xl border border-slate-200 bg-white p-6 space-y-5"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">
+              Telegram Configuration
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              แจ้งเตือนสัญญาณ AO ตัดเส้น 0 (M5) เข้าแชท Telegram โดยตรง
+            </p>
+          </div>
+          <span
+            className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+              isConfigured ? 'text-emerald-700' : 'text-amber-600'
+            }`}
+          >
+            <span
+              className={`h-2 w-2 rounded-full ${
+                isConfigured ? 'bg-emerald-500' : 'bg-amber-400'
+              }`}
+            />
+            {isConfigured
+              ? 'เชื่อมต่อแล้ว'
+              : hasSavedToken
+              ? 'รอ Chat ID ตัวเลข'
+              : 'ยังไม่ตั้งค่า'}
+          </span>
+        </div>
+
+        {/* Bot Token */}
+        <div className="space-y-1.5">
+          <label
+            htmlFor="telegram-config-token"
+            className="block text-xs font-medium text-slate-700"
+          >
+            Telegram Bot Token
+          </label>
+          <div className="relative">
+            <input
+              id="telegram-config-token"
+              type={showToken ? 'text' : 'password'}
+              autoComplete="off"
+              value={botToken}
+              onChange={(e) => setBotToken(e.target.value)}
+              placeholder={
+                hasSavedToken
+                  ? 'บันทึก Token ไว้บนเซิร์ฟเวอร์แล้ว (กรอกใหม่เพื่อเปลี่ยน)'
+                  : 'เช่น 123456789:ABCdefGHIjklMNOpqrsTUVwxyz'
+              }
+              className="h-10 w-full rounded-lg border border-slate-200 pl-3 pr-10 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => setShowToken((s) => !s)}
+              aria-label={showToken ? 'ซ่อน Token' : 'แสดง Token'}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+            >
+              {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Chat ID + Auto Detect */}
+        <div className="space-y-1.5">
+          <label
+            htmlFor="telegram-config-chat-id"
+            className="block text-xs font-medium text-slate-700"
+          >
+            Telegram Chat ID (ตัวเลขบัญชีผู้ใช้ของคุณ ไม่ใช่ชื่อบอท)
+          </label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              id="telegram-config-chat-id"
+              type="text"
+              autoComplete="off"
+              value={chatId}
+              onChange={(e) => setChatId(e.target.value)}
+              placeholder="เช่น 987654321"
+              className={`h-10 flex-1 rounded-lg border px-3 font-mono text-xs text-slate-900 focus:outline-none ${
+                isLikelyInvalidChatId
+                  ? 'border-amber-400 bg-amber-50/40 focus:border-amber-500'
+                  : 'border-slate-200 focus:border-blue-600'
+              }`}
+            />
+            <button
+              type="button"
+              disabled={isBusy || (!botToken.trim() && !hasSavedToken)}
+              onClick={() => void handleAutoDetectChatId()}
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+            >
+              <Search className="h-3.5 w-3.5" />
+              ดึง Chat ID อัตโนมัติ
+            </button>
+          </div>
+
+          {isLikelyInvalidChatId && (
+            <p className="flex items-center gap-1.5 text-[11px] text-amber-700">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              <span>
+                “{trimmedChatId}” ไม่ใช่ Chat ID ตัวเลข — ให้เปิดแชทบอทใน Telegram กด <strong>Start</strong> แล้วกด <strong>ดึง Chat ID อัตโนมัติ</strong>
+              </span>
+            </p>
+          )}
+
+          {botLink && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+              <span>
+                1. กดเปิดแชทบอท{' '}
+                <span className="font-mono font-semibold">
+                  @{botLink.username}
+                </span>{' '}
+                แล้วกดปุ่ม <strong>Start</strong> → 2. กลับมากด{' '}
+                <strong>ดึง Chat ID อัตโนมัติ</strong>
+              </span>
+              <a
+                href={botLink.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-md bg-sky-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-sky-700"
+              >
+                เปิดแชทบอท
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
+          )}
+        </div>
+
+        {/* Delivery Mode: Fallback vs Always */}
+        <div className="space-y-2">
+          <label className="block text-xs font-medium text-slate-700">
+            เงื่อนไขการส่งเข้า Telegram
+          </label>
+          <div className="grid grid-cols-1 gap-1.5 rounded-lg bg-slate-100 p-1 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setTelegramMode('fallback')}
+              className={`h-9 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors ${
+                telegramMode === 'fallback'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              สำรองเมื่อ Android Push ไม่ทำงาน
+            </button>
+            <button
+              type="button"
+              onClick={() => setTelegramMode('always')}
+              className={`h-9 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors ${
+                telegramMode === 'always'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              ส่งคู่ขนานทุกสัญญาณ (Always)
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-500">
+            {telegramMode === 'fallback'
+              ? `สถานะปัจจุบัน: มีอุปกรณ์ Android Web Push เชื่อมต่ออยู่ ${subscribersCount} เครื่อง (ถ้าส่งเข้ามือถือไม่ได้ ระบบจะสลับส่งเข้า Telegram ทันที)`
+              : 'ส่งข้อความเข้า Telegram ทันทีทุกครั้งที่เกิดสัญญาณ BUY / SELL บน M5'}
+          </p>
+        </div>
+
+        {/* Optional MQL5 Sync */}
+        <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer pt-1">
+          <input
+            type="checkbox"
+            checked={syncToMql5}
+            onChange={(e) => setSyncToMql5(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+          />
+          <span>อัปเดต Token และ Chat ID นี้เข้าโค้ด MT5 EA ในแท็บ โค้ด MQL5 ด้วย</span>
+        </label>
+
+        {statusMessage && (
+          <div
+            className={`flex items-start gap-2 rounded-lg border px-3.5 py-2.5 text-xs ${
+              statusMessage.type === 'ok'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                : statusMessage.type === 'warn'
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : 'border-rose-200 bg-rose-50 text-rose-800'
+            }`}
+          >
+            {statusMessage.type === 'ok' ? (
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+            ) : (
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            )}
+            <span>{statusMessage.text}</span>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-slate-100">
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={() => void handleSaveAndTest()}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            <Send className="h-3.5 w-3.5" />
+            บันทึกและทดสอบส่งข้อความ
+          </button>
+
+          <button
+            type="submit"
+            disabled={isBusy}
+            className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-white px-4 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            บันทึกการตั้งค่า
+          </button>
+
+          {(hasSavedToken || isConfigured) && (
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => void handleDisconnect()}
+              className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              ยกเลิกการเชื่อมต่อ
+            </button>
+          )}
+        </div>
+      </form>
+
+      {/* Right Column: Quick Setup Guide + Recent Server Alerts */}
+      <div className="lg:col-span-5 space-y-5">
+        <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-blue-600" />
+            <h3 className="text-sm font-semibold text-slate-900">
+              วิธีเชื่อมต่อให้ส่งเข้าแชททันที (3 ขั้นตอน)
+            </h3>
+          </div>
+          <ol className="space-y-2 text-xs text-slate-600 list-decimal list-inside">
+            <li>
+              วาง <strong>Bot Token</strong> จาก{' '}
+              <span className="font-mono text-slate-900">@BotFather</span>
+            </li>
+            <li>
+              เปิดแชทบอทของคุณใน Telegram แล้วกดปุ่ม <strong>Start</strong> 1 ครั้ง (บอทจะส่งข้อความเข้าแชทไม่ได้ถ้ายังไม่เคยกด Start)
+            </li>
+            <li>
+              กดปุ่ม <strong>ดึง Chat ID อัตโนมัติ</strong> ระบบจะดึงเลข Chat ID ของคุณและทดสอบส่งข้อความให้ทันที
+            </li>
+          </ol>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-900">
+              ประวัติการแจ้งเตือนจากเซิร์ฟเวอร์
+            </h3>
+            <span className="font-mono text-xs text-slate-400">
+              {events.length} รายการ
+            </span>
+          </div>
+
+          {events.length === 0 ? (
+            <p className="text-xs text-slate-400">
+              ยังไม่มีสัญญาณ AO M5 ใหม่ตั้งแต่เปิดเซิร์ฟเวอร์
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {events.slice(0, 5).map((ev) => (
+                <li
+                  key={ev.id}
+                  className="flex items-center justify-between gap-2 py-2 text-xs"
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`font-semibold ${
+                          ev.signal === 'BUY' ? 'text-emerald-700' : 'text-rose-700'
+                        }`}
+                      >
+                        {ev.signal}
+                      </span>
+                      <span className="font-medium text-slate-900">{ev.symbol}</span>
+                      <span className="font-mono text-slate-500">{ev.price}</span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-slate-400">{ev.timestamp}</p>
+                  </div>
+                  <div className="text-right text-[11px] text-slate-500">
+                    {ev.deliveredToTelegram ? (
+                      <span className="text-sky-700 font-medium">Telegram ✓</span>
+                    ) : ev.deliveredWebPushCount > 0 ? (
+                      <span className="text-emerald-700 font-medium">Android Push ✓</span>
+                    ) : (
+                      <span>บันทึกแล้ว</span>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+};
