@@ -240,24 +240,23 @@ export function appendNextM5Bar(
     Math.cos(idx * 0.11) * spec.stepSize * 0.45 +
     (((Math.sin(idx * 1.3 + rawBars.length) + 1) * 0.5 - 0.5) * spec.stepSize * 0.4);
 
-    const open = last.close;
-    const close = roundToDigits(open + delta, spec.digits);
-    const wickUp = Math.abs(Math.sin(idx * 2.1)) * spec.stepSize * 0.45 + spec.stepSize * 0.1;
-    const wickDown = Math.abs(Math.cos(idx * 1.9)) * spec.stepSize * 0.45 + spec.stepSize * 0.1;
-    const high = roundToDigits(Math.max(open, close) + wickUp, spec.digits);
-    const low = roundToDigits(Math.min(open, close) - wickDown, spec.digits);
+  const open = last.close;
+  const close = roundToDigits(open + delta, spec.digits);
+  const wickUp = Math.abs(Math.sin(idx * 2.1)) * spec.stepSize * 0.45 + spec.stepSize * 0.1;
+  const wickDown = Math.abs(Math.cos(idx * 1.9)) * spec.stepSize * 0.45 + spec.stepSize * 0.1;
+  const high = roundToDigits(Math.max(open, close) + wickUp, spec.digits);
+  const low = roundToDigits(Math.min(open, close) - wickDown, spec.digits);
 
-    rawBars.push({
-      index: idx,
-      timeLabel: formatM5Time(nextDate),
-      timestampIso: nextDate.toISOString(),
-      open,
-      high,
-      low,
-      close,
-      median: (high + low) / 2,
-    });
-  }
+  rawBars.push({
+    index: idx,
+    timeLabel: formatM5Time(nextDate),
+    timestampIso: nextDate.toISOString(),
+    open,
+    high,
+    low,
+    close,
+    median: (high + low) / 2,
+  });
 
   // Keep sliding window of 110 bars so SMA(34) stays warmed up for all visible bars
   const trimmed = rawBars.slice(-110);
