@@ -124,6 +124,18 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundSecondsLeft, setSoundSecondsLeft] = useState(0);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  const [panOffset, setPanOffset] = useState<number>(0);
+  const [isDraggingChart, setIsDraggingChart] = useState(false);
+  const dragStartXRef = useRef<number | null>(null);
+  const dragStartPanRef = useRef<number>(0);
+
+  const [animatedTip, setAnimatedTip] = useState<{ close: number; ao: number }>(() => {
+    const last = bars[bars.length - 1];
+    return { close: last.close, ao: last.ao };
+  });
+  const animatedTipRef = useRef<{ close: number; ao: number }>(animatedTip);
+  animatedTipRef.current = animatedTip;
+
   const [lastPushBanner, setLastPushBanner] = useState<{
     symbol: string;
     signal: 'BUY' | 'SELL';
@@ -176,6 +188,39 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
   const barsRef = useRef<M5Bar[]>(bars);
   barsRef.current = bars;
   const spec = SYMBOL_SPECS[symbol];
+
+  // Smoothly ease the live forming candle price and AO bar toward each incoming tick
+  useEffect(() => {
+    const latest = bars[bars.length - 1];
+    if (!latest) return;
+    const fromClose = animatedTipRef.current.close;
+    const fromAo = animatedTipRef.current.ao;
+    const toClose = latest.close;
+    const toAo = latest.ao;
+
+    if (Math.abs(toClose - fromClose) < 1e-6 && Math.abs(toAo - fromAo) < 1e-6) {
+      return;
+    }
+
+    let rafId = 0;
+    const durationMs = 420;
+    const startTs = performance.now();
+
+    const step = (now: number) => {
+      const progress = Math.min(1, (now - startTs) / durationMs);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      setAnimatedTip({
+        close: fromClose + (toClose - fromClose) * ease,
+        ao: fromAo + (toAo - fromAo) * ease,
+      });
+      if (progress < 1) {
+        rafId = window.requestAnimationFrame(step);
+      }
+    };
+
+    rafId = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [bars]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -396,8 +441,8 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
   }, []);
 
   const fetchLiveBars = useCallback(
-    async (targetSymbol: TradingSymbol) => {
-      setIsLoadingLive(true);
+    async (targetSymbol: TradingSymbol, silent = false) => {
+      if (!silent) setIsLoadingLive(true);
       setLiveError(null);
       try {
         const res = await fetch(
@@ -475,19 +520,19 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
       } catch (err: any) {
         setLiveError(err?.message || 'เชื่อมต่อฟีดกราฟจริงไม่สำเร็จ');
       } finally {
-        setIsLoadingLive(false);
+        if (!silent) setIsLoadingLive(false);
       }
     },
     [alertDirection, emitAlert]
   );
 
-  // Poll live market every 8s when in Live mode
+  // Real-time 2-second streaming poll in Live mode
   useEffect(() => {
     if (feedMode !== 'live') return;
-    void fetchLiveBars(symbol);
+    void fetchLiveBars(symbol, false);
     const id = window.setInterval(() => {
-      void fetchLiveBars(symbol);
-    }, 8000);
+      void fetchLiveBars(symbol, true);
+    }, 2000);
     return () => window.clearInterval(id);
   }, [feedMode, symbol, fetchLiveBars]);
 
@@ -495,6 +540,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
     setIsPlaying(false);
     setFeedMode(nextMode);
     setHoveredIdx(null);
+    setPanOffset(0);
     setLiveError(null);
     if (nextMode === 'sim') {
       const initBars = generateInitialSeries(symbol);
@@ -649,8 +695,30 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
 
   const aoDigits = spec.digits + 1;
 
-  // Match MT5 mobile chart density & right-side shift spacing (~72 candles + ~28% right breathing gap)
-  const visibleBars = useMemo(() => bars.slice(-72), [bars]);
+  // Apply smooth interpolated close/ao onto the live forming bar
+  const liveBars = useMemo(() => {
+    if (bars.length === 0) return bars;
+    const copy = bars.slice();
+    const last = copy[copy.length - 1];
+    copy[copy.length - 1] = {
+      ...last,
+      close: animatedTip.close,
+      high: Math.max(last.high, animatedTip.close),
+      low: Math.min(last.low, animatedTip.close),
+      ao: animatedTip.ao,
+    };
+    return copy;
+  }, [bars, animatedTip]);
+
+  const visibleCount = 68;
+  const maxPan = Math.max(0, liveBars.length - visibleCount);
+  const clampedPan = Math.min(Math.max(0, Math.round(panOffset)), maxPan);
+
+  const visibleBars = useMemo(() => {
+    const endIdx = liveBars.length - clampedPan;
+    const startIdx = Math.max(0, endIdx - visibleCount);
+    return liveBars.slice(startIdx, endIdx);
+  }, [liveBars, clampedPan]);
 
   const chartMetrics = useMemo(() => {
     const highs = visibleBars.map((b) => b.high);
@@ -680,28 +748,28 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
       ? visibleBars[hoveredIdx]
       : visibleBars[visibleBars.length - 1];
 
-  const latestClosedBar = visibleBars[visibleBars.length - 1];
+  const latestClosedBar = liveBars[liveBars.length - 1];
   const detectedInVisible = visibleBars.filter((b) => b.signal !== null).length;
 
-  // Geometry matching MT5 mobile chart proportions & right-side chart shift
-  const svgW = 860;
+  // Geometry matching XM MT5 mobile chart proportions & right-side chart shift
+  const svgW = 800;
   const priceH = 290;
   const dividerY = priceH;
-  const aoH = 165;
+  const aoH = 162;
   const xAxisY = dividerY + aoH;
   const totalH = xAxisY + 26;
 
-  const padL = 8;
-  const padR = isWebMode ? 8 : 96; // Clean full-width canvas in web mode vs MT5 right scale gutter in Studio
+  const padL = 6;
+  const padR = 92; // Always display XM MT5 right-side price scale & countdown box
   const plotLeft = padL;
   const plotRight = svgW - padR;
   const totalPlotW = plotRight - plotLeft;
 
-  // Reserve ~28% empty space on the right like MT5 Chart Shift in the screenshot
-  const activeCandlesW = totalPlotW * 0.7;
+  // Reserve ~28% empty space on the right when locked at live edge (MT5 Chart Shift)
+  const activeCandlesW = clampedPan === 0 ? totalPlotW * 0.72 : totalPlotW * 0.96;
   const slotW = activeCandlesW / visibleBars.length;
-  const candleW = Math.max(2.6, Math.min(4.8, slotW * 0.56));
-  const aoBarW = Math.max(1.6, Math.min(2.6, slotW * 0.34));
+  const candleW = Math.max(2.6, Math.min(5.2, slotW * 0.56));
+  const aoBarW = Math.max(1.6, Math.min(2.8, slotW * 0.36));
 
   const priceToY = (p: number) => {
     const ratio =
@@ -715,10 +783,44 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
     return dividerY + 18 + ratio * (aoH - 32);
   };
   const aoZeroY = aoToY(0);
-  const latestCloseY = priceToY(latestClosedBar.close);
+  const latestCloseY = Math.min(Math.max(priceToY(latestClosedBar.close), 8), priceH - 8);
+  const showLatestLine =
+    latestClosedBar.close <= chartMetrics.priceTop &&
+    latestClosedBar.close >= chartMetrics.priceBottom;
 
-  // 7 crisp horizontal price scale levels on the right axis matching MT5
+  // 7 crisp horizontal price scale levels on the right axis matching XM MT5
   const priceTickRatios = [0.06, 0.21, 0.36, 0.51, 0.66, 0.81, 0.94];
+
+  const handleChartPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    dragStartXRef.current = e.clientX;
+    dragStartPanRef.current = panOffset;
+    setIsDraggingChart(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleChartPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!isDraggingChart || dragStartXRef.current === null) return;
+    const dx = e.clientX - dragStartXRef.current;
+    // Dragging right reveals older left-side bars (increases panOffset)
+    const barsDelta = Math.round(dx / Math.max(6, slotW));
+    setPanOffset(Math.min(Math.max(0, dragStartPanRef.current + barsDelta), maxPan));
+  };
+
+  const handleChartPointerEnd = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!isDraggingChart) return;
+    setIsDraggingChart(false);
+    dragStartXRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  };
+
+  const handleChartWheel = (e: React.WheelEvent<SVGSVGElement>) => {
+    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (Math.abs(delta) < 4) return;
+    const step = delta > 0 ? -3 : 3;
+    setPanOffset((prev) => Math.min(Math.max(0, prev + step), maxPan));
+  };
 
   return (
     <section className="space-y-6">
@@ -940,57 +1042,69 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
             </div>
           </div>
 
-          <div className="relative w-full overflow-x-auto">
+          <div className="relative w-full overflow-hidden">
+            {clampedPan > 0 && (
+              <button
+                type="button"
+                onClick={() => setPanOffset(0)}
+                className="absolute bottom-9 right-24 z-10 rounded-md border border-neutral-600 bg-neutral-900/90 px-2.5 py-1 text-[11px] font-medium text-sky-400 shadow hover:bg-neutral-800"
+              >
+                ล่าสุด ›
+              </button>
+            )}
             <svg
               viewBox={`0 0 ${svgW} ${totalH}`}
-              className="h-auto w-full min-w-[600px] select-none"
+              onPointerDown={handleChartPointerDown}
+              onPointerMove={handleChartPointerMove}
+              onPointerUp={handleChartPointerEnd}
+              onPointerCancel={handleChartPointerEnd}
+              onWheel={handleChartWheel}
+              className={`h-auto w-full select-none touch-pan-y ${
+                isDraggingChart ? 'cursor-grabbing' : 'cursor-grab'
+              }`}
               role="img"
-              aria-label="กราฟราคาและ Awesome Oscillator ของ US100 กรอบเวลา M5"
+              aria-label="กราฟราคาและ Awesome Oscillator ของ US100 กรอบเวลา M5 แบบ XM MT5"
             >
               {/* Pure Black MT5 Canvas */}
               <rect x={0} y={0} width={svgW} height={totalH} fill="#000000" />
 
-              {/* Vertical Right Y-Axis Divider & Scale (Studio mode only) */}
-              {!isWebMode && (
-                <>
-                  <line
-                    x1={plotRight}
-                    y1={0}
-                    x2={plotRight}
-                    y2={xAxisY}
-                    stroke="#3a3a3a"
-                    strokeWidth="1"
-                  />
+              {/* Vertical Right Y-Axis Divider & Scale (XM MT5 Mobile Layout) */}
+              <line
+                x1={plotRight}
+                y1={0}
+                x2={plotRight}
+                y2={xAxisY}
+                stroke="#3a3a3a"
+                strokeWidth="1"
+              />
 
-                  {priceTickRatios.map((ratio, idx) => {
-                    const y = 12 + ratio * (priceH - 22);
-                    const priceVal =
-                      chartMetrics.priceTop -
-                      ratio * (chartMetrics.priceTop - chartMetrics.priceBottom);
-                    return (
-                      <g key={`p-tick-${idx}`}>
-                        <line
-                          x1={plotRight}
-                          y1={y}
-                          x2={plotRight + 4}
-                          y2={y}
-                          stroke="#525252"
-                          strokeWidth="1"
-                        />
-                        <text
-                          x={plotRight + 7}
-                          y={y + 4}
-                          fontSize="12"
-                          fill="#9ca3af"
-                          className="font-mono tabular-nums"
-                        >
-                          {priceVal.toFixed(spec.digits)}
-                        </text>
-                      </g>
-                    );
-                  })}
-                </>
-              )}
+              {priceTickRatios.map((ratio, idx) => {
+                const y = 12 + ratio * (priceH - 22);
+                const priceVal =
+                  chartMetrics.priceTop -
+                  ratio * (chartMetrics.priceTop - chartMetrics.priceBottom);
+                return (
+                  <g key={`p-tick-${idx}`}>
+                    <line
+                      x1={plotRight}
+                      y1={y}
+                      x2={plotRight + 4}
+                      y2={y}
+                      stroke="#525252"
+                      strokeWidth="1"
+                    />
+                    <text
+                      x={plotRight + 7}
+                      y={y + 4}
+                      fontSize="12.5"
+                      fill="#9ca3af"
+                      className="font-mono tabular-nums"
+                    >
+                      {priceVal.toFixed(spec.digits)}
+                    </text>
+                  </g>
+                );
+              })}
 
               {/* Horizontal separator between Price pane and AO pane */}
               <line
@@ -1022,40 +1136,36 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                 strokeWidth="1"
               />
 
-              {/* AO Right-Axis Scale Labels (Studio mode only) */}
-              {!isWebMode && (
-                <>
-                  <text
-                    x={plotRight + 7}
-                    y={dividerY + 18}
-                    fontSize="12"
-                    fill="#9ca3af"
-                    className="font-mono tabular-nums"
-                  >
-                    {chartMetrics.aoTop.toFixed(aoDigits)}
-                  </text>
-                  <text
-                    x={plotRight + 7}
-                    y={aoZeroY + 4}
-                    fontSize="12"
-                    fill="#9ca3af"
-                    className="font-mono tabular-nums"
-                  >
-                    {Number(0).toFixed(aoDigits)}
-                  </text>
-                  <text
-                    x={plotRight + 7}
-                    y={xAxisY - 6}
-                    fontSize="12"
-                    fill="#9ca3af"
-                    className="font-mono tabular-nums"
-                  >
-                    {chartMetrics.aoBottom.toFixed(aoDigits)}
-                  </text>
-                </>
-              )}
+              {/* AO Right-Axis Scale Labels (XM MT5 Mobile Layout) */}
+              <text
+                x={plotRight + 7}
+                y={dividerY + 18}
+                fontSize="12.5"
+                fill="#9ca3af"
+                className="font-mono tabular-nums"
+              >
+                {chartMetrics.aoTop.toFixed(aoDigits)}
+              </text>
+              <text
+                x={plotRight + 7}
+                y={aoZeroY + 4}
+                fontSize="12.5"
+                fill="#9ca3af"
+                className="font-mono tabular-nums"
+              >
+                {Number(0).toFixed(aoDigits)}
+              </text>
+              <text
+                x={plotRight + 7}
+                y={xAxisY - 6}
+                fontSize="12.5"
+                fill="#9ca3af"
+                className="font-mono tabular-nums"
+              >
+                {chartMetrics.aoBottom.toFixed(aoDigits)}
+              </text>
 
-              {/* Candlesticks & AO Histogram (occupying left 70% with generous right whitespace) */}
+              {/* Candlesticks & AO Histogram */}
               {visibleBars.map((bar, idx) => {
                 const xCenter = plotLeft + 6 + idx * slotW + slotW / 2;
                 const isBull = bar.close >= bar.open;
@@ -1170,7 +1280,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                           x={xCenter}
                           y={xAxisY + 18}
                           textAnchor="middle"
-                          fontSize="11.5"
+                          fontSize="12"
                           fill="#9ca3af"
                           className="font-sans tabular-nums"
                         >
@@ -1182,25 +1292,25 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                 );
               })}
 
-              {/* Top-left MT5 Watermark (rendered cleanly above bars like screenshot) */}
+              {/* Top-left XM MT5 Watermark */}
               <text
                 x={plotLeft + 8}
                 y={22}
-                fontSize="14"
+                fontSize="14.5"
                 fontWeight="700"
                 fill="#1e88e5"
                 className="font-sans"
               >
                 US100Cash#
-                <tspan fill="#9ca3af" fontWeight="400" fontSize="13">
+                <tspan fill="#9ca3af" fontWeight="400" fontSize="13.5">
                   {' '}
                   ▾ M5
                 </tspan>
               </text>
               <text
                 x={plotLeft + 8}
-                y={39}
-                fontSize="12.5"
+                y={40}
+                fontSize="13"
                 fill="#9ca3af"
                 className="font-sans"
               >
@@ -1211,7 +1321,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
               <text
                 x={plotLeft + 8}
                 y={dividerY + 19}
-                fontSize="12.5"
+                fontSize="13"
                 fill="#9ca3af"
                 className="font-sans tabular-nums"
               >
@@ -1221,63 +1331,65 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                 </tspan>
               </text>
 
-              {/* Horizontal Bid/Close Price Lines + MT5 Dark Gray Price & M5 Countdown Badge */}
-              <line
-                x1={plotLeft}
-                y1={latestCloseY - 1.5}
-                x2={svgW}
-                y2={latestCloseY - 1.5}
-                stroke="#b91c1c"
-                strokeWidth="0.9"
-                opacity={0.85}
-              />
-              <line
-                x1={plotLeft}
-                y1={latestCloseY}
-                x2={plotRight}
-                y2={latestCloseY}
-                stroke="#6b7280"
-                strokeWidth="0.9"
-                opacity={0.8}
-              />
-
-              {!isWebMode && (
-                <g
-                  transform={`translate(${plotRight + 2}, ${Math.min(
-                    Math.max(latestCloseY - 12, 6),
-                    priceH - 36
-                  )})`}
-                >
-                  <rect
-                    x={0}
-                    y={0}
-                    width={padR - 4}
-                    height={33}
-                    fill="#404040"
-                    stroke="#525252"
-                    strokeWidth="0.75"
+              {/* Horizontal Ask/Bid Price Lines + MT5 Dark Gray Price & M5 Countdown Badge */}
+              {showLatestLine && (
+                <>
+                  <line
+                    x1={plotLeft}
+                    y1={latestCloseY - 1.5}
+                    x2={svgW}
+                    y2={latestCloseY - 1.5}
+                    stroke="#b91c1c"
+                    strokeWidth="0.95"
+                    opacity={0.9}
                   />
-                  <text
-                    x={6}
-                    y={14}
-                    fontSize="12.5"
-                    fontWeight="500"
-                    fill="#ffffff"
-                    className="font-mono tabular-nums"
-                  >
-                    {latestClosedBar.close.toFixed(spec.digits)}
-                  </text>
-                  <text
-                    x={6}
-                    y={28}
-                    fontSize="11.5"
-                    fill="#e5e7eb"
-                    className="font-mono tabular-nums"
-                  >
-                    {feedMode === 'live' ? barCountdown : '00:00'}
-                  </text>
-                </g>
+                  <line
+                    x1={plotLeft}
+                    y1={latestCloseY}
+                    x2={plotRight}
+                    y2={latestCloseY}
+                    stroke="#6b7280"
+                    strokeWidth="0.95"
+                    opacity={0.85}
+                  />
+                </>
               )}
+
+              <g
+                transform={`translate(${plotRight + 2}, ${Math.min(
+                  Math.max(latestCloseY - 12, 6),
+                  priceH - 36
+                )})`}
+              >
+                <rect
+                  x={0}
+                  y={0}
+                  width={padR - 4}
+                  height={33}
+                  fill="#404040"
+                  stroke="#525252"
+                  strokeWidth="0.75"
+                />
+                <text
+                  x={6}
+                  y={14}
+                  fontSize="12.5"
+                  fontWeight="600"
+                  fill="#ffffff"
+                  className="font-mono tabular-nums"
+                >
+                  {latestClosedBar.close.toFixed(spec.digits)}
+                </text>
+                <text
+                  x={6}
+                  y={28}
+                  fontSize="11.5"
+                  fill="#e5e7eb"
+                  className="font-mono tabular-nums"
+                >
+                  {feedMode === 'live' ? barCountdown : '00:00'}
+                </text>
+              </g>
             </svg>
           </div>
         </div>
