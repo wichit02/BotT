@@ -96,11 +96,21 @@ const STATE_FILE = path.join(STATE_DIR, 'ao-server-state.json');
 
 const feedCache = new Map<TradingSymbol, { expiresAt: number; data: MarketFeedResult }>();
 
+function normalizeTelegramChatId(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  // Telegram supergroups/channels are 13-digit IDs starting with -100 (often copied without leading '-')
+  if (/^100\d{9,}$/.test(trimmed)) {
+    return `-${trimmed}`;
+  }
+  return trimmed;
+}
+
 function loadPersistedState(): PersistedServerState {
   const envPublic = process.env.VAPID_PUBLIC_KEY?.trim();
   const envPrivate = process.env.VAPID_PRIVATE_KEY?.trim();
   const envTgToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || '';
-  const envTgChatId = process.env.TELEGRAM_CHAT_ID?.trim() || '';
+  const envTgChatId = normalizeTelegramChatId(process.env.TELEGRAM_CHAT_ID || '');
   const envTgMode = process.env.TELEGRAM_MODE?.trim() === 'fallback' ? 'fallback' : 'always';
   const envNtfy = process.env.NTFY_TOPIC?.trim() || '';
   const envGithubToken = process.env.GITHUB_TOKEN?.trim() || '';
@@ -132,7 +142,7 @@ function loadPersistedState(): PersistedServerState {
             : envTgToken,
         telegramChatId:
           typeof parsed.telegramChatId === 'string' && parsed.telegramChatId
-            ? parsed.telegramChatId
+            ? normalizeTelegramChatId(parsed.telegramChatId)
             : envTgChatId,
         telegramMode:
           parsed.telegramMode === 'fallback' || parsed.telegramMode === 'always'
@@ -960,6 +970,7 @@ async function fetchYahooM5(symbol: TradingSymbol): Promise<MarketFeedResult> {
 
   const json = (await res.json()) as any;
   const result = json?.chart?.result?.[0];
+  const meta = result?.meta || {};
   const timestamps: number[] = result?.timestamp || [];
   const quote = result?.indicators?.quote?.[0] || {};
   const opens: Array<number | null> = quote.open || [];
@@ -991,13 +1002,32 @@ async function fetchYahooM5(symbol: TradingSymbol): Promise<MarketFeedResult> {
     });
   }
 
-  const warmupSlice = cleaned.slice(-180).map((b, idx) => ({ ...b, index: idx }));
+  // Merge latest regularMarketPrice tick onto the forming candle for sub-2s real-time responsiveness
+  const liveQuotePrice = Number(meta?.regularMarketPrice);
+  if (cleaned.length > 0 && Number.isFinite(liveQuotePrice) && liveQuotePrice > 0) {
+    const lastBar = cleaned[cleaned.length - 1];
+    const liveRounded = roundTo(liveQuotePrice, mapping.digits);
+    lastBar.close = liveRounded;
+    if (liveRounded > lastBar.high) lastBar.high = liveRounded;
+    if (liveRounded < lastBar.low) lastBar.low = liveRounded;
+    lastBar.median = (lastBar.high + lastBar.low) / 2;
+    const liveMarketTimeSec = Number(meta?.regularMarketTime);
+    if (Number.isFinite(liveMarketTimeSec) && liveMarketTimeSec > 0) {
+      const liveDt = new Date(liveMarketTimeSec * 1000);
+      if (liveDt.getTime() >= new Date(lastBar.timestampIso).getTime()) {
+        lastBar.timestampIso = liveDt.toISOString();
+        lastBar.timeLabel = formatTimeLabel(liveDt);
+      }
+    }
+  }
+
+  const warmupSlice = cleaned.slice(-260).map((b, idx) => ({ ...b, index: idx }));
   if (warmupSlice.length < 36) {
     throw new Error('ข้อมูล M5 ไม่เพียงพอสำหรับคำนวณ AO');
   }
 
   const bars = computeAwesomeOscillator(warmupSlice)
-    .slice(-90)
+    .slice(-180)
     .map((b, idx) => ({ ...b, index: idx }));
 
   const latestBarTs = new Date(bars[bars.length - 1].timestampIso).getTime();
@@ -1022,7 +1052,7 @@ async function getLiveM5Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
   const data = await fetchYahooM5(symbol);
 
   feedCache.set(symbol, {
-    expiresAt: Date.now() + 8000,
+    expiresAt: Date.now() + 1500,
     data,
   });
   return data;
@@ -1143,7 +1173,7 @@ async function sendTelegramPush(
   parseMode?: 'HTML'
 ): Promise<{ ok: boolean; error?: string; botUrl?: string; botUsername?: string }> {
   const token = sanitizeTelegramToken(botToken);
-  const chat = chatId.trim();
+  const chat = normalizeTelegramChatId(chatId);
   if (!token || !chat) {
     return { ok: false, error: 'กรุณากรอก Bot Token และ Chat ID ของ Telegram' };
   }
@@ -1351,7 +1381,7 @@ async function runBackgroundMonitorCycle() {
 
 setInterval(() => {
   void runBackgroundMonitorCycle();
-}, 10000);
+}, 3000);
 
 setTimeout(() => {
   void runBackgroundMonitorCycle();
@@ -1362,7 +1392,7 @@ async function startServer() {
   app.use(express.json());
 
   app.get('/api/health', async (_req, res) => {
-    if (persisted.enabled && Date.now() - monitorRuntime.lastCheckedMs > 8000) {
+    if (persisted.enabled && Date.now() - monitorRuntime.lastCheckedMs > 3000) {
       void runBackgroundMonitorCycle();
     }
     res.json({
@@ -1513,7 +1543,7 @@ async function startServer() {
         persisted.telegramBotToken = body.telegramBotToken.trim();
       }
       if (typeof body.telegramChatId === 'string') {
-        persisted.telegramChatId = body.telegramChatId.trim();
+        persisted.telegramChatId = normalizeTelegramChatId(body.telegramChatId);
       }
     }
     if (body.telegramMode === 'fallback' || body.telegramMode === 'always') {
@@ -1652,9 +1682,9 @@ async function startServer() {
     const token = sanitizeTelegramToken(
       String(req.body?.telegramBotToken || persisted.telegramBotToken || '')
     );
-    const chatId = String(
-      req.body?.telegramChatId || persisted.telegramChatId || ''
-    ).trim();
+    const chatId = normalizeTelegramChatId(
+      String(req.body?.telegramChatId || persisted.telegramChatId || '')
+    );
 
     if (!token || !chatId) {
       res.status(400).json({ error: 'กรุณากรอก Bot Token และ Chat ID ของ Telegram' });
