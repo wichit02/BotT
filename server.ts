@@ -252,6 +252,7 @@ const monitorRuntime = {
   lastCheckedMs: 0,
   isRunningCycle: false,
   lastBarBySymbol: {} as Partial<Record<TradingSymbol, string>>,
+  lastAoBySymbol: {} as Partial<Record<TradingSymbol, number>>,
   dispatchedLiveSignalKeys: new Set<string>(),
 };
 
@@ -274,23 +275,11 @@ function normalizeM5BarKey(sym: TradingSymbol, barTimestampIso: string): string 
 
 function hasLiveBarBeenAlerted(
   sym: TradingSymbol,
-  barTimestampIso: string,
+  _barTimestampIso: string,
   signal: 'BUY' | 'SELL'
 ): boolean {
-  const normalizedKey = normalizeM5BarKey(sym, barTimestampIso);
-  const runtimeKey = `live-${normalizedKey}`;
-  if (monitorRuntime.dispatchedLiveSignalKeys.has(runtimeKey)) return true;
-  if (
-    persisted.alertedBarKeys.some((k) => {
-      if (k === normalizedKey) return true;
-      const prefix = `${sym}-`;
-      return k.startsWith(prefix) && normalizeM5BarKey(sym, k.slice(prefix.length)) === normalizedKey;
-    })
-  ) {
-    return true;
-  }
-  if (persisted.lastLiveDirectionBySymbol[sym] === signal) return true;
-  return false;
+  // Never block an opposite indicator cross inside the same M5 candle; only prevent duplicate same-direction pings
+  return persisted.lastLiveDirectionBySymbol[sym] === signal;
 }
 
 function recordLiveBarAlerted(
@@ -299,11 +288,9 @@ function recordLiveBarAlerted(
   signal: 'BUY' | 'SELL'
 ): void {
   const normalizedKey = normalizeM5BarKey(sym, barTimestampIso);
-  const runtimeKey = `live-${normalizedKey}`;
+  const runtimeKey = `live-${normalizedKey}-${signal}`;
   markLiveSignalDispatched(runtimeKey);
-  if (!persisted.alertedBarKeys.includes(normalizedKey)) {
-    persisted.alertedBarKeys = [normalizedKey, ...persisted.alertedBarKeys].slice(0, 60);
-  }
+  persisted.alertedBarKeys = [`${normalizedKey}-${signal}`, ...persisted.alertedBarKeys].slice(0, 60);
   persisted.lastLiveDirectionBySymbol[sym] = signal;
   syncPersistence();
 }
@@ -1292,84 +1279,104 @@ async function runBackgroundMonitorCycle() {
         const bars = feed.bars;
         if (bars.length < 3) continue;
 
-        // Check both the live forming M5 candle (immediate cross) and previous closed candle (fallback)
-        const candidates: Array<{ targetBar: M5Candle; prevBar: M5Candle }> = [
-          { targetBar: bars[bars.length - 1], prevBar: bars[bars.length - 2] },
-          { targetBar: bars[bars.length - 2], prevBar: bars[bars.length - 3] },
-        ];
+        const currBar = bars[bars.length - 1];
+        const prevClosedBar = bars[bars.length - 2];
+        if (!currBar || !prevClosedBar) continue;
 
-        for (const { targetBar, prevBar } of candidates) {
-          if (!targetBar || !prevBar || !targetBar.signal) continue;
+        const prevTrackedAo = monitorRuntime.lastAoBySymbol[sym];
+        const currAo = currBar.ao;
+        const prevAo = prevTrackedAo !== undefined ? prevTrackedAo : prevClosedBar.ao;
+        monitorRuntime.lastAoBySymbol[sym] = currAo;
 
-          // Skip stale bars (e.g. Friday's close when market is closed on weekend)
-          const barAgeMinutes =
-            (Date.now() - new Date(targetBar.timestampIso).getTime()) / 60000;
-          if (barAgeMinutes > 20) continue;
+        let liveSignal: 'BUY' | 'SELL' | null = null;
+        let aoBefore = prevAo;
+        let aoAfter = currAo;
+        let targetBar = currBar;
 
-          if (persisted.direction === 'buy_only' && targetBar.signal !== 'BUY') continue;
-          if (persisted.direction === 'sell_only' && targetBar.signal !== 'SELL') continue;
-
-          if (hasLiveBarBeenAlerted(sym, targetBar.timestampIso, targetBar.signal)) {
-            continue;
+        // Pure M5 indicator zero-line crossover detection (never waits for candle close or next candle)
+        if (prevAo <= 0 && currAo > 0) {
+          liveSignal = 'BUY';
+        } else if (prevAo >= 0 && currAo < 0) {
+          liveSignal = 'SELL';
+        } else if (prevTrackedAo === undefined && prevClosedBar.signal) {
+          const prev2 = bars[bars.length - 3];
+          const prevAge = (Date.now() - new Date(prevClosedBar.timestampIso).getTime()) / 60000;
+          if (prev2 && prevAge <= 10 && persisted.lastLiveDirectionBySymbol[sym] !== prevClosedBar.signal) {
+            liveSignal = prevClosedBar.signal;
+            aoBefore = prev2.ao;
+            aoAfter = prevClosedBar.ao;
+            targetBar = prevClosedBar;
           }
-          recordLiveBarAlerted(sym, targetBar.timestampIso, targetBar.signal);
-          monitorRuntime.lastBarBySymbol[sym] = `${targetBar.timestampIso}:${targetBar.signal}`;
-
-          const title = `AO M5 ${targetBar.signal}: ${sym}`;
-          const body = `${sym} M5 ${targetBar.signal} | AO ${prevBar.ao.toFixed(
-            5
-          )} → ${targetBar.ao.toFixed(5)} | ราคา ${targetBar.close}`;
-
-          const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
-            broadcastWebPush({
-              title,
-              body,
-              tag: `ao-${sym}-${targetBar.timestampIso}`,
-              url: '/',
-            }),
-            persisted.ntfyTopic
-              ? sendNtfyPush(persisted.ntfyTopic, title, body)
-              : Promise.resolve(false),
-          ]);
-
-          const shouldSendTelegram =
-            Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
-            (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
-
-          const tgRes = shouldSendTelegram
-            ? await sendTelegramPush(
-                persisted.telegramBotToken,
-                persisted.telegramChatId,
-                formatTelegramSignalMessage({
-                  symbol: sym,
-                  timeframe: 'M5',
-                  signal: targetBar.signal,
-                  aoPrev: prevBar.ao,
-                  aoCurr: targetBar.ao,
-                  mode: 'live',
-                  timestampIso: targetBar.timestampIso,
-                }),
-                'HTML'
-              )
-            : { ok: false };
-
-          persisted.events.unshift({
-            id: `${sym}-${targetBar.timestampIso}-${targetBar.signal}`,
-            timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
-            symbol: sym,
-            signal: targetBar.signal,
-            aoPrev: prevBar.ao,
-            aoCurr: targetBar.ao,
-            price: targetBar.close,
-            deliveredToNtfy,
-            deliveredToTelegram: tgRes.ok,
-            deliveredWebPushCount,
-          });
-          persisted.events = persisted.events.slice(0, 30);
-          syncPersistence();
-          scheduleGithubAutoSync('signal-event', 1000);
-          break;
         }
+
+        if (!liveSignal) continue;
+
+        const barAgeMinutes =
+          (Date.now() - new Date(targetBar.timestampIso).getTime()) / 60000;
+        if (barAgeMinutes > 20) continue;
+
+        if (persisted.direction === 'buy_only' && liveSignal !== 'BUY') continue;
+        if (persisted.direction === 'sell_only' && liveSignal !== 'SELL') continue;
+
+        if (hasLiveBarBeenAlerted(sym, targetBar.timestampIso, liveSignal)) {
+          continue;
+        }
+        recordLiveBarAlerted(sym, targetBar.timestampIso, liveSignal);
+        monitorRuntime.lastBarBySymbol[sym] = `${targetBar.timestampIso}:${liveSignal}`;
+
+        const title = `AO M5 ${liveSignal}: ${sym}`;
+        const body = `${sym} M5 ${liveSignal} | AO ${aoBefore.toFixed(
+          5
+        )} → ${aoAfter.toFixed(5)} | ราคา ${targetBar.close}`;
+
+        const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
+          broadcastWebPush({
+            title,
+            body,
+            tag: `ao-${sym}-${liveSignal}-${Date.now()}`,
+            url: '/',
+          }),
+          persisted.ntfyTopic
+            ? sendNtfyPush(persisted.ntfyTopic, title, body)
+            : Promise.resolve(false),
+        ]);
+
+        const shouldSendTelegram =
+          Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
+          (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
+
+        const tgRes = shouldSendTelegram
+          ? await sendTelegramPush(
+              persisted.telegramBotToken,
+              persisted.telegramChatId,
+              formatTelegramSignalMessage({
+                symbol: sym,
+                timeframe: 'M5',
+                signal: liveSignal,
+                aoPrev: aoBefore,
+                aoCurr: aoAfter,
+                mode: 'live',
+                timestampIso: targetBar.timestampIso,
+              }),
+              'HTML'
+            )
+          : { ok: false };
+
+        persisted.events.unshift({
+          id: `${sym}-${targetBar.timestampIso}-${liveSignal}-${Date.now()}`,
+          timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+          symbol: sym,
+          signal: liveSignal,
+          aoPrev: aoBefore,
+          aoCurr: aoAfter,
+          price: targetBar.close,
+          deliveredToNtfy,
+          deliveredToTelegram: tgRes.ok,
+          deliveredWebPushCount,
+        });
+        persisted.events = persisted.events.slice(0, 30);
+        syncPersistence();
+        scheduleGithubAutoSync('signal-event', 1000);
       } catch {
         // Keep polling remaining symbols
       }
