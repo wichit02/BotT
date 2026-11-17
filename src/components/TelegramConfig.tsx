@@ -76,7 +76,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       setHasSavedToken(Boolean(data.telegramHasToken || data.telegramConfigured));
       setIsConfigured(Boolean(data.telegramConfigured));
       if (typeof data.telegramChatId === 'string' && data.telegramChatId) {
-        setChatId((prev) => prev || data.telegramChatId);
+        setChatId(data.telegramChatId);
       }
       if (data.telegramMode === 'always' || data.telegramMode === 'fallback') {
         setTelegramMode(data.telegramMode);
