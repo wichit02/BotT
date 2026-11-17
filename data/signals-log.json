@@ -4,9 +4,21 @@
     "US100"
   ],
   "direction": "both",
-  "totalCapturedSignals": 1,
-  "latestSignalAt": "17/11/2569 22:41:11",
+  "totalCapturedSignals": 2,
+  "latestSignalAt": "17/11/2569 22:41:53",
   "events": [
+    {
+      "id": "sim-US100-1794930113039",
+      "timestamp": "17/11/2569 22:41:53",
+      "symbol": "US100",
+      "signal": "BUY",
+      "aoPrev": -28.91876470587522,
+      "aoCurr": 3.500970588236669,
+      "price": 27868.73,
+      "deliveredToTelegram": true,
+      "deliveredToNtfy": false,
+      "deliveredWebPushCount": 0
+    },
     {
       "id": "sim-US100-1794930071340",
       "timestamp": "17/11/2569 22:41:11",
