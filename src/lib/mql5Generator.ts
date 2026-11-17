@@ -51,8 +51,6 @@ export function getMql5Filename(config: Mql5Config): string {
 
 export function generateMql5Code(config: Mql5Config): string {
   const timeframeExpr = config.lockM5 ? 'PERIOD_M5' : 'PERIOD_CURRENT';
-  const prevIdx = config.triggerMode === 'closed_bar' ? 2 : 1;
-  const currIdx = config.triggerMode === 'closed_bar' ? 1 : 0;
   const checkBuy = config.alertDirection !== 'sell_only';
   const checkSell = config.alertDirection !== 'buy_only';
   const repeatCount = config.pushDurationMode === 'repeat_push_10s' ? 4 : 1;
@@ -392,6 +390,8 @@ int OnInit()
       watchers[validCount].symbol = symbolNames[i];
       watchers[validCount].aoHandle = handle;
       watchers[validCount].lastBarTime = 0;
+      watchers[validCount].prevLiveAo = EMPTY_VALUE;
+      watchers[validCount].lastDirection = "";
       validCount++;
    }
 
@@ -626,7 +626,7 @@ void CheckAllWatchers()
       else
       {
          double aoCurr = aoValues[0];
-         double aoPrev = (watchers[i].prevLiveAo != EMPTY_VALUE && watchers[i].prevLiveAo != 0.0)
+         double aoPrev = (watchers[i].prevLiveAo != EMPTY_VALUE)
                          ? watchers[i].prevLiveAo
                          : aoValues[1];
          watchers[i].prevLiveAo = aoCurr;
