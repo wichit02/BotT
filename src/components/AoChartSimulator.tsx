@@ -185,6 +185,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
       }
     })()
   );
+  const lastLiveAoRef = useRef<number | null>(null);
   const barsRef = useRef<M5Bar[]>(bars);
   barsRef.current = bars;
   const spec = SYMBOL_SPECS[symbol];
@@ -466,55 +467,66 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
           lastLiveDirectionRef.current = data.lastLiveDirection;
         }
 
-        // Trigger strictly ONCE per zero-line crossover on the live forming candle
-        const candidates: Array<{ targetBar: M5Bar; prevBar: M5Bar }> = [
-          {
-            targetBar: data.bars[data.bars.length - 1],
-            prevBar: data.bars[data.bars.length - 2],
-          },
-          {
-            targetBar: data.bars[data.bars.length - 2],
-            prevBar: data.bars[data.bars.length - 3],
-          },
-        ];
+        // Detect pure M5 AO indicator zero-line crossover immediately (never waits for candle close or next bar)
+        const currBar = data.bars[data.bars.length - 1];
+        const prevBar = data.bars[data.bars.length - 2];
+        if (currBar && prevBar) {
+          const prevTrackedAo = lastLiveAoRef.current;
+          const prevAo = prevTrackedAo !== null ? prevTrackedAo : prevBar.ao;
+          const currAo = currBar.ao;
+          lastLiveAoRef.current = currAo;
 
-        for (const { targetBar, prevBar } of candidates) {
-          if (!targetBar || !prevBar || !targetBar.signal) continue;
-          const barAgeMinutes =
-            (Date.now() - new Date(targetBar.timestampIso).getTime()) / 60000;
-          const key = normalizeM5BarKey(targetSymbol, targetBar.timestampIso);
-          const alreadyAlertedBar = alertedLiveBarsRef.current.has(key);
-          const sameDirectionAsLast = lastLiveDirectionRef.current === targetBar.signal;
-          const shouldNotify =
-            barAgeMinutes <= 12 &&
-            !alreadyAlertedBar &&
-            !sameDirectionAsLast &&
-            (alertDirection === 'both' ||
-              (alertDirection === 'buy_only' && targetBar.signal === 'BUY') ||
-              (alertDirection === 'sell_only' && targetBar.signal === 'SELL'));
+          let liveSignal: 'BUY' | 'SELL' | null = null;
+          let aoBefore = prevAo;
+          let aoAfter = currAo;
+          let targetBar = currBar;
 
-          if (shouldNotify) {
-            alertedLiveBarsRef.current.add(key);
-            lastLiveDirectionRef.current = targetBar.signal;
-            try {
-              const recentKeys = Array.from(alertedLiveBarsRef.current).slice(-60);
-              window.localStorage.setItem('ao_alerted_bars_v1', JSON.stringify(recentKeys));
-              window.localStorage.setItem('ao_last_live_direction_v1', targetBar.signal);
-            } catch {
-              // Ignore storage quota errors
+          if (prevAo <= 0 && currAo > 0) {
+            liveSignal = 'BUY';
+          } else if (prevAo >= 0 && currAo < 0) {
+            liveSignal = 'SELL';
+          } else if (prevTrackedAo === null && prevBar.signal) {
+            const prev2 = data.bars[data.bars.length - 3];
+            const prevAge =
+              (Date.now() - new Date(prevBar.timestampIso).getTime()) / 60000;
+            if (prev2 && prevAge <= 10 && lastLiveDirectionRef.current !== prevBar.signal) {
+              liveSignal = prevBar.signal;
+              aoBefore = prev2.ao;
+              aoAfter = prevBar.ao;
+              targetBar = prevBar;
             }
-            emitAlert(
-              targetSymbol,
-              targetBar.signal,
-              prevBar.ao,
-              targetBar.ao,
-              targetBar.close,
-              targetBar.timeLabel,
-              targetBar.timestampIso,
-              'Live M5 Alert',
-              'live'
-            );
-            break;
+          }
+
+          if (liveSignal) {
+            const barAgeMinutes =
+              (Date.now() - new Date(targetBar.timestampIso).getTime()) / 60000;
+            const sameDirectionAsLast = lastLiveDirectionRef.current === liveSignal;
+            const shouldNotify =
+              barAgeMinutes <= 20 &&
+              !sameDirectionAsLast &&
+              (alertDirection === 'both' ||
+                (alertDirection === 'buy_only' && liveSignal === 'BUY') ||
+                (alertDirection === 'sell_only' && liveSignal === 'SELL'));
+
+            if (shouldNotify) {
+              lastLiveDirectionRef.current = liveSignal;
+              try {
+                window.localStorage.setItem('ao_last_live_direction_v1', liveSignal);
+              } catch {
+                // Ignore storage quota errors
+              }
+              emitAlert(
+                targetSymbol,
+                liveSignal,
+                aoBefore,
+                aoAfter,
+                targetBar.close,
+                targetBar.timeLabel,
+                targetBar.timestampIso,
+                'Live M5 Alert',
+                'live'
+              );
+            }
           }
         }
       } catch (err: any) {

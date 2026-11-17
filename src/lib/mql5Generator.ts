@@ -98,6 +98,8 @@ double   AOColorBuffer[];
 int      aoMonitorHandle = INVALID_HANDLE;
 int      aoChartHandle   = INVALID_HANDLE;
 datetime lastSignalBarTime = 0;
+double   prevLiveAo = EMPTY_VALUE;
+string   lastAlertDirection = "";
 
 //--- Repeat Push Queue State (non-blocking)
 int      pendingPushRemaining = 0;
@@ -244,9 +246,9 @@ int OnCalculate(const int rates_total,
       }
    }
 
-   //--- ตรวจสอบแท่งเทียน Timeframe เป้าหมาย (เช่น M5)
+   //--- ตรวจสอบการตัดเส้น 0 ของ AO ใน Timeframe เป้าหมาย (เช่น M5)
    datetime currentBarTime = iTime(_Symbol, InpTimeframe, 0);
-   if(currentBarTime == 0 || currentBarTime == lastSignalBarTime)
+   if(currentBarTime == 0)
       return(rates_total);
 
    double aoValues[3];
@@ -254,27 +256,43 @@ int OnCalculate(const int rates_total,
    if(CopyBuffer(aoMonitorHandle, 0, 0, 3, aoValues) < 3)
       return(rates_total);
 
-   int idxPrev = InpConfirmClose ? 2 : 1;
-   int idxCurr = InpConfirmClose ? 1 : 0;
-
-   double aoPrev = aoValues[idxPrev];
-   double aoCurr = aoValues[idxCurr];
-
-   //--- BUY ALERT: AO ตัดเส้น 0 ขึ้น (ลบ -> บวก)
-   if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0)
+   if(InpConfirmClose)
    {
-      DispatchSignalAlert("BUY", aoPrev, aoCurr);
+      if(currentBarTime == lastSignalBarTime)
+         return(rates_total);
+
+      double aoPrev = aoValues[2];
+      double aoCurr = aoValues[1];
+
+      if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0 && lastAlertDirection != "BUY")
+      {
+         DispatchSignalAlert("BUY", aoPrev, aoCurr);
+         lastAlertDirection = "BUY";
+      }
+      else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0 && lastAlertDirection != "SELL")
+      {
+         DispatchSignalAlert("SELL", aoPrev, aoCurr);
+         lastAlertDirection = "SELL";
+      }
       lastSignalBarTime = currentBarTime;
    }
-   //--- SELL ALERT: AO ตัดเส้น 0 ลง (บวก -> ลบ)
-   else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0)
+   else
    {
-      DispatchSignalAlert("SELL", aoPrev, aoCurr);
-      lastSignalBarTime = currentBarTime;
-   }
-   else if(InpConfirmClose)
-   {
-      lastSignalBarTime = currentBarTime;
+      // ไม่ต้องรอปิดแท่งเทียน: แจ้งเตือนทันทีที่ค่า AO ปัจจุบันตัดเส้น 0 ขึ้น/ลง
+      double aoCurr = aoValues[0];
+      double aoPrev = (prevLiveAo != EMPTY_VALUE) ? prevLiveAo : aoValues[1];
+      prevLiveAo = aoCurr;
+
+      if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0 && lastAlertDirection != "BUY")
+      {
+         DispatchSignalAlert("BUY", aoPrev, aoCurr);
+         lastAlertDirection = "BUY";
+      }
+      else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0 && lastAlertDirection != "SELL")
+      {
+         DispatchSignalAlert("SELL", aoPrev, aoCurr);
+         lastAlertDirection = "SELL";
+      }
    }
 
    return(rates_total);
@@ -317,6 +335,8 @@ struct SymbolWatcher
    string   symbol;
    int      aoHandle;
    datetime lastBarTime;
+   double   prevLiveAo;
+   string   lastDirection;
 };
 
 SymbolWatcher watchers[];
@@ -571,14 +591,11 @@ void ProcessRepeatPushQueue()
 //+------------------------------------------------------------------+
 void CheckAllWatchers()
 {
-   int idxPrev = ${prevIdx};
-   int idxCurr = ${currIdx};
-
    for(int i = 0; i < ArraySize(watchers); i++)
    {
       string sym = watchers[i].symbol;
       datetime currentBarTime = iTime(sym, InpTimeframe, 0);
-      if(currentBarTime == 0 || currentBarTime == watchers[i].lastBarTime)
+      if(currentBarTime == 0)
          continue;
 
       double aoValues[3];
@@ -586,24 +603,44 @@ void CheckAllWatchers()
       if(CopyBuffer(watchers[i].aoHandle, 0, 0, 3, aoValues) < 3)
          continue;
 
-      double aoPrev = aoValues[idxPrev];
-      double aoCurr = aoValues[idxCurr];
+      if(InpConfirmClose)
+      {
+         if(currentBarTime == watchers[i].lastBarTime)
+            continue;
 
-      // BUY: AO ตัดเส้น 0 ขึ้น
-      if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0)
-      {
-         DispatchSignalAlert(sym, "BUY", aoPrev, aoCurr);
+         double aoPrev = aoValues[2];
+         double aoCurr = aoValues[1];
+
+         if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0 && watchers[i].lastDirection != "BUY")
+         {
+            DispatchSignalAlert(sym, "BUY", aoPrev, aoCurr);
+            watchers[i].lastDirection = "BUY";
+         }
+         else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0 && watchers[i].lastDirection != "SELL")
+         {
+            DispatchSignalAlert(sym, "SELL", aoPrev, aoCurr);
+            watchers[i].lastDirection = "SELL";
+         }
          watchers[i].lastBarTime = currentBarTime;
       }
-      // SELL: AO ตัดเส้น 0 ลง
-      else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0)
+      else
       {
-         DispatchSignalAlert(sym, "SELL", aoPrev, aoCurr);
-         watchers[i].lastBarTime = currentBarTime;
-      }
-      else if(InpConfirmClose)
-      {
-         watchers[i].lastBarTime = currentBarTime;
+         double aoCurr = aoValues[0];
+         double aoPrev = (watchers[i].prevLiveAo != EMPTY_VALUE && watchers[i].prevLiveAo != 0.0)
+                         ? watchers[i].prevLiveAo
+                         : aoValues[1];
+         watchers[i].prevLiveAo = aoCurr;
+
+         if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0 && watchers[i].lastDirection != "BUY")
+         {
+            DispatchSignalAlert(sym, "BUY", aoPrev, aoCurr);
+            watchers[i].lastDirection = "BUY";
+         }
+         else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0 && watchers[i].lastDirection != "SELL")
+         {
+            DispatchSignalAlert(sym, "SELL", aoPrev, aoCurr);
+            watchers[i].lastDirection = "SELL";
+         }
       }
    }
 }
