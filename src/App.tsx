@@ -23,6 +23,7 @@ import {
 import {
   loadSavedTelegramConfig,
   saveTelegramConfigLocally,
+  SYSTEM_TELEGRAM_CHAT_ID,
 } from './lib/telegramStorage';
 import { loadSavedGithubConfig } from './lib/githubStorage';
 
@@ -101,7 +102,7 @@ export default function App() {
           ...prev,
           enableTelegram: true,
           telegramBotToken: prev.telegramBotToken || saved.telegramBotToken,
-          telegramChatId: prev.telegramChatId || saved.telegramChatId,
+          telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
         }));
       }
       try {
@@ -109,18 +110,16 @@ export default function App() {
         if (!res.ok) return;
         const status = await res.json();
         if (status.telegramConfigured) {
-          const serverChatId =
-            typeof status.telegramChatId === 'string' ? status.telegramChatId.trim() : '';
-          if (serverChatId && !cancelled) {
+          if (!cancelled) {
             setMql5Config((prev) => ({
               ...prev,
               enableTelegram: true,
-              telegramChatId: serverChatId,
+              telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
             }));
-            if (saved && saved.telegramChatId !== serverChatId) {
+            if (saved && saved.telegramChatId !== SYSTEM_TELEGRAM_CHAT_ID) {
               saveTelegramConfigLocally({
                 ...saved,
-                telegramChatId: serverChatId,
+                telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
               });
             }
           }
@@ -131,7 +130,10 @@ export default function App() {
           const restoreRes = await fetch('/api/monitor/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(saved),
+            body: JSON.stringify({
+              ...saved,
+              telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
+            }),
           });
           if (restoreRes.ok) {
             const restored = await restoreRes.json();

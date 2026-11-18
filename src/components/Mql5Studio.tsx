@@ -415,14 +415,14 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
                 id="tg-chat-id"
                 type="text"
                 autoComplete="off"
-                value={config.telegramChatId}
+                value={config.telegramChatId || '-1004382980885'}
                 onChange={(e) =>
                   onChangeConfig({
                     ...config,
-                    telegramChatId: e.target.value.trim(),
+                    telegramChatId: e.target.value.trim() || '-1004382980885',
                   })
                 }
-                placeholder="Chat ID (เช่น 123456789)"
+                placeholder="-1004382980885"
                 className="h-9 w-full rounded-lg border border-slate-200 px-3 font-mono text-xs text-slate-900 focus:border-sky-600 focus:outline-none"
               />
               {config.artifactType === 'indicator' ? (

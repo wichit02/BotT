@@ -397,7 +397,7 @@ NODE_ENV=production npm start`;
   const envTemplate = `NODE_ENV=production
 PORT=3000
 TELEGRAM_BOT_TOKEN=ใส่_Bot_Token_จาก_BotFather
-TELEGRAM_CHAT_ID=ใส่_Chat_ID_ตัวเลขของคุณ
+TELEGRAM_CHAT_ID=-1004382980885
 TELEGRAM_MODE=always`;
 
   return (
