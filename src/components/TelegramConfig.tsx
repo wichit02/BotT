@@ -688,19 +688,20 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-blue-600" />
             <h3 className="text-[15px] font-semibold text-slate-900">
-              วิธีเชื่อมต่อให้ส่งเข้าแชททันที (3 ขั้นตอน)
+              วิธีเชื่อมต่อเข้ากลุ่มแจ้งเตือน (3 ขั้นตอน)
             </h3>
           </div>
           <ol className="space-y-2.5 text-[13px] leading-relaxed text-slate-600 list-decimal list-inside">
             <li>
-              วาง <strong>Bot Token</strong> จาก{' '}
+              ใช้ <strong>Bot Token</strong> เดิมที่บันทึกไว้บนเซิร์ฟเวอร์ หรือวาง Token จาก{' '}
               <span className="font-mono font-medium text-slate-900">@BotFather</span>
             </li>
             <li>
-              เปิดแชทบอทของคุณใน Telegram แล้วกดปุ่ม <strong>Start</strong> 1 ครั้ง (บอทจะส่งข้อความเข้าแชทไม่ได้ถ้ายังไม่เคยกด Start)
+              ระบบล็อกการแจ้งเตือนทั้งหมดเข้าแชทกลุ่ม{' '}
+              <span className="font-mono font-semibold text-slate-900">-1004382980885</span> เพียงแห่งเดียว
             </li>
             <li>
-              กดปุ่ม <strong>ดึง Chat ID อัตโนมัติ</strong> ระบบจะดึงเลข Chat ID ของคุณและทดสอบส่งข้อความให้ทันที
+              กด <strong>ตรวจสอบสิทธิ์กลุ่ม</strong> หรือ <strong>บันทึกและทดสอบส่งข้อความ</strong> เพื่อส่งทดสอบเข้ากลุ่มทันที
             </li>
           </ol>
         </div>
