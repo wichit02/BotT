@@ -20,7 +20,10 @@ import {
   OfflineIndicator,
   PWAInstallButton,
 } from './components/PWAInstallButton';
-import { loadSavedTelegramConfig } from './lib/telegramStorage';
+import {
+  loadSavedTelegramConfig,
+  saveTelegramConfigLocally,
+} from './lib/telegramStorage';
 import { loadSavedGithubConfig } from './lib/githubStorage';
 
 type ActiveSection =
@@ -105,6 +108,21 @@ export default function App() {
         if (!res.ok) return;
         const status = await res.json();
         if (status.telegramConfigured) {
+          const serverChatId =
+            typeof status.telegramChatId === 'string' ? status.telegramChatId.trim() : '';
+          if (serverChatId && !cancelled) {
+            setMql5Config((prev) => ({
+              ...prev,
+              enableTelegram: true,
+              telegramChatId: serverChatId,
+            }));
+            if (saved && saved.telegramChatId !== serverChatId) {
+              saveTelegramConfigLocally({
+                ...saved,
+                telegramChatId: serverChatId,
+              });
+            }
+          }
           if (!cancelled) setTelegramSyncedReady(true);
           return;
         }
