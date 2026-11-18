@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Radio,
   Smartphone,
+  Send,
 } from 'lucide-react';
 import { SYMBOL_SPECS, type TradingSymbol } from '../lib/aoSimulator';
 import {
@@ -119,6 +120,8 @@ function formatTimeframeCountdown(timeframe: CisdTimeframe): string {
 export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
   customPrefix,
   onSignalDetected,
+  onGoToTelegram,
+  telegramSyncedReady,
   isWebMode = false,
   timeframe: controlledTimeframe,
   onChangeTimeframe,
@@ -448,7 +451,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
           const closeAgeMinutes = (Date.now() - barCloseMs) / 60000;
           const withinTimingWindow = isJustClosed
             ? closeAgeMinutes <= tfMinutes * 2
-            : closeAgeMinutes >= -0.5 && closeAgeMinutes <= 2.5;
+            : closeAgeMinutes >= -0.5 && closeAgeMinutes <= tfMinutes;
 
           if (closedBar.cisdSignal && withinTimingWindow) {
             const key = `${targetTf}-${targetSymbol}-${closedBar.timestampIso}-${closedBar.cisdSignal}`;
@@ -1106,6 +1109,20 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
           >
             <Smartphone className="h-3.5 w-3.5" />
             {mobileNotifyReady ? 'แจ้งเตือนมือถือ (เปิด)' : 'แจ้งเตือนเข้ามือถือ'}
+          </button>
+
+          <button
+            type="button"
+            onClick={onGoToTelegram}
+            aria-label="เปิดหน้าเชื่อมต่อ Telegram"
+            className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3.5 text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors ${
+              telegramSyncedReady
+                ? 'border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100'
+                : 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
+            }`}
+          >
+            <Send className="h-3.5 w-3.5" />
+            {telegramSyncedReady ? 'Telegram (เชื่อมต่อแล้ว)' : 'เชื่อมต่อ Telegram'}
           </button>
 
           {soundSecondsLeft > 0 && (

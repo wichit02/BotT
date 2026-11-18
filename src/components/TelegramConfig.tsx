@@ -9,6 +9,7 @@ import {
   Send,
   ShieldCheck,
   Trash2,
+  RefreshCw,
 } from 'lucide-react';
 import type { Mql5Config } from '../lib/mql5Generator';
 import {
@@ -27,6 +28,7 @@ interface MonitorEventItem {
   price: number;
   deliveredWebPushCount: number;
   deliveredToTelegram?: boolean;
+  telegramError?: string;
 }
 
 interface TelegramConfigProps {
@@ -55,10 +57,13 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
   ]);
 
   const [hasSavedToken, setHasSavedToken] = useState(false);
+  const [savedTokenMasked, setSavedTokenMasked] = useState('');
   const [isConfigured, setIsConfigured] = useState(false);
   const [subscribersCount, setSubscribersCount] = useState(0);
+  const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
   const [events, setEvents] = useState<MonitorEventItem[]>([]);
   const [isBusy, setIsBusy] = useState(false);
+  const [isCheckingNow, setIsCheckingNow] = useState(false);
   const [botLink, setBotLink] = useState<{
     username?: string;
     url: string;
@@ -80,7 +85,11 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       if (!res.ok) return;
       const data = await res.json();
       setHasSavedToken(Boolean(data.telegramHasToken || data.telegramConfigured));
+      setSavedTokenMasked(
+        typeof data.telegramBotTokenMasked === 'string' ? data.telegramBotTokenMasked : ''
+      );
       setIsConfigured(Boolean(data.telegramConfigured));
+      onConfiguredChange?.(Boolean(data.telegramConfigured));
       if (typeof data.telegramChatId === 'string' && data.telegramChatId) {
         setChatId(data.telegramChatId);
         const savedLocal = loadSavedTelegramConfig();
@@ -97,6 +106,9 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       if (typeof data.subscribersCount === 'number') {
         setSubscribersCount(data.subscribersCount);
       }
+      if (typeof data.lastCheckedAt === 'string') {
+        setLastCheckedAt(data.lastCheckedAt);
+      }
       if (Array.isArray(data.cisdTimeframes)) {
         setCisdTimeframes(data.cisdTimeframes);
       }
@@ -105,6 +117,32 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       }
     } catch {
       // Ignore transient network error on mount
+    }
+  };
+
+  const handleCheckNow = async () => {
+    setIsCheckingNow(true);
+    setStatusMessage(null);
+    try {
+      const res = await fetch('/api/monitor/check-now', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'ตรวจสอบสัญญาณไม่สำเร็จ');
+      if (typeof data.lastCheckedAt === 'string') setLastCheckedAt(data.lastCheckedAt);
+      if (Array.isArray(data.events)) setEvents(data.events);
+      setStatusMessage({
+        type: 'ok',
+        text:
+          data.newEventsCount > 0
+            ? `ตรวจพบสัญญาณใหม่ ${data.newEventsCount} รายการ และส่งเข้า Telegram แล้ว`
+            : 'สแกนกราฟ M30 · M15 ล่าสุดแล้ว ระบบกำลังเฝ้ารอแท่งเทียนปิดทะลุแนว CISD ใหม่',
+      });
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'err',
+        text: err?.message || 'ตรวจสอบสัญญาณล่าสุดไม่สำเร็จ',
+      });
+    } finally {
+      setIsCheckingNow(false);
     }
   };
 
@@ -385,7 +423,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
               ตั้งค่าการเชื่อมต่อ Telegram Bot
             </h2>
             <p className="mt-1 text-[13px] text-slate-600">
-              แจ้งเตือนทันทีเมื่อ AO (M5) ตัดเส้น 0 และแจ้งเตือนระบบ CISD (M30 · M15) เข้าแชท Telegram อัตโนมัติ
+              แจ้งเตือนระบบ CISD (M30 · M15) เข้าแชทหรือกลุ่ม Telegram อัตโนมัติทันทีเมื่อแท่งเทียนปิดทะลุแนว CISD
             </p>
           </div>
           <span
@@ -406,6 +444,18 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
           </span>
         </div>
 
+        {hasSavedToken && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 text-xs text-emerald-900">
+            <span className="font-semibold">ใช้รหัสเดิมที่บันทึกไว้บนเซิร์ฟเวอร์แล้ว:</span>{' '}
+            <span className="font-mono">
+              Token {savedTokenMasked || '••••••••'} · Chat ID {trimmedChatId || '-'}
+            </span>
+            <span className="block mt-0.5 text-emerald-700">
+              ไม่ต้องกรอกรหัสใหม่ สามารถกดปุ่ม “บันทึกและทดสอบส่งข้อความ” ด้านล่างเพื่อทดสอบเข้าแชทได้ทันที
+            </span>
+          </div>
+        )}
+
         {/* Bot Token */}
         <div className="space-y-1.5">
           <label
@@ -423,7 +473,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
               onChange={(e) => setBotToken(e.target.value)}
               placeholder={
                 hasSavedToken
-                  ? 'บันทึก Token ไว้บนเซิร์ฟเวอร์แล้ว (กรอกใหม่เพื่อเปลี่ยน)'
+                  ? `ใช้ Bot Token เดิม (${savedTokenMasked || 'บันทึกไว้แล้ว'}) — กรอกใหม่เฉพาะเมื่อต้องการเปลี่ยน`
                   : 'เช่น 123456789:ABCdefGHIjklMNOpqrsTUVwxyz'
               }
               className="h-10 w-full rounded-lg border border-slate-200 pl-3.5 pr-10 font-mono text-[13px] text-slate-900 focus:border-blue-600 focus:outline-none"
@@ -670,22 +720,47 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
         </div>
 
         <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 space-y-3.5">
-          <div className="flex items-center justify-between">
-            <h3 className="text-[15px] font-semibold text-slate-900">
-              ประวัติการแจ้งเตือนจากเซิร์ฟเวอร์
-            </h3>
-            <span className="font-mono text-xs text-slate-500 tabular-nums">
-              {events.length} รายการ
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-[15px] font-semibold text-slate-900">
+                ประวัติการแจ้งเตือนจากเซิร์ฟเวอร์
+              </h3>
+              {lastCheckedAt && (
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  เซิร์ฟเวอร์ตรวจกราฟล่าสุด:{' '}
+                  {new Date(lastCheckedAt).toLocaleTimeString('th-TH', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    timeZone: 'Asia/Bangkok',
+                  })}{' '}
+                  น.
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs text-slate-500 tabular-nums">
+                {events.length} รายการ
+              </span>
+              <button
+                type="button"
+                disabled={isCheckingNow}
+                onClick={() => void handleCheckNow()}
+                className="inline-flex h-8 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isCheckingNow ? 'animate-spin' : ''}`} />
+                สแกนกราฟทันที
+              </button>
+            </div>
           </div>
 
           {events.length === 0 ? (
             <p className="text-[13px] text-slate-500">
-              ยังไม่มีสัญญาณใหม่ตั้งแต่เปิดเซิร์ฟเวอร์
+              ยังไม่มีสัญญาณปิดแท่งทะลุแนว CISD ใหม่ตั้งแต่เชื่อมต่อรอบล่าสุด
             </p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {events.slice(0, 5).map((ev) => (
+              {events.slice(0, 8).map((ev) => (
                 <li
                   key={ev.id}
                   className="flex items-center justify-between gap-2 py-2.5 text-[13px]"
@@ -701,13 +776,16 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
                       </span>
                       <span className="font-medium text-slate-900">{ev.symbol}</span>
                       <span className="font-mono text-xs text-slate-500">
-                        {ev.strategy || 'AO'} {ev.timeframe || 'M5'}
+                        {ev.strategy || 'CISD'} {ev.timeframe || 'M15'}
                       </span>
                       <span className="font-mono text-xs text-slate-600 tabular-nums">
                         {ev.price}
                       </span>
                     </div>
                     <p className="mt-0.5 text-xs text-slate-500">{ev.timestamp}</p>
+                    {ev.telegramError && (
+                      <p className="mt-0.5 text-[11px] text-rose-600">{ev.telegramError}</p>
+                    )}
                   </div>
                   <div className="text-right text-xs text-slate-600">
                     {ev.deliveredToTelegram ? (
@@ -715,7 +793,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
                     ) : ev.deliveredWebPushCount > 0 ? (
                       <span className="text-emerald-700 font-medium">Android Push ✓</span>
                     ) : (
-                      <span>บันทึกแล้ว</span>
+                      <span className="text-amber-700">บันทึกแล้ว</span>
                     )}
                   </div>
                 </li>
