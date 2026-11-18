@@ -58,6 +58,7 @@ interface MonitorAlertEvent {
   deliveredToNtfy: boolean;
   deliveredToTelegram: boolean;
   deliveredWebPushCount: number;
+  telegramError?: string;
 }
 
 interface M15CisdCandle {
@@ -338,6 +339,23 @@ function markLiveSignalDispatched(key: string) {
     const first = monitorRuntime.dispatchedLiveSignalKeys.values().next().value;
     if (first) monitorRuntime.dispatchedLiveSignalKeys.delete(first);
   }
+}
+
+for (const ev of persisted.events) {
+  if (ev.id) {
+    markLiveSignalDispatched(`live-${ev.id}`);
+  }
+}
+
+function maskTelegramToken(token: string): string {
+  const clean = sanitizeTelegramToken(token);
+  if (!clean) return '';
+  if (clean.length <= 14) return `${clean.slice(0, 4)}••••${clean.slice(-3)}`;
+  const colonIdx = clean.indexOf(':');
+  if (colonIdx > 0 && clean.length - colonIdx > 10) {
+    return `${clean.slice(0, colonIdx + 1)}••••••${clean.slice(-5)}`;
+  }
+  return `${clean.slice(0, 6)}••••••${clean.slice(-4)}`;
 }
 
 function syncPersistence() {
@@ -1160,12 +1178,12 @@ async function fetchRealtimeTailData(qqqRatio: number): Promise<RealtimeTailData
   const [ndxRes, qqqRes] = await Promise.all([
     fetch(
       'https://query1.finance.yahoo.com/v8/finance/chart/%5ENDX?interval=1m&range=1d&includePrePost=true',
-      { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(4500) }
+      { headers: YAHOO_HEADERS, cache: 'no-store', signal: AbortSignal.timeout(4500) }
     ).catch(() => null),
     qqqRatio > 0
       ? fetch(
           'https://query1.finance.yahoo.com/v8/finance/chart/QQQ?interval=1m&range=1d&includePrePost=true',
-          { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(4500) }
+          { headers: YAHOO_HEADERS, cache: 'no-store', signal: AbortSignal.timeout(4500) }
         ).catch(() => null)
       : Promise.resolve(null),
   ]);
@@ -1703,6 +1721,7 @@ async function fetchYahooCisd(
   const [res, tailData] = await Promise.all([
     fetch(url, {
       headers: YAHOO_HEADERS,
+      cache: 'no-store',
       signal: AbortSignal.timeout(8000),
     }),
     symbol === 'US100'
@@ -2386,21 +2405,40 @@ async function runBackgroundMonitorCycle() {
           try {
             const cisdFeed = await getLiveCisdFeed(sym, cisdTf);
             const cisdBars = cisdFeed.bars;
-            if (cisdBars.length >= 3) {
-              const closedBar = cisdBars[cisdBars.length - 2];
-              if (closedBar && closedBar.cisdSignal) {
-                const barAgeMinutes =
-                  (Date.now() - new Date(closedBar.timestampIso).getTime()) / 60000;
-                const maxAge = YAHOO_CISD_PARAMS[cisdTf].maxAgeMinutes;
+            if (cisdBars.length >= 4) {
+              const latestBarMs = new Date(
+                cisdBars[cisdBars.length - 1].timestampIso
+              ).getTime();
+              const maxAge = YAHOO_CISD_PARAMS[cisdTf].maxAgeMinutes;
+              // Check both the newly closed bar [n-2] and immediate prior closed bar [n-3]
+              // so brief polls/wake-ups never miss a freshly closed CISD candle break.
+              const candidateClosedBars = [
+                cisdBars[cisdBars.length - 2],
+                cisdBars[cisdBars.length - 3],
+              ];
+
+              for (const closedBar of candidateClosedBars) {
+                if (!closedBar || !closedBar.cisdSignal) continue;
+                const barMs = new Date(closedBar.timestampIso).getTime();
+                const feedRelMinutes = (latestBarMs - barMs) / 60000;
+                const wallAgeMinutes = (Date.now() - barMs) / 60000;
                 const dirMatch =
                   persisted.m15Direction === 'both' ||
                   (persisted.m15Direction === 'buy_only' && closedBar.cisdSignal === 'BUY') ||
                   (persisted.m15Direction === 'sell_only' && closedBar.cisdSignal === 'SELL');
 
-                const dedupeKey = `live-${cisdTf}-CISD-${sym}-${closedBar.timestampIso}-${closedBar.cisdSignal}`;
+                const eventId = `${cisdTf}-CISD-${sym}-${closedBar.timestampIso}-${closedBar.cisdSignal}`;
+                const legacyEventId = `${cisdTf}-${sym}-${closedBar.timestampIso}-${closedBar.cisdSignal}`;
+                const dedupeKey = `live-${eventId}`;
+                const alreadyRecorded = persisted.events.some(
+                  (e) => e.id === eventId || e.id === legacyEventId
+                );
+
                 if (
-                  barAgeMinutes <= maxAge &&
+                  feedRelMinutes <= maxAge &&
+                  wallAgeMinutes <= 360 &&
                   dirMatch &&
+                  !alreadyRecorded &&
                   !monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)
                 ) {
                   markLiveSignalDispatched(dedupeKey);
@@ -2449,10 +2487,10 @@ async function runBackgroundMonitorCycle() {
                         }),
                         'HTML'
                       )
-                    : { ok: false };
+                    : { ok: false, error: undefined };
 
                   persisted.events.unshift({
-                    id: `${cisdTf}-${sym}-${closedBar.timestampIso}-${closedBar.cisdSignal}`,
+                    id: eventId,
                     timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
                     symbol: sym,
                     timeframe: cisdTf,
@@ -2465,6 +2503,7 @@ async function runBackgroundMonitorCycle() {
                     deliveredToNtfy,
                     deliveredToTelegram: tgRes.ok,
                     deliveredWebPushCount,
+                    ...(tgRes.error ? { telegramError: tgRes.error } : {}),
                   });
                   persisted.events = persisted.events.slice(0, 30);
                   syncPersistence();
@@ -2757,6 +2796,7 @@ async function startServer() {
       symbols: persisted.symbols,
       ntfyTopic: persisted.ntfyTopic,
       telegramHasToken: Boolean(persisted.telegramBotToken),
+      telegramBotTokenMasked: maskTelegramToken(persisted.telegramBotToken),
       telegramConfigured: Boolean(
         persisted.telegramBotToken &&
           persisted.telegramChatId &&
@@ -2771,6 +2811,19 @@ async function startServer() {
       cisdTimeframes: persisted.cisdTimeframes,
       subscribersCount: persisted.subscriptions.length,
       lastCheckedAt: monitorRuntime.lastCheckedAt,
+      events: persisted.events,
+    });
+  });
+
+  app.post('/api/monitor/check-now', async (_req, res) => {
+    cisdFeedCache.clear();
+    const beforeLen = persisted.events.length;
+    await runBackgroundMonitorCycle();
+    res.json({
+      ok: true,
+      lastCheckedAt: monitorRuntime.lastCheckedAt,
+      eventsCount: persisted.events.length,
+      newEventsCount: Math.max(0, persisted.events.length - beforeLen),
       events: persisted.events,
     });
   });
@@ -2847,6 +2900,7 @@ async function startServer() {
       symbols: persisted.symbols,
       ntfyTopic: persisted.ntfyTopic,
       telegramHasToken: Boolean(persisted.telegramBotToken),
+      telegramBotTokenMasked: maskTelegramToken(persisted.telegramBotToken),
       telegramConfigured: Boolean(
         persisted.telegramBotToken &&
           persisted.telegramChatId &&
@@ -3108,6 +3162,7 @@ async function startServer() {
       deliveredToNtfy,
       deliveredToTelegram: tgRes.ok,
       deliveredWebPushCount,
+      ...(tgRes.error ? { telegramError: tgRes.error } : {}),
     });
     persisted.events = persisted.events.slice(0, 30);
     syncPersistence();
