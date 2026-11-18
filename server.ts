@@ -171,11 +171,13 @@ const cisdFeedCache = new Map<
 >();
 const tickCache = new Map<TradingSymbol, { expiresAt: number; data: MarketTickResult }>();
 
+const FIXED_TELEGRAM_CHAT_ID = '-1004382980885';
+
 function loadPersistedState(): PersistedServerState {
   const envPublic = process.env.VAPID_PUBLIC_KEY?.trim();
   const envPrivate = process.env.VAPID_PRIVATE_KEY?.trim();
   const envTgToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || '';
-  const envTgChatId = process.env.TELEGRAM_CHAT_ID?.trim() || '';
+  const envTgChatId = FIXED_TELEGRAM_CHAT_ID;
   const envTgMode = process.env.TELEGRAM_MODE?.trim() === 'fallback' ? 'fallback' : 'always';
   const envNtfy = process.env.NTFY_TOPIC?.trim() || '';
   const envGithubToken = process.env.GITHUB_TOKEN?.trim() || '';
@@ -206,10 +208,7 @@ function loadPersistedState(): PersistedServerState {
           typeof parsed.telegramBotToken === 'string' && parsed.telegramBotToken
             ? parsed.telegramBotToken
             : envTgToken,
-        telegramChatId:
-          typeof parsed.telegramChatId === 'string' && parsed.telegramChatId
-            ? parsed.telegramChatId
-            : envTgChatId,
+        telegramChatId: FIXED_TELEGRAM_CHAT_ID,
         telegramMode:
           parsed.telegramMode === 'fallback' || parsed.telegramMode === 'always'
             ? parsed.telegramMode
@@ -2861,14 +2860,12 @@ async function startServer() {
     }
     if (body.clearTelegram === true) {
       persisted.telegramBotToken = '';
-      persisted.telegramChatId = '';
+      persisted.telegramChatId = FIXED_TELEGRAM_CHAT_ID;
     } else {
       if (typeof body.telegramBotToken === 'string' && body.telegramBotToken.trim() !== '') {
         persisted.telegramBotToken = body.telegramBotToken.trim();
       }
-      if (typeof body.telegramChatId === 'string') {
-        persisted.telegramChatId = body.telegramChatId.trim();
-      }
+      persisted.telegramChatId = FIXED_TELEGRAM_CHAT_ID;
     }
     if (body.telegramMode === 'fallback' || body.telegramMode === 'always') {
       persisted.telegramMode = body.telegramMode;
@@ -2935,64 +2932,48 @@ async function startServer() {
     }
 
     persisted.telegramBotToken = token;
+    persisted.telegramChatId = FIXED_TELEGRAM_CHAT_ID;
     syncPersistence();
 
     try {
-      const updRes = await fetch(
-        `https://api.telegram.org/bot${token}/getUpdates?limit=20`,
+      const chatRes = await fetch(
+        `https://api.telegram.org/bot${token}/getChat?chat_id=${encodeURIComponent(
+          FIXED_TELEGRAM_CHAT_ID
+        )}`,
         { signal: AbortSignal.timeout(6000) }
       );
-      type TgChat = { id?: number; username?: string; first_name?: string; title?: string };
-      const updJson = (await updRes.json().catch(() => ({}))) as {
+      const chatJson = (await chatRes.json().catch(() => ({}))) as {
         ok?: boolean;
-        result?: Array<{
-          message?: { chat?: TgChat };
-          my_chat_member?: { chat?: TgChat };
-          channel_post?: { chat?: TgChat };
-        }>;
+        description?: string;
+        result?: { id?: number; title?: string; username?: string };
       };
 
-      const chats: Array<{ id: string; label: string }> = [];
-      for (const item of updJson.result || []) {
-        const chat =
-          item.message?.chat || item.my_chat_member?.chat || item.channel_post?.chat;
-        if (chat?.id !== undefined) {
-          const idStr = String(chat.id);
-          const label =
-            chat.title ||
-            chat.first_name ||
-            (chat.username ? `@${chat.username}` : idStr);
-          if (!chats.some((c) => c.id === idStr)) {
-            chats.push({ id: idStr, label });
-          }
-        }
-      }
-
-      if (chats.length === 0) {
-        res.json({
+      if (!chatRes.ok || !chatJson.ok) {
+        res.status(400).json({
           ok: false,
-          needsStart: true,
           botUsername: botInfo.username,
           botUrl: botInfo.botUrl,
-          message: `ยังไม่พบข้อความในบอท @${botInfo.username} — กรุณากดเปิดแชทบอทแล้วกดปุ่ม Start จากนั้นกดดึง Chat ID อีกครั้ง`,
+          error:
+            chatJson.description ||
+            `บอท @${botInfo.username} ยังไม่สามารถเข้าถึงแชท ${FIXED_TELEGRAM_CHAT_ID} ได้`,
         });
         return;
       }
 
-      const latest = chats[chats.length - 1];
-      persisted.telegramChatId = latest.id;
-      syncPersistence();
+      const label =
+        chatJson.result?.title ||
+        (chatJson.result?.username ? `@${chatJson.result.username}` : FIXED_TELEGRAM_CHAT_ID);
 
       res.json({
         ok: true,
         botUsername: botInfo.username,
         botUrl: botInfo.botUrl,
-        detectedChatId: latest.id,
-        detectedChatLabel: latest.label,
+        detectedChatId: FIXED_TELEGRAM_CHAT_ID,
+        detectedChatLabel: label,
       });
     } catch (err: any) {
       res.status(502).json({
-        error: err?.message || 'ดึงข้อมูล Chat ID จาก Telegram ไม่สำเร็จ',
+        error: err?.message || 'ตรวจสอบข้อมูล Chat ID จาก Telegram ไม่สำเร็จ',
       });
     }
   });
@@ -3005,7 +2986,7 @@ async function startServer() {
     }
     const ok = await sendNtfyPush(
       topic,
-      'AO M5 Test Alert',
+      'CISD Test Alert',
       'เชื่อมต่อการแจ้งเตือนอัตโนมัติเข้ามือถือ Android สำเร็จ'
     );
     if (!ok) {
@@ -3019,12 +3000,10 @@ async function startServer() {
     const token = sanitizeTelegramToken(
       String(req.body?.telegramBotToken || persisted.telegramBotToken || '')
     );
-    const chatId = String(
-      req.body?.telegramChatId || persisted.telegramChatId || ''
-    ).trim();
+    const chatId = FIXED_TELEGRAM_CHAT_ID;
 
-    if (!token || !chatId) {
-      res.status(400).json({ error: 'กรุณากรอก Bot Token และ Chat ID ของ Telegram' });
+    if (!token) {
+      res.status(400).json({ error: 'กรุณากรอก Bot Token ของ Telegram' });
       return;
     }
 

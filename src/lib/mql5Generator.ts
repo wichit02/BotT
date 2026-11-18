@@ -39,7 +39,7 @@ export const DEFAULT_MQL5_CONFIG: Mql5Config = {
   lineNotifyToken: '',
   enableTelegram: false,
   telegramBotToken: '',
-  telegramChatId: '',
+  telegramChatId: '-1004382980885',
   soundFile: 'ao_alert_10s.wav',
   customPrefix: 'AO M5',
   watchlistSymbols: 'US100',
