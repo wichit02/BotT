@@ -340,10 +340,11 @@ export default function App() {
           </div>
         )}
 
-        {/* Back button when opening Telegram/Sheets sub-view from deployed web UI */}
+        {/* Back button when opening sub-views outside the 3 main Web Mode tabs */}
         {isWebMode &&
           activeSection !== 'm15' &&
-          activeSection !== 'mtf' && (
+          activeSection !== 'mtf' &&
+          activeSection !== 'telegram' && (
           <div className="mb-4">
             <button
               type="button"
