@@ -73,6 +73,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const view = params.get('tab')?.toLowerCase();
     if (view === 'mtf') return 'mtf';
+    if (view === 'telegram') return 'telegram';
     return 'm15';
   });
   const [mql5Config, setMql5Config] = useState<Mql5Config>(DEFAULT_MQL5_CONFIG);
@@ -365,19 +366,25 @@ export default function App() {
             <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
               {activeSection === 'mtf'
                 ? 'สรุปสถานะ CISD (M30 · M15)'
+                : activeSection === 'telegram'
+                ? 'เชื่อมต่อ Telegram แจ้งเตือน CISD'
                 : `แจ้งเตือน CISD Timeframe ${cisdTimeframe}`}
             </h1>
             <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
               {isWebMode
                 ? activeSection === 'mtf'
                   ? 'CISD · US100 · M30 · M15'
+                  : activeSection === 'telegram'
+                  ? 'ใช้ Bot Token และ Chat ID เดิมบนเซิร์ฟเวอร์ พร้อมทดสอบส่งข้อความและเช็กประวัติแจ้งเตือน'
                   : `MetaTrader 5 · US100 ${cisdTimeframe} · CISD (ขาขึ้น / ขาลง)`
                 : SECTION_DESCRIPTIONS[activeSection]}
             </p>
           </div>
 
           {isWebMode &&
-            (activeSection === 'm15' || activeSection === 'mtf') && (
+            (activeSection === 'm15' ||
+              activeSection === 'mtf' ||
+              activeSection === 'telegram') && (
             <div className="inline-flex flex-wrap items-center gap-1 self-start rounded-lg bg-slate-200/75 p-1">
               <button
                 type="button"
@@ -400,6 +407,22 @@ export default function App() {
                 }`}
               >
                 สถานะ 2 TF
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSection('telegram')}
+                className={`inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
+                  activeSection === 'telegram'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    telegramSyncedReady ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}
+                />
+                เชื่อมต่อ Telegram
               </button>
             </div>
           )}
