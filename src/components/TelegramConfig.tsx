@@ -16,6 +16,7 @@ import {
   clearSavedTelegramConfig,
   loadSavedTelegramConfig,
   saveTelegramConfigLocally,
+  SYSTEM_TELEGRAM_CHAT_ID,
 } from '../lib/telegramStorage';
 
 interface MonitorEventItem {
@@ -45,9 +46,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
   const [botToken, setBotToken] = useState(
     () => mql5Config.telegramBotToken || loadSavedTelegramConfig()?.telegramBotToken || ''
   );
-  const [chatId, setChatId] = useState(
-    () => mql5Config.telegramChatId || loadSavedTelegramConfig()?.telegramChatId || ''
-  );
+  const [chatId, setChatId] = useState(SYSTEM_TELEGRAM_CHAT_ID);
   const [showToken, setShowToken] = useState(false);
   const [telegramMode, setTelegramMode] = useState<'fallback' | 'always'>('always');
   const [syncToMql5, setSyncToMql5] = useState(true);
@@ -91,14 +90,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       setIsConfigured(Boolean(data.telegramConfigured));
       onConfiguredChange?.(Boolean(data.telegramConfigured));
       if (typeof data.telegramChatId === 'string' && data.telegramChatId) {
-        setChatId(data.telegramChatId);
-        const savedLocal = loadSavedTelegramConfig();
-        if (savedLocal && savedLocal.telegramChatId !== data.telegramChatId) {
-          saveTelegramConfigLocally({
-            ...savedLocal,
-            telegramChatId: data.telegramChatId,
-          });
-        }
+        setChatId(SYSTEM_TELEGRAM_CHAT_ID);
       }
       if (data.telegramMode === 'always' || data.telegramMode === 'fallback') {
         setTelegramMode(data.telegramMode);
@@ -386,14 +378,14 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       setIsConfigured(false);
       onConfiguredChange?.(false);
       setBotToken('');
-      setChatId('');
+      setChatId(SYSTEM_TELEGRAM_CHAT_ID);
       setBotLink(null);
       if (syncToMql5) {
         onUpdateMql5Config({
           ...mql5Config,
           enableTelegram: false,
           telegramBotToken: '',
-          telegramChatId: '',
+          telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
         });
       }
       setStatusMessage({
@@ -489,27 +481,21 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
           </div>
         </div>
 
-        {/* Chat ID + Auto Detect */}
+        {/* Chat ID + Group Verification */}
         <div className="space-y-2">
           <label
             htmlFor="telegram-config-chat-id"
             className="block text-[13px] font-medium text-slate-700"
           >
-            Telegram Chat ID (ตัวเลขบัญชีผู้ใช้ของคุณ ไม่ใช่ชื่อบอท)
+            Telegram Chat ID (กลุ่มแจ้งเตือนหลักของระบบ)
           </label>
           <div className="flex flex-col gap-2.5 sm:flex-row">
             <input
               id="telegram-config-chat-id"
               type="text"
-              autoComplete="off"
-              value={chatId}
-              onChange={(e) => setChatId(e.target.value)}
-              placeholder="เช่น 987654321"
-              className={`h-10 flex-1 rounded-lg border px-3.5 font-mono text-[13px] text-slate-900 focus:outline-none ${
-                isLikelyInvalidChatId
-                  ? 'border-amber-400 bg-amber-50/40 focus:border-amber-500'
-                  : 'border-slate-200 focus:border-blue-600'
-              }`}
+              readOnly
+              value={SYSTEM_TELEGRAM_CHAT_ID}
+              className="h-10 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3.5 font-mono text-[13px] font-semibold text-slate-900 focus:border-blue-600 focus:outline-none"
             />
             <button
               type="button"
@@ -518,7 +504,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
               className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-4 text-[13px] font-medium text-blue-700 whitespace-nowrap transition-colors hover:bg-blue-100 disabled:opacity-50"
             >
               <Search className="h-4 w-4" />
-              ดึง Chat ID อัตโนมัติ
+              ตรวจสอบสิทธิ์กลุ่ม
             </button>
           </div>
 
