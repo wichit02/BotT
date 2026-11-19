@@ -8,9 +8,9 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('push', (event) => {
   let payload = {
-    title: 'AO M5 Alert',
-    body: 'ตรวจพบสัญญาณ AO ตัดเส้น 0',
-    tag: 'ao-m5-signal',
+    title: 'CISD Signal Alert',
+    body: 'ตรวจพบสัญญาณ CISD (M30 · M15)',
+    tag: 'cisd-signal',
     url: '/',
   };
 

@@ -75,16 +75,19 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
   return (
     <section className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
       {/* Configuration Column */}
-      <div className="lg:col-span-4 rounded-xl border border-slate-200 bg-white p-5 space-y-5">
-        <div className="border-b border-slate-100 pb-3">
-          <h2 className="text-sm font-semibold text-slate-900">
-            ตั้งค่าไฟล์ MQL5
+      <div className="lg:col-span-4 rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 space-y-6">
+        <div className="border-b border-slate-100 pb-3.5">
+          <h2 className="text-[15px] font-semibold text-slate-900">
+            1. ตั้งค่าเงื่อนไขสัญญาณ MQL5
           </h2>
+          <p className="mt-0.5 text-xs text-slate-500">
+            เลือกโหมดไฟล์ ทิศทาง และกรอบเวลาที่ต้องการให้โค้ดทำงาน
+          </p>
         </div>
 
         {/* Artifact Type */}
         <div className="space-y-2">
-          <label className="block text-xs font-medium text-slate-600">
+          <label className="block text-[13px] font-medium text-slate-700">
             ประเภทไฟล์
           </label>
           <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
@@ -93,7 +96,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
               onClick={() =>
                 onChangeConfig({ ...config, artifactType: 'indicator' })
               }
-              className={`h-8 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors ${
+              className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
                 config.artifactType === 'indicator'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -104,7 +107,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
             <button
               type="button"
               onClick={() => onChangeConfig({ ...config, artifactType: 'ea' })}
-              className={`h-8 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors ${
+              className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
                 config.artifactType === 'ea'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -117,7 +120,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
 
         {/* Alert Direction */}
         <div className="space-y-2">
-          <label className="block text-xs font-medium text-slate-600">
+          <label className="block text-[13px] font-medium text-slate-700">
             สัญญาณที่แจ้งเตือน
           </label>
           <div className="grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1">
@@ -126,7 +129,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
               onClick={() =>
                 onChangeConfig({ ...config, alertDirection: 'both' })
               }
-              className={`h-8 rounded-md px-2 text-xs font-medium whitespace-nowrap transition-colors ${
+              className={`h-9 rounded-md px-2 text-xs font-medium whitespace-nowrap transition-colors ${
                 config.alertDirection === 'both'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -139,7 +142,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
               onClick={() =>
                 onChangeConfig({ ...config, alertDirection: 'buy_only' })
               }
-              className={`h-8 rounded-md px-2 text-xs font-medium whitespace-nowrap transition-colors ${
+              className={`h-9 rounded-md px-2 text-xs font-medium whitespace-nowrap transition-colors ${
                 config.alertDirection === 'buy_only'
                   ? 'bg-white text-emerald-700 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -152,7 +155,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
               onClick={() =>
                 onChangeConfig({ ...config, alertDirection: 'sell_only' })
               }
-              className={`h-8 rounded-md px-2 text-xs font-medium whitespace-nowrap transition-colors ${
+              className={`h-9 rounded-md px-2 text-xs font-medium whitespace-nowrap transition-colors ${
                 config.alertDirection === 'sell_only'
                   ? 'bg-white text-rose-700 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -165,82 +168,84 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
 
         {/* Timeframe Lock */}
         <div className="space-y-2">
-          <label className="block text-xs font-medium text-slate-600">
-            กรอบเวลา
+          <label className="block text-[13px] font-medium text-slate-700">
+            กรอบเวลา AO
           </label>
           <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
-            <button
-              type="button"
-              onClick={() => onChangeConfig({ ...config, lockM5: true })}
-              className={`h-8 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-colors ${
-                config.lockM5
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              ล็อก M5
-            </button>
-            <button
-              type="button"
-              onClick={() => onChangeConfig({ ...config, lockM5: false })}
-              className={`h-8 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-colors ${
-                !config.lockM5
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              ตามชาร์ต
-            </button>
+            {(['M5', 'CURRENT'] as const).map((tfOpt) => {
+              const currentTarget = config.lockM5 ? 'M5' : 'CURRENT';
+              const isSelected = currentTarget === tfOpt;
+              return (
+                <button
+                  key={tfOpt}
+                  type="button"
+                  onClick={() =>
+                    onChangeConfig({
+                      ...config,
+                      targetTimeframe: tfOpt,
+                      lockM5: tfOpt === 'M5',
+                    })
+                  }
+                  className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
+                    isSelected
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {tfOpt === 'M5' ? 'ล็อก M5' : 'ตามชาร์ต'}
+                </button>
+              );
+            })}
           </div>
         </div>
 
         {/* Trigger Confirmation */}
         <div className="space-y-2">
-          <label className="block text-xs font-medium text-slate-600">
+          <label className="block text-[13px] font-medium text-slate-700">
             จังหวะเตือน
           </label>
           <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
             <button
               type="button"
               onClick={() =>
-                onChangeConfig({ ...config, triggerMode: 'closed_bar' })
-              }
-              className={`h-8 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-colors ${
-                config.triggerMode === 'closed_bar'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              ปิดแท่งแล้ว [1]
-            </button>
-            <button
-              type="button"
-              onClick={() =>
                 onChangeConfig({ ...config, triggerMode: 'live_bar' })
               }
-              className={`h-8 rounded-md px-2.5 text-xs font-medium whitespace-nowrap transition-colors ${
+              className={`h-9 rounded-md px-2.5 text-[13px] font-medium whitespace-nowrap transition-colors ${
                 config.triggerMode === 'live_bar'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              แท่งกำลังวิ่ง [0]
+              ตัดปุ๊บเตือนทันที [0]
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onChangeConfig({ ...config, triggerMode: 'closed_bar' })
+              }
+              className={`h-9 rounded-md px-2.5 text-[13px] font-medium whitespace-nowrap transition-colors ${
+                config.triggerMode === 'closed_bar'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              รอปิดแท่ง [1]
             </button>
           </div>
         </div>
 
         {/* 10-Second Mobile Sound Mode */}
-        <div className="space-y-2 border-t border-slate-100 pt-4">
-          <label className="block text-xs font-medium text-slate-600">
-            เสียงแจ้งเตือน 10 วินาที
-          </label>
+        <div className="space-y-2.5 border-t border-slate-100 pt-5">
+          <h3 className="text-[13px] font-semibold text-slate-900">
+            2. เสียงแจ้งเตือน 10 วินาที
+          </h3>
           <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
             <button
               type="button"
               onClick={() =>
                 onChangeConfig({ ...config, pushDurationMode: 'custom_sound_10s' })
               }
-              className={`h-8 rounded-md px-2 text-xs font-medium whitespace-nowrap transition-colors ${
+              className={`h-9 rounded-md px-2 text-xs font-medium whitespace-nowrap transition-colors ${
                 config.pushDurationMode === 'custom_sound_10s'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -253,7 +258,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
               onClick={() =>
                 onChangeConfig({ ...config, pushDurationMode: 'repeat_push_10s' })
               }
-              className={`h-8 rounded-md px-2 text-xs font-medium whitespace-nowrap transition-colors ${
+              className={`h-9 rounded-md px-2 text-xs font-medium whitespace-nowrap transition-colors ${
                 config.pushDurationMode === 'repeat_push_10s'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -267,11 +272,11 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
             <button
               type="button"
               onClick={handleTogglePreview10s}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
             >
               {isPlaying10s ? (
                 <>
-                  <Square className="h-3 w-3 text-rose-600" />
+                  <Square className="h-3.5 w-3.5 text-rose-600" />
                   หยุดฟัง
                 </>
               ) : (
@@ -284,7 +289,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
             <button
               type="button"
               onClick={() => download10SecondWav('general')}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
             >
               <Download className="h-3.5 w-3.5" />
               โหลดไฟล์เสียง .wav
@@ -297,7 +302,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
           <div className="space-y-1.5">
             <label
               htmlFor="ea-watchlist"
-              className="block text-xs font-medium text-slate-600"
+              className="block text-[13px] font-medium text-slate-700"
             >
               สินทรัพย์ (คั่นด้วย ,)
             </label>
@@ -309,7 +314,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
                 onChangeConfig({ ...config, watchlistSymbols: e.target.value })
               }
               placeholder="US100"
-              className="h-9 w-full rounded-lg border border-slate-200 px-3 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+              className="h-10 w-full rounded-lg border border-slate-200 px-3 font-mono text-[13px] text-slate-900 focus:border-blue-600 focus:outline-none"
             />
           </div>
         )}
@@ -318,9 +323,9 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
         <div className="space-y-1.5">
           <label
             htmlFor="msg-prefix"
-            className="block text-xs font-medium text-slate-600"
+            className="block text-[13px] font-medium text-slate-700"
           >
-            คำนำหน้าแจ้งเตือน
+            คำนำหน้าข้อความแจ้งเตือน
           </label>
           <input
             id="msg-prefix"
@@ -330,13 +335,16 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
               onChangeConfig({ ...config, customPrefix: e.target.value })
             }
             placeholder="AO M5"
-            className="h-9 w-full rounded-lg border border-slate-200 px-3 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+            className="h-10 w-full rounded-lg border border-slate-200 px-3 font-mono text-[13px] text-slate-900 focus:border-blue-600 focus:outline-none"
           />
         </div>
 
         {/* Channels */}
-        <div className="space-y-2.5 border-t border-slate-100 pt-4">
-          <label className="flex items-center justify-between text-xs text-slate-700 cursor-pointer">
+        <div className="space-y-1.5 border-t border-slate-100 pt-5">
+          <h3 className="pb-1 text-[13px] font-semibold text-slate-900">
+            3. ช่องทางรับแจ้งเตือน
+          </h3>
+          <label className="flex min-h-[38px] items-center justify-between rounded-lg px-2 -mx-2 text-[13px] text-slate-700 cursor-pointer hover:bg-slate-50">
             <span>Push เข้ามือถือ Android</span>
             <input
               type="checkbox"
@@ -347,7 +355,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
               className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
             />
           </label>
-          <label className="flex items-center justify-between text-xs text-slate-700 cursor-pointer">
+          <label className="flex min-h-[38px] items-center justify-between rounded-lg px-2 -mx-2 text-[13px] text-slate-700 cursor-pointer hover:bg-slate-50">
             <span>Popup บนหน้าจอ MT5</span>
             <input
               type="checkbox"
@@ -358,7 +366,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
               className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
             />
           </label>
-          <label className="flex items-center justify-between text-xs text-slate-700 cursor-pointer">
+          <label className="flex min-h-[38px] items-center justify-between rounded-lg px-2 -mx-2 text-[13px] text-slate-700 cursor-pointer hover:bg-slate-50">
             <span>เสียงเตือนบนคอมฯ</span>
             <input
               type="checkbox"
@@ -369,7 +377,7 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
               className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
             />
           </label>
-          <label className="flex items-center justify-between text-xs text-slate-700 cursor-pointer">
+          <label className="flex min-h-[38px] items-center justify-between rounded-lg px-2 -mx-2 text-[13px] text-slate-700 cursor-pointer hover:bg-slate-50">
             <span>ส่งคู่ขนานไป Telegram</span>
             <input
               type="checkbox"
@@ -407,14 +415,14 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
                 id="tg-chat-id"
                 type="text"
                 autoComplete="off"
-                value={config.telegramChatId}
+                value={config.telegramChatId || '-1004382980885'}
                 onChange={(e) =>
                   onChangeConfig({
                     ...config,
-                    telegramChatId: e.target.value.trim(),
+                    telegramChatId: e.target.value.trim() || '-1004382980885',
                   })
                 }
-                placeholder="Chat ID (เช่น 123456789)"
+                placeholder="-1004382980885"
                 className="h-9 w-full rounded-lg border border-slate-200 px-3 font-mono text-xs text-slate-900 focus:border-sky-600 focus:outline-none"
               />
               {config.artifactType === 'indicator' ? (
@@ -496,8 +504,8 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
       </div>
 
       {/* Code Viewer Column */}
-      <div className="lg:col-span-8 flex flex-col rounded-xl border border-slate-200 bg-white overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-3.5">
+      <div className="lg:col-span-8 flex flex-col rounded-xl border border-slate-200/90 bg-white overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/80 px-5 py-4">
           <div className="flex items-center gap-2.5">
             <Code2 className="h-4 w-4 text-slate-600" />
             <span className="font-mono text-sm font-semibold text-slate-900">
@@ -508,20 +516,20 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <button
               type="button"
               onClick={handleCopy}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700 whitespace-nowrap transition-colors hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600"
+              className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 text-[13px] font-medium text-slate-700 whitespace-nowrap transition-colors hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600"
             >
               {copied ? (
                 <>
-                  <Check className="h-3.5 w-3.5 text-emerald-600" />
+                  <Check className="h-4 w-4 text-emerald-600" />
                   คัดลอกแล้ว
                 </>
               ) : (
                 <>
-                  <Copy className="h-3.5 w-3.5" />
+                  <Copy className="h-4 w-4" />
                   คัดลอกโค้ด
                 </>
               )}
@@ -530,15 +538,15 @@ export const Mql5Studio: React.FC<Mql5StudioProps> = ({
             <button
               type="button"
               onClick={handleDownload}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-xs font-medium text-white whitespace-nowrap transition-colors hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-blue-600"
+              className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-[13px] font-medium text-white whitespace-nowrap transition-colors hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-blue-600"
             >
-              <Download className="h-3.5 w-3.5" />
+              <Download className="h-4 w-4" />
               ดาวน์โหลด {filename}
             </button>
           </div>
         </div>
 
-        <pre className="max-h-[680px] overflow-auto bg-slate-950 p-5 font-mono text-xs leading-relaxed text-slate-100 tabular-nums">
+        <pre className="max-h-[680px] overflow-auto bg-slate-950 p-5 sm:p-6 font-mono text-[13px] leading-relaxed text-slate-100 tabular-nums">
           <code>{code}</code>
         </pre>
       </div>

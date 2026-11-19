@@ -10,65 +10,62 @@ function writeString(view: DataView, offset: number, str: string) {
 }
 
 /**
- * Generates a 10-second 16-bit PCM WAV buffer with clear, pleasant trading chimes.
+ * Generates a high-clarity, loud 10-second 16-bit PCM WAV trading chime.
  */
 export function build10SecondWavBlob(kind: AlertToneKind = 'general'): Blob {
   const numSamples = SAMPLE_RATE * DURATION_SECONDS;
   const buffer = new ArrayBuffer(44 + numSamples * 2);
   const view = new DataView(buffer);
 
-  // RIFF / WAVE header
   writeString(view, 0, 'RIFF');
   view.setUint32(4, 36 + numSamples * 2, true);
   writeString(view, 8, 'WAVE');
   writeString(view, 12, 'fmt ');
-  view.setUint32(16, 16, true); // PCM chunk size
-  view.setUint16(20, 1, true); // PCM format
-  view.setUint16(22, 1, true); // Mono
+  view.setUint32(16, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
   view.setUint32(24, SAMPLE_RATE, true);
   view.setUint32(28, SAMPLE_RATE * 2, true);
   view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
-  writeString(view, 36, 'data');
   view.setUint32(40, numSamples * 2, true);
 
-  // Pattern: 10 cycles of 1.0s each (total 10.0 seconds)
+  // Bright, cutting bell frequencies clearly audible on phone and laptop speakers
   const notes =
     kind === 'buy'
-      ? [659.25, 830.61, 987.77] // E5 -> G#5 -> B5 (ascending)
+      ? [880.0, 1174.66, 1567.98] // A5 -> D6 -> G6 (bright ascending)
       : kind === 'sell'
-      ? [880.0, 698.46, 587.33] // A5 -> F5 -> D5 (descending)
-      : [783.99, 1046.5, 783.99]; // G5 -> C6 -> G5 (crisp chime)
+      ? [1174.66, 880.0, 659.25] // D6 -> A5 -> E5 (clear descending)
+      : [1046.5, 1318.51, 1567.98]; // C6 -> E6 -> G6
 
   for (let i = 0; i < numSamples; i++) {
     const t = i / SAMPLE_RATE;
-    const cycleT = t % 1.0; // 1 second per repeat, 10 repeats = 10s
+    const cycleT = t % 1.0; // 1 repeat per second x 10s
     let sample = 0;
 
-    // 3 quick chimes in the first 0.54s of every 1-second cycle
-    if (cycleT < 0.54) {
-      const noteIdx = Math.min(2, Math.floor(cycleT / 0.18));
-      const localT = cycleT - noteIdx * 0.18;
+    if (cycleT < 0.72) {
+      const noteIdx = Math.min(2, Math.floor(cycleT / 0.22));
+      const localT = cycleT - noteIdx * 0.22;
       const freq = notes[noteIdx];
 
-      // Smooth attack/decay envelope per note
-      const attack = Math.min(1, localT / 0.015);
-      const decay = Math.exp(-localT * 10);
+      const attack = Math.min(1, localT / 0.008);
+      const decay = Math.exp(-localT * 4.8);
       const env = attack * decay;
 
       sample =
-        (0.65 * Math.sin(2 * Math.PI * freq * t) +
-          0.25 * Math.sin(2 * Math.PI * freq * 2 * t)) *
+        (0.62 * Math.sin(2 * Math.PI * freq * t) +
+          0.26 * Math.sin(2 * Math.PI * freq * 2 * t) +
+          0.12 * Math.sin(2 * Math.PI * freq * 3 * t)) *
         env *
-        0.55;
+        0.92;
     }
 
-    // Gentle fade-out on the last 0.15s
     if (t > DURATION_SECONDS - 0.15) {
       sample *= Math.max(0, (DURATION_SECONDS - t) / 0.15);
     }
 
-    const clamped = Math.max(-1, Math.min(1, sample));
+    const clamped = Math.max(-0.98, Math.min(0.98, sample));
     view.setInt16(44 + i * 2, Math.round(clamped * 32767), true);
   }
 
@@ -92,59 +89,46 @@ export function download10SecondWav(kind: AlertToneKind = 'general'): void {
   URL.revokeObjectURL(url);
 }
 
-let sharedAudioEl: HTMLAudioElement | null = null;
+let sharedAudioCtx: AudioContext | null = null;
+let activeSourceNode: AudioBufferSourceNode | null = null;
+let activeAudioEl: HTMLAudioElement | null = null;
 let activeAudioUrl: string | null = null;
-let activeOnEnded: (() => void) | undefined;
 
-function getSharedAudioEl(): HTMLAudioElement | null {
-  if (typeof Audio === 'undefined') return null;
-  if (!sharedAudioEl) {
-    sharedAudioEl = new Audio();
+function getAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  const Ctx =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctx) return null;
+  if (!sharedAudioCtx) {
+    sharedAudioCtx = new Ctx();
   }
-  return sharedAudioEl;
+  return sharedAudioCtx;
 }
 
-export function unlockAlertAudio(): void {
-  const el = getSharedAudioEl();
-  if (!el) return;
-  try {
-    // 10ms silent PCM WAV to unlock media playback on user gesture
-    const buf = new ArrayBuffer(44 + 440);
-    const v = new DataView(buf);
-    writeString(v, 0, 'RIFF');
-    v.setUint32(4, 36 + 440, true);
-    writeString(v, 8, 'WAVE');
-    writeString(v, 12, 'fmt ');
-    v.setUint32(16, 16, true);
-    v.setUint16(20, 1, true);
-    v.setUint16(22, 1, true);
-    v.setUint32(24, SAMPLE_RATE, true);
-    v.setUint32(28, SAMPLE_RATE * 2, true);
-    v.setUint16(32, 2, true);
-    v.setUint16(34, 16, true);
-    writeString(v, 36, 'data');
-    v.setUint32(40, 440, true);
-    const url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
-    el.src = url;
-    void el.play()
-      .then(() => {
-        el.pause();
-        URL.revokeObjectURL(url);
-      })
-      .catch(() => {
-        URL.revokeObjectURL(url);
-      });
-  } catch {
-    // Ignore audio unlock errors
+export function unlockAudioAlert(): void {
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === 'suspended') {
+    void ctx.resume().catch(() => {});
   }
 }
 
 export function stop10SecondSound(): void {
-  activeOnEnded = undefined;
-  if (sharedAudioEl) {
-    sharedAudioEl.onended = null;
-    sharedAudioEl.pause();
-    sharedAudioEl.currentTime = 0;
+  if (activeSourceNode) {
+    try {
+      activeSourceNode.onended = null;
+      activeSourceNode.stop();
+      activeSourceNode.disconnect();
+    } catch {
+      // Ignore already stopped source
+    }
+    activeSourceNode = null;
+  }
+  if (activeAudioEl) {
+    activeAudioEl.onended = null;
+    activeAudioEl.pause();
+    activeAudioEl.currentTime = 0;
+    activeAudioEl = null;
   }
   if (activeAudioUrl) {
     URL.revokeObjectURL(activeAudioUrl);
@@ -157,28 +141,67 @@ export function play10SecondSound(
   onEnded?: () => void
 ): () => void {
   stop10SecondSound();
-  const audio = getSharedAudioEl();
-  if (!audio) {
-    onEnded?.();
+  const blob = build10SecondWavBlob(kind);
+  const ctx = getAudioContext();
+
+  if (ctx) {
+    void (async () => {
+      try {
+        if (ctx.state === 'suspended') {
+          await ctx.resume();
+        }
+        const arrBuf = await blob.arrayBuffer();
+        const audioBuffer = await ctx.decodeAudioData(arrBuf.slice(0));
+        const src = ctx.createBufferSource();
+        const gain = ctx.createGain();
+        gain.gain.value = 1.0;
+        src.buffer = audioBuffer;
+        src.connect(gain);
+        gain.connect(ctx.destination);
+        activeSourceNode = src;
+        src.onended = () => {
+          if (activeSourceNode === src) {
+            activeSourceNode = null;
+            onEnded?.();
+          }
+        };
+        src.start(0);
+        return;
+      } catch {
+        // Fallback to HTMLAudioElement below
+      }
+
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.volume = 1.0;
+      activeAudioEl = audio;
+      activeAudioUrl = url;
+      audio.onended = () => {
+        stop10SecondSound();
+        onEnded?.();
+      };
+      audio.play().catch(() => {
+        stop10SecondSound();
+        onEnded?.();
+      });
+    })();
     return stop10SecondSound;
   }
 
-  const blob = build10SecondWavBlob(kind);
   const url = URL.createObjectURL(blob);
+  const audio = new Audio(url);
+  audio.volume = 1.0;
+  activeAudioEl = audio;
   activeAudioUrl = url;
-  activeOnEnded = onEnded;
-  audio.src = url;
 
   audio.onended = () => {
-    const cb = activeOnEnded;
     stop10SecondSound();
-    cb?.();
+    onEnded?.();
   };
 
   audio.play().catch(() => {
-    const cb = activeOnEnded;
     stop10SecondSound();
-    cb?.();
+    onEnded?.();
   });
 
   return stop10SecondSound;

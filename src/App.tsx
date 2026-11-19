@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import { MotionConfig } from 'motion/react';
 import { ArrowLeft, Download } from 'lucide-react';
-import { AoChartSimulator } from './components/AoChartSimulator';
+import { M15CisdChartView } from './components/M15CisdChartView';
+import { MultiTimeframeStatusWindow } from './components/MultiTimeframeStatusWindow';
 import { Mql5Studio } from './components/Mql5Studio';
 import { AndroidSetupGuide } from './components/AndroidSetupGuide';
 import { GoogleSheetsSync } from './components/GoogleSheetsSync';
@@ -12,18 +14,31 @@ import {
   generateMql5Code,
   getMql5Filename,
 } from './lib/mql5Generator';
+import { CISD_TIMEFRAME_ORDER, type CisdTimeframe } from './lib/cisdDetector';
 import type { SignalLogRecord } from './lib/sheetsApi';
 import {
   OfflineIndicator,
   PWAInstallButton,
 } from './components/PWAInstallButton';
-import { loadSavedTelegramConfig } from './lib/telegramStorage';
+import {
+  loadSavedTelegramConfig,
+  saveTelegramConfigLocally,
+  SYSTEM_TELEGRAM_CHAT_ID,
+} from './lib/telegramStorage';
 import { loadSavedGithubConfig } from './lib/githubStorage';
 
-type ActiveSection = 'simulator' | 'mql5' | 'android' | 'telegram' | 'sheets' | 'deploy';
+type ActiveSection =
+  | 'm15'
+  | 'mtf'
+  | 'mql5'
+  | 'android'
+  | 'telegram'
+  | 'sheets'
+  | 'deploy';
 
 const NAV_ITEMS: Array<{ id: ActiveSection; label: string }> = [
-  { id: 'simulator', label: 'จำลองกราฟ' },
+  { id: 'm15', label: 'กราฟ CISD' },
+  { id: 'mtf', label: 'สถานะ 2 TF' },
   { id: 'mql5', label: 'โค้ด MQL5' },
   { id: 'android', label: 'ตั้งค่ามือถือ' },
   { id: 'telegram', label: 'Telegram' },
@@ -31,8 +46,37 @@ const NAV_ITEMS: Array<{ id: ActiveSection; label: string }> = [
   { id: 'deploy', label: 'นำขึ้น Server' },
 ];
 
+const SECTION_DESCRIPTIONS: Record<ActiveSection, string> = {
+  m15: 'ตรวจสอบแท่งเทียนระบบ CISD Timeframe M30 และ M15 พร้อมขีดเส้นและแจ้งเตือนทันที',
+  mtf: 'สรุปทิศทางขึ้นหรือลงของระบบ CISD ทั้ง 2 Timeframe (M30, M15) ดูง่าย สบายตา',
+  mql5: 'ปรับแต่งเงื่อนไขและดาวน์โหลดโค้ด MQL5 พร้อมใช้งานใน MetaTrader 5',
+  android: 'คู่มือตั้งค่า MetaTrader 5 บน Android และดาวน์โหลดไฟล์เสียงแจ้งเตือนความยาว 10 วินาที',
+  telegram: 'เชื่อมต่อบอท Telegram เพื่อรับสัญญาณ CISD (M30 · M15) เข้าแชทอัตโนมัติ',
+  sheets: 'เชื่อมต่อบัญชี Google เพื่อบันทึกประวัติสัญญาณ CISD ลง Google Sheets',
+  deploy: 'ซิงค์โค้ดขึ้น GitHub และดาวน์โหลดแพ็กเกจสำหรับนำไปรันเฝ้ากราฟ 24 ชั่วโมงบน Server',
+};
+
+function parseInitialCisdTimeframe(): CisdTimeframe {
+  if (typeof window === 'undefined') return 'M15';
+  const raw = new URLSearchParams(window.location.search).get('tf')?.toUpperCase();
+  if (raw && CISD_TIMEFRAME_ORDER.includes(raw as CisdTimeframe)) {
+    return raw as CisdTimeframe;
+  }
+  return 'M15';
+}
+
 export default function App() {
-  const [activeSection, setActiveSection] = useState<ActiveSection>('simulator');
+  const [cisdTimeframe, setCisdTimeframe] = useState<CisdTimeframe>(
+    parseInitialCisdTimeframe
+  );
+  const [activeSection, setActiveSection] = useState<ActiveSection>(() => {
+    if (typeof window === 'undefined') return 'm15';
+    const params = new URLSearchParams(window.location.search);
+    const view = params.get('tab')?.toLowerCase();
+    if (view === 'mtf') return 'mtf';
+    if (view === 'telegram') return 'telegram';
+    return 'm15';
+  });
   const [mql5Config, setMql5Config] = useState<Mql5Config>(DEFAULT_MQL5_CONFIG);
   const [signals, setSignals] = useState<SignalLogRecord[]>([]);
   const [telegramSyncedReady, setTelegramSyncedReady] = useState<boolean | null>(null);
@@ -58,7 +102,7 @@ export default function App() {
           ...prev,
           enableTelegram: true,
           telegramBotToken: prev.telegramBotToken || saved.telegramBotToken,
-          telegramChatId: prev.telegramChatId || saved.telegramChatId,
+          telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
         }));
       }
       try {
@@ -66,6 +110,19 @@ export default function App() {
         if (!res.ok) return;
         const status = await res.json();
         if (status.telegramConfigured) {
+          if (!cancelled) {
+            setMql5Config((prev) => ({
+              ...prev,
+              enableTelegram: true,
+              telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
+            }));
+            if (saved && saved.telegramChatId !== SYSTEM_TELEGRAM_CHAT_ID) {
+              saveTelegramConfigLocally({
+                ...saved,
+                telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
+              });
+            }
+          }
           if (!cancelled) setTelegramSyncedReady(true);
           return;
         }
@@ -73,7 +130,10 @@ export default function App() {
           const restoreRes = await fetch('/api/monitor/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(saved),
+            body: JSON.stringify({
+              ...saved,
+              telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
+            }),
           });
           if (restoreRes.ok) {
             const restored = await restoreRes.json();
@@ -142,13 +202,13 @@ export default function App() {
       id: `sample-${Date.now()}`,
       timestamp: nowStr,
       symbol: 'US100',
-      timeframe: mql5Config.lockM5 ? 'M5' : 'Current',
+      timeframe: cisdTimeframe,
       signal: isBuy ? 'BUY' : 'SELL',
-      aoPrev: isBuy ? -18.42 : 21.45,
-      aoCurr: isBuy ? 14.25 : -16.3,
-      price: isBuy ? 20950.0 : 20935.5,
+      aoPrev: isBuy ? 27180.25 : 27245.5,
+      aoCurr: isBuy ? 27210.5 : 27205.75,
+      price: isBuy ? 27210.5 : 27205.75,
       pushStatus: 'Android Push Sent',
-      note: isBuy ? 'AO ตัด 0 ขึ้น' : 'AO ตัด 0 ลง',
+      note: isBuy ? 'ราคาปิดเหนือระดับ CISD' : 'ราคาปิดต่ำกว่าระดับ CISD',
       syncedToSheet: false,
     });
   };
@@ -170,27 +230,28 @@ export default function App() {
   const unsyncedCount = signals.filter((s) => !s.syncedToSheet).length;
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
+    <MotionConfig reducedMotion="user">
+      <div className="min-h-screen flex flex-col bg-[#f6f8fb] text-slate-900">
       {/* Studio Top Bar: hidden on deployed online web view to match clean live UI */}
       {!isWebMode && (
         <header className="border-b border-slate-200/80 bg-white">
-          <div className="mx-auto flex max-w-6xl items-center justify-between gap-8 px-4 py-4 sm:px-6 lg:px-8">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 lg:gap-6 px-4 py-3.5 sm:px-6 lg:px-8">
             {/* Zone 1: Brand wordmark only */}
             <a
               href="#top"
               onClick={(e) => {
                 e.preventDefault();
-                setActiveSection('simulator');
+                setActiveSection('m15');
               }}
               className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
             >
-              AO Signal Studio
+              CISD Signal Studio
             </a>
 
             {/* Zone 2: concise single-line nav links */}
             <nav
               aria-label="เมนูหลัก"
-              className="hidden md:flex items-center gap-6 text-sm font-medium"
+              className="hidden md:flex items-center gap-3.5 lg:gap-4 text-[13px] font-medium"
             >
               {NAV_ITEMS.map((item) => {
                 const isActive = activeSection === item.id;
@@ -199,37 +260,39 @@ export default function App() {
                     key={item.id}
                     type="button"
                     onClick={() => setActiveSection(item.id)}
-                    className={`py-1 whitespace-nowrap shrink-0 border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${
+                    className={`relative py-2 whitespace-nowrap shrink-0 border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${
                       isActive
-                        ? 'border-blue-600 text-slate-900'
-                        : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
+                        ? 'border-blue-600 font-semibold text-slate-900'
+                        : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
                     }`}
                   >
                     {item.label}
-                    {item.id === 'sheets' && unsyncedCount > 0
-                      ? ` (${unsyncedCount})`
-                      : ''}
+                    {item.id === 'sheets' && unsyncedCount > 0 ? (
+                      <span className="ml-1 font-mono text-xs text-blue-600 tabular-nums">
+                        ({unsyncedCount})
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}
             </nav>
 
             {/* Zone 3: 1 primary action + optional PWA install */}
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2.5 shrink-0">
               <PWAInstallButton />
               <button
                 type="button"
                 onClick={handleQuickDownload}
-                className="inline-flex h-9 items-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-medium text-white whitespace-nowrap shrink-0 transition-colors hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-blue-600"
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-[13px] font-medium text-white whitespace-nowrap shrink-0 transition-colors hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-blue-600"
               >
-                <Download className="h-3.5 w-3.5" />
+                <Download className="h-4 w-4" />
                 ดาวน์โหลด .mq5
               </button>
             </div>
           </div>
 
           {/* Mobile Nav Switcher */}
-          <div className="flex md:hidden items-center gap-2 overflow-x-auto border-t border-slate-100 px-4 py-2">
+          <div className="flex md:hidden items-center gap-1.5 overflow-x-auto border-t border-slate-100 px-4 py-2">
             {NAV_ITEMS.map((item) => {
               const isActive = activeSection === item.id;
               return (
@@ -237,13 +300,16 @@ export default function App() {
                   key={item.id}
                   type="button"
                   onClick={() => setActiveSection(item.id)}
-                  className={`h-9 rounded-md px-3 text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
+                  className={`h-10 rounded-lg px-3.5 text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
                     isActive
                       ? 'bg-slate-900 text-white'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
                   {item.label}
+                  {item.id === 'sheets' && unsyncedCount > 0
+                    ? ` (${unsyncedCount})`
+                    : ''}
                 </button>
               );
             })}
@@ -255,7 +321,7 @@ export default function App() {
       <main
         id="top"
         className={`mx-auto w-full max-w-6xl flex-1 px-4 sm:px-6 lg:px-8 ${
-          isWebMode ? 'py-5' : 'py-8'
+          isWebMode ? 'py-6' : 'py-8'
         }`}
       >
         {/* Dev preview exit pill (only visible when previewing web mode inside Dev Studio) */}
@@ -276,12 +342,15 @@ export default function App() {
           </div>
         )}
 
-        {/* Back button when opening Telegram/Sheets sub-view from deployed web UI */}
-        {isWebMode && activeSection !== 'simulator' && (
+        {/* Back button when opening sub-views outside the 3 main Web Mode tabs */}
+        {isWebMode &&
+          activeSection !== 'm15' &&
+          activeSection !== 'mtf' &&
+          activeSection !== 'telegram' && (
           <div className="mb-4">
             <button
               type="button"
-              onClick={() => setActiveSection('simulator')}
+              onClick={() => setActiveSection('m15')}
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
@@ -290,31 +359,101 @@ export default function App() {
           </div>
         )}
 
-        {/* Clean Minimal Title */}
-        <div className={isWebMode ? 'mb-4' : 'mb-7'}>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
-            {isWebMode
-              ? 'แจ้งเตือน AO'
-              : `แจ้งเตือน AO ตัดเส้น 0 (${mql5Config.lockM5 ? 'M5' : 'Chart'}) เข้ามือถือ Android`}
-          </h1>
-          <p className="mt-1 text-xs text-slate-500">
-            {isWebMode
-              ? 'MetaTrader 5 · BUY / SELL'
-              : 'MetaTrader 5 · BUY / SELL · เสียงแจ้งเตือน 10 วินาที · Google Sheets'}
-          </p>
+        {/* Clean Minimal Title + Web Mode Chart Switcher */}
+        <div
+          className={`${
+            isWebMode ? 'mb-5' : 'mb-7'
+          } flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between`}
+        >
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
+              {activeSection === 'mtf'
+                ? 'สรุปสถานะ CISD (M30 · M15)'
+                : activeSection === 'telegram'
+                ? 'เชื่อมต่อ Telegram แจ้งเตือน CISD'
+                : `แจ้งเตือน CISD Timeframe ${cisdTimeframe}`}
+            </h1>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
+              {isWebMode
+                ? activeSection === 'mtf'
+                  ? 'CISD · US100 · M30 · M15'
+                  : activeSection === 'telegram'
+                  ? 'ใช้ Bot Token และ Chat ID เดิมบนเซิร์ฟเวอร์ พร้อมทดสอบส่งข้อความและเช็กประวัติแจ้งเตือน'
+                  : `MetaTrader 5 · US100 ${cisdTimeframe} · CISD (ขาขึ้น / ขาลง)`
+                : SECTION_DESCRIPTIONS[activeSection]}
+            </p>
+          </div>
+
+          {isWebMode &&
+            (activeSection === 'm15' ||
+              activeSection === 'mtf' ||
+              activeSection === 'telegram') && (
+            <div className="inline-flex flex-wrap items-center gap-1 self-start rounded-lg bg-slate-200/75 p-1">
+              <button
+                type="button"
+                onClick={() => setActiveSection('m15')}
+                className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
+                  activeSection === 'm15'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                กราฟ CISD ({cisdTimeframe})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSection('mtf')}
+                className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
+                  activeSection === 'mtf'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                สถานะ 2 TF
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSection('telegram')}
+                className={`inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
+                  activeSection === 'telegram'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    telegramSyncedReady ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}
+                />
+                เชื่อมต่อ Telegram
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Active Workspace View */}
-        {activeSection === 'simulator' && (
-          <AoChartSimulator
-            alertDirection={mql5Config.alertDirection}
-            lockM5={mql5Config.lockM5}
+        {activeSection === 'm15' && (
+          <M15CisdChartView
             customPrefix={mql5Config.customPrefix}
             onSignalDetected={handleSignalDetected}
             recentSignals={signals}
             onGoToSheets={() => setActiveSection('sheets')}
             onGoToTelegram={() => setActiveSection('telegram')}
             telegramSyncedReady={telegramSyncedReady}
+            isWebMode={isWebMode}
+            timeframe={cisdTimeframe}
+            onChangeTimeframe={setCisdTimeframe}
+            onOpenStatusWindow={() => setActiveSection('mtf')}
+          />
+        )}
+
+        {activeSection === 'mtf' && (
+          <MultiTimeframeStatusWindow
+            selectedTimeframe={cisdTimeframe}
+            onSelectTimeframeForChart={(tf) => {
+              setCisdTimeframe(tf);
+              setActiveSection('m15');
+            }}
             isWebMode={isWebMode}
           />
         )}
@@ -345,7 +484,7 @@ export default function App() {
           <ServerDeployPanel
             onPreviewWebMode={() => {
               setDevPreviewWeb(true);
-              setActiveSection('simulator');
+              setActiveSection('m15');
             }}
           />
         )}
@@ -353,14 +492,15 @@ export default function App() {
 
       {/* Quiet Clean Footer (shown in Studio mode only) */}
       {!isWebMode && (
-        <footer className="border-t border-slate-200/80 bg-white py-4">
-          <div className="mx-auto flex max-w-6xl items-center justify-between px-4 text-xs text-slate-400 sm:px-6 lg:px-8">
-            <span>AO Signal Studio</span>
-            <span>US100 · M5 (US 100 Index Cash)</span>
+        <footer className="border-t border-slate-200/80 bg-white py-5">
+          <div className="mx-auto flex max-w-6xl items-center justify-between px-4 text-xs text-slate-500 sm:px-6 lg:px-8">
+            <span className="font-medium text-slate-700">CISD Signal Studio</span>
+            <span>US100 · M30 · M15 (US 100 Index Cash)</span>
           </div>
         </footer>
       )}
-      <OfflineIndicator />
-    </div>
+        <OfflineIndicator />
+      </div>
+    </MotionConfig>
   );
 }
