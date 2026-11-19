@@ -1,24 +1,5 @@
 {
-  "updatedAt": "2026-11-19T09:57:54.344Z",
-  "count": 1,
-  "signals": [
-    {
-      "id": "sig_1795082273580_n3zz4",
-      "timestamp": "2026-11-19T09:57:53.580Z",
-      "symbol": "US100",
-      "timeframe": "M5",
-      "direction": "BUY",
-      "price": 27662.93,
-      "priceFormatted": "27662.93",
-      "aoPrev": -9.768235294115584,
-      "aoCurr": 4.937058823536063,
-      "aoPrevFormatted": "-9.768",
-      "aoCurrFormatted": "+4.937",
-      "pushMessage": "🟢 BUY · US100 (M5)\n____________________\nเงื่อนไข: AO ตัดเส้น 0 ขึ้น 🟢⬆️\nค่า AO: -9.768 → +4.937\nโหมด: กราฟจริง\nเวลา: 16:50 น.",
-      "timeLabel": "16:50",
-      "source": "Live US100 M5",
-      "telegramStatus": "pending",
-      "sheetsLogged": false
-    }
-  ]
+  "updatedAt": "2026-11-19T10:01:34.456Z",
+  "count": 0,
+  "signals": []
 }
