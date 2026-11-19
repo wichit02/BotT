@@ -52,6 +52,9 @@ interface LiveFeedResponse {
   source: string;
   marketState: string;
   fetchedAt: string;
+  lastTickAt?: string | null;
+  bid?: number;
+  ask?: number;
   bars: M5Bar[];
   xmBridgeConnected?: boolean;
   cfdStreamConnected?: boolean;
@@ -118,6 +121,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
   const [bars, setBars] = useState<M5Bar[]>(() => generateInitialSeries('US100'));
   const [marketState, setMarketState] = useState<string>('');
   const [feedSource, setFeedSource] = useState<string>('');
+  const [liveBidAsk, setLiveBidAsk] = useState<{ bid?: number; ask?: number; lastTickAt?: string | null }>({});
   const [isLoadingLive, setIsLoadingLive] = useState(false);
   const [liveError, setLiveError] = useState<string | null>(null);
   const [barCountdown, setBarCountdown] = useState<string>(() => formatBarCountdown());
@@ -440,7 +444,8 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
       setLiveError(null);
       try {
         const res = await fetch(
-          `/api/market/m5?symbol=${encodeURIComponent(targetSymbol)}`
+          `/api/market/m5?symbol=${encodeURIComponent(targetSymbol)}&_t=${Date.now()}`,
+          { cache: 'no-store' }
         );
         if (!res.ok) {
           const errBody = await res.json().catch(() => ({}));
@@ -450,6 +455,11 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         setBars(data.bars);
         setMarketState(data.marketState);
         setFeedSource(data.source);
+        setLiveBidAsk({
+          bid: data.bid,
+          ask: data.ask,
+          lastTickAt: data.lastTickAt || data.fetchedAt,
+        });
         setXmBridgeConnected(Boolean(data.xmBridgeConnected));
 
         if (Array.isArray(data.alertedBarKeys)) {
@@ -530,12 +540,15 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
     setHoveredIdx(null);
     setPanOffset(0);
     setLiveError(null);
-    if (nextMode === 'sim') {
+    if (nextMode === 'live') {
+      lastObservedClosedBucketRef.current = null;
+    } else {
       const initBars = generateInitialSeries(symbol);
       barsRef.current = initBars;
       setBars(initBars);
       setMarketState('');
       setFeedSource('');
+      setLiveBidAsk({});
     }
   };
 
@@ -772,10 +785,22 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
     return dividerY + 18 + ratio * (aoH - 32);
   };
   const aoZeroY = aoToY(0);
-  const latestCloseY = Math.min(Math.max(priceToY(latestClosedBar.close), 8), priceH - 8);
+  const liveDisplayPrice =
+    feedMode === 'live' && typeof liveBidAsk.bid === 'number' && liveBidAsk.bid > 0
+      ? liveBidAsk.bid
+      : latestClosedBar.close;
+  const liveAskPrice =
+    feedMode === 'live' && typeof liveBidAsk.ask === 'number' && liveBidAsk.ask > 0
+      ? liveBidAsk.ask
+      : liveDisplayPrice + spec.stepSize * 0.05;
+  const latestCloseY = Math.min(Math.max(priceToY(liveDisplayPrice), 8), priceH - 8);
+  const askLineY = Math.min(
+    Math.max(Math.min(priceToY(liveAskPrice), latestCloseY - 1.5), 6),
+    priceH - 10
+  );
   const showLatestLine =
-    latestClosedBar.close <= chartMetrics.priceTop &&
-    latestClosedBar.close >= chartMetrics.priceBottom;
+    liveDisplayPrice <= chartMetrics.priceTop &&
+    liveDisplayPrice >= chartMetrics.priceBottom;
 
   // 7 crisp horizontal price scale levels on the right axis matching XM MT5
   const priceTickRatios = [0.06, 0.21, 0.36, 0.51, 0.66, 0.81, 0.94];
@@ -1008,7 +1033,17 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                   />
                   {marketState === 'MARKET CLOSED'
                     ? 'ตลาดปิด (ล่าสุด)'
-                    : `${marketState} · อัปเดตทุก 2 วิ`}
+                    : `${xmBridgeConnected ? 'XM MT5' : 'MT5 CFD'} · อัปเดตทุก 2 วิ${
+                        liveBidAsk.lastTickAt
+                          ? ` (${new Date(liveBidAsk.lastTickAt).toLocaleTimeString('th-TH', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                              hour12: false,
+                              timeZone: 'Asia/Bangkok',
+                            })})`
+                          : ''
+                      }`}
                 </span>
               )}
               {feedMode === 'sim' && (
@@ -1327,9 +1362,9 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                 <>
                   <line
                     x1={plotLeft}
-                    y1={latestCloseY - 1.5}
+                    y1={askLineY}
                     x2={svgW}
-                    y2={latestCloseY - 1.5}
+                    y2={askLineY}
                     stroke="#b91c1c"
                     strokeWidth="0.95"
                     opacity={0.9}
@@ -1369,7 +1404,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                   fill="#ffffff"
                   className="font-mono tabular-nums"
                 >
-                  {latestClosedBar.close.toFixed(spec.digits)}
+                  {liveDisplayPrice.toFixed(spec.digits)}
                 </text>
                 <text
                   x={6}
@@ -1524,23 +1559,32 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                 </button>
               </div>
 
-              <details className="text-xs text-slate-500">
-                <summary className="cursor-pointer select-none py-1 hover:text-slate-800">
-                  เชื่อมกราฟตรงจาก XM MT5 ({xmBridgeConnected ? 'เชื่อมต่อแล้ว' : 'ใช้ฟีด Forex CFD อัตโนมัติ'})
-                </summary>
-                <div className="mt-2 space-y-2 rounded-lg border border-slate-100 bg-slate-50 p-2.5 text-[11px] text-slate-600">
-                  <p>
-                    ระบบกำลังดึงฟีด <strong>MT5 Forex CFD (NAS100 Cash)</strong> แบบเรียลไทม์ทุก 2 วินาที หากต้องการดึงราคาตรงจากบัญชี <strong>XM MT5</strong> ของคุณ 100% ให้ดาวน์โหลด EA ตัวนี้ไปวางบนชาร์ต <span className="font-mono">US100Cash#</span>
-                  </p>
-                  <a
-                    href="/api/mt5/bridge-ea.mq5"
-                    download="XM_MT5_LiveBridge_EA.mq5"
-                    className="inline-flex h-8 items-center gap-1.5 rounded-md bg-slate-900 px-3 text-[11px] font-medium text-white hover:bg-slate-800"
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2 text-[11px] text-slate-600">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-800">
+                    XM MT5 Live Bridge (ทุก 2 วินาที)
+                  </span>
+                  <span
+                    className={`font-medium ${
+                      xmBridgeConnected ? 'text-emerald-700' : 'text-sky-700'
+                    }`}
                   >
-                    ดาวน์โหลด XM_MT5_LiveBridge_EA.mq5
-                  </a>
+                    {xmBridgeConnected ? 'เชื่อม XM MT5 แล้ว' : 'MT5 CFD Real-Time'}
+                  </span>
                 </div>
-              </details>
+                <p className="leading-relaxed">
+                  {xmBridgeConnected
+                    ? 'กำลังรับราคาและแท่งเทียน M5 ตรงจากเทอร์มินัล XM MT5 (US100Cash#) ทุก 2 วินาที'
+                    : 'ตอนนี้ใช้ฟีด MT5 Forex CFD Real-Time (อัปเดตทุก 2 วิ) หากต้องการราคาตรงพอร์ต XM MT5 (US100Cash#) 100% ให้ติดตั้ง EA นี้บนชาร์ต MT5 และเพิ่ม URL เว็บนี้ใน Allow WebRequest'}
+                </p>
+                <a
+                  href="/api/mt5/bridge-ea.mq5"
+                  download="XM_MT5_LiveBridge_EA.mq5"
+                  className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-md bg-slate-900 px-3 text-[11px] font-medium text-white hover:bg-slate-800"
+                >
+                  ดาวน์โหลด XM_MT5_LiveBridge_EA.mq5
+                </a>
+              </div>
 
               <details className="text-xs text-slate-500">
                 <summary className="cursor-pointer select-none py-1 hover:text-slate-800">
