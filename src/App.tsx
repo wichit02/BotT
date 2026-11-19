@@ -1,818 +1,366 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { ArrowLeft, Download } from 'lucide-react';
+import { AoChartSimulator } from './components/AoChartSimulator';
+import { Mql5Studio } from './components/Mql5Studio';
+import { AndroidSetupGuide } from './components/AndroidSetupGuide';
+import { GoogleSheetsSync } from './components/GoogleSheetsSync';
+import { TelegramConfig } from './components/TelegramConfig';
+import { ServerDeployPanel } from './components/ServerDeployPanel';
 import {
-  AoChartPanel,
-  type AlertDirectionFilter,
-} from './components/AoChartPanel';
-import { TelegramSettingsModal } from './components/TelegramSettingsModal';
-import { ServerSyncPanel } from './components/ServerSyncPanel';
-import { playAlertChime } from './lib/soundAlert';
+  DEFAULT_MQL5_CONFIG,
+  Mql5Config,
+  generateMql5Code,
+  getMql5Filename,
+} from './lib/mql5Generator';
+import type { SignalLogRecord } from './lib/sheetsApi';
 import {
-  buildSimulatedM5Raw,
-  createSignalFromSeries,
-  formatSignedAo,
-  getTwoSwingStepInfo,
-  rawToCandlesWithAO,
-  stepSimStream,
-  type SimStreamState,
-} from './lib/aoEngine';
-import type {
-  CandleWithAO,
-  ChartMode,
-  GitHubConfigState,
-  LiveHistoricalCross,
-  LiveMarketResponse,
-  SignalDirection,
-  SignalRecord,
-  TelegramConfigState,
-  TradingSymbol,
-} from './types/trading';
+  OfflineIndicator,
+  PWAInstallButton,
+} from './components/PWAInstallButton';
+import { loadSavedTelegramConfig } from './lib/telegramStorage';
+import { loadSavedGithubConfig } from './lib/githubStorage';
 
-const TELEGRAM_STORAGE_KEY = 'us100_ao_telegram_config_v1';
-const LIVE_ALERTED_KEY_STORAGE = 'us100_ao_last_live_alert_key_v1';
+type ActiveSection = 'simulator' | 'mql5' | 'android' | 'telegram' | 'sheets' | 'deploy';
 
-function toLocalHm(iso: string, fallback: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return fallback;
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-function loadSavedTelegramConfig(): Omit<
-  TelegramConfigState,
-  'serverTokenConfigured' | 'maskedToken' | 'botUsername'
-> {
-  const defaults: Omit<
-    TelegramConfigState,
-    'serverTokenConfigured' | 'maskedToken' | 'botUsername'
-  > = {
-    enabled: true,
-    chatId: '-1004382980885',
-    parseMode: 'HTML',
-    sendCondition: 'always',
-    autoSendLive: true,
-    autoSendSim: true,
-    customTag: '',
-  };
-  if (typeof window === 'undefined') return defaults;
-  try {
-    const raw = window.localStorage.getItem(TELEGRAM_STORAGE_KEY);
-    if (!raw) return defaults;
-    const parsed = JSON.parse(raw) as Partial<TelegramConfigState>;
-    return {
-      enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : defaults.enabled,
-      chatId:
-        typeof parsed.chatId === 'string' && parsed.chatId.trim()
-          ? parsed.chatId.trim()
-          : defaults.chatId,
-      parseMode: parsed.parseMode === 'Markdown' ? 'Markdown' : 'HTML',
-      sendCondition: parsed.sendCondition === 'fallback' ? 'fallback' : 'always',
-      autoSendLive: true,
-      autoSendSim: true,
-      customTag: typeof parsed.customTag === 'string' ? parsed.customTag : '',
-    };
-  } catch {
-    return defaults;
-  }
-}
+const NAV_ITEMS: Array<{ id: ActiveSection; label: string }> = [
+  { id: 'simulator', label: 'จำลองกราฟ' },
+  { id: 'mql5', label: 'โค้ด MQL5' },
+  { id: 'android', label: 'ตั้งค่ามือถือ' },
+  { id: 'telegram', label: 'Telegram' },
+  { id: 'sheets', label: 'Google Sheets' },
+  { id: 'deploy', label: 'นำขึ้น Server' },
+];
 
 export default function App() {
-  const symbol: TradingSymbol = 'US100';
-  const [activePage, setActivePage] = useState<'chart' | 'server'>('chart');
-  const [chartMode, setChartMode] = useState<ChartMode>('live');
-
-  const simStreamRef = useRef<SimStreamState>({
-    raw: buildSimulatedM5Raw('US100', 'neutral', 1),
-    tickInBar: 0,
-    phase: 0,
-    swingLabel: getTwoSwingStepInfo(0).label,
+  const [activeSection, setActiveSection] = useState<ActiveSection>('simulator');
+  const [mql5Config, setMql5Config] = useState<Mql5Config>(DEFAULT_MQL5_CONFIG);
+  const [signals, setSignals] = useState<SignalLogRecord[]>([]);
+  const [telegramSyncedReady, setTelegramSyncedReady] = useState<boolean | null>(null);
+  const [devPreviewWeb, setDevPreviewWeb] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('view') === 'web';
   });
-  const [simCandles, setSimCandles] = useState<CandleWithAO[]>(() =>
-    rawToCandlesWithAO(simStreamRef.current.raw, 'US100', 38)
-  );
-  const [simDirection, setSimDirection] = useState<SignalDirection | null>(null);
-  const [simPlaying, setSimPlaying] = useState(false);
-  const [simSpeed, setSimSpeed] = useState<1 | 2>(1);
-  const [simTickInBar, setSimTickInBar] = useState(0);
-  const [simSwingLabel, setSimSwingLabel] = useState(
-    getTwoSwingStepInfo(0).label
-  );
 
-  // Live XM MT5-Style US100Cash M5 Feed State
-  const [liveCandles, setLiveCandles] = useState<CandleWithAO[]>([]);
-  const [liveFeedSymbol, setLiveFeedSymbol] = useState('US100Cash');
-  const [liveIsRealtime, setLiveIsRealtime] = useState(true);
-  const [liveMarketPrice, setLiveMarketPrice] = useState<number | null>(null);
-  const [liveBid, setLiveBid] = useState<number | null>(null);
-  const [liveAsk, setLiveAsk] = useState<number | null>(null);
-  const [liveSpread, setLiveSpread] = useState<number | null>(null);
-  const [liveBarCloseTimeIso, setLiveBarCloseTimeIso] = useState<string | null>(null);
-  const [liveUpdatedAt, setLiveUpdatedAt] = useState<string | null>(null);
-  const [liveLoading, setLiveLoading] = useState(false);
-  const [liveError, setLiveError] = useState<string | null>(null);
-  const [liveDirection, setLiveDirection] = useState<SignalDirection | null>(null);
-  const [lastHistoricalCross, setLastHistoricalCross] =
-    useState<LiveHistoricalCross | null>(null);
-  const [nextRefreshInSec, setNextRefreshInSec] = useState(5);
-
-  const lastAlertedLiveKeyRef = useRef<string | null>(
-    typeof window !== 'undefined'
-      ? window.localStorage.getItem(LIVE_ALERTED_KEY_STORAGE)
-      : null
-  );
-
-  const [alertFilter, setAlertFilter] = useState<AlertDirectionFilter>('both');
-  const [sound10sEnabled, setSound10sEnabled] = useState(false);
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
-
-  const [latestSignal, setLatestSignal] = useState<SignalRecord | null>(null);
-
-  // Configurable Telegram State
-  const [serverDefaultChatId, setServerDefaultChatId] = useState('-1004382980885');
-  const [telegramConfig, setTelegramConfig] = useState<TelegramConfigState>(() => ({
-    ...loadSavedTelegramConfig(),
-    serverTokenConfigured: false,
-    maskedToken: '',
-  }));
-  const [telegramSettingsOpen, setTelegramSettingsOpen] = useState(false);
-
-  // GitHub Server Sync State (only uploads when uploadAllowed === true)
-  const [githubConfig, setGithubConfig] = useState<GitHubConfigState>({
-    connected: false,
-    maskedToken: '',
-    username: '',
-    repoName: '',
-    repo: '',
-    branch: 'main',
-    isPrivate: true,
-    autoUploadCode: true,
-    autoLogSignals: true,
-    uploadAllowed: false,
-  });
-  const [githubUploading, setGithubUploading] = useState(false);
+  const forceStudio =
+    typeof window !== 'undefined' &&
+    ['1', 'true'].includes(
+      new URLSearchParams(window.location.search).get('studio') || ''
+    );
+  const isWebMode = (import.meta.env.PROD && !forceStudio) || devPreviewWeb;
 
   useEffect(() => {
-    fetch('/api/github/config')
-      .then((res) => res.json())
-      .then((data: GitHubConfigState & { ok?: boolean }) => {
-        if (data && typeof data.connected === 'boolean') {
-          setGithubConfig({
-            connected: data.connected,
-            maskedToken: data.maskedToken || '',
-            username: data.username || '',
-            repoName: data.repoName || '',
-            repo: data.repo || '',
-            branch: data.branch || 'main',
-            isPrivate: typeof data.isPrivate === 'boolean' ? data.isPrivate : true,
-            autoUploadCode:
-              typeof data.autoUploadCode === 'boolean' ? data.autoUploadCode : true,
-            autoLogSignals:
-              typeof data.autoLogSignals === 'boolean' ? data.autoLogSignals : true,
-            uploadAllowed: Boolean(data.uploadAllowed),
-            syncedFileCount: data.syncedFileCount,
-            lastUploadAt: data.lastUploadAt,
-            lastCommitUrl: data.lastCommitUrl,
-          });
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    fetch('/api/telegram/config')
-      .then((res) => res.json())
-      .then(
-        (data: {
-          configured?: boolean;
-          maskedToken?: string;
-          botUsername?: string;
-          defaultChatId?: string;
-          chatId?: string;
-          sendCondition?: 'always' | 'fallback';
-        }) => {
-          if (data.defaultChatId) {
-            setServerDefaultChatId(data.defaultChatId);
-          }
-          setTelegramConfig((prev) => {
-            const hasStoredChat =
-              typeof window !== 'undefined' &&
-              Boolean(window.localStorage.getItem(TELEGRAM_STORAGE_KEY));
-            return {
-              ...prev,
-              serverTokenConfigured: Boolean(data.configured),
-              maskedToken: data.maskedToken || '',
-              botUsername: data.botUsername,
-              sendCondition:
-                data.sendCondition === 'fallback' ? 'fallback' : prev.sendCondition,
-              chatId: hasStoredChat
-                ? prev.chatId
-                : data.chatId || data.defaultChatId || prev.chatId,
-            };
-          });
-        }
-      )
-      .catch(() => {});
-  }, []);
-
-  const formatTelegramSignalText = useCallback(
-    (sig: SignalRecord, cfg: TelegramConfigState) => {
-      const headIcon = sig.direction === 'BUY' ? '🟢' : '🔴';
-      const condText =
-        sig.direction === 'BUY'
-          ? 'AO ตัดเส้น 0 ขึ้น 🟢⬆️'
-          : 'AO ตัดเส้น 0 ลง 🔴⬇️';
-      const modeLabel = sig.source === 'Live US100 M5' ? 'กราฟจริง' : 'กราฟจำลอง';
-      const timeText =
-        sig.timeLabel ||
-        new Date(sig.timestamp).toLocaleTimeString('th-TH', {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-        });
-      const tagLine = cfg.customTag.trim() ? `\n${cfg.customTag.trim()}` : '';
-
-      if (cfg.parseMode === 'Markdown') {
-        return [
-          `*${headIcon} ${sig.direction} · US100 (M5)*`,
-          `____________________`,
-          `เงื่อนไข: ${condText}`,
-          `ค่า AO: ${sig.aoPrevFormatted} → ${sig.aoCurrFormatted}`,
-          `โหมด: ${modeLabel}`,
-          `เวลา: ${timeText} น.${tagLine}`,
-        ].join('\n');
+    let cancelled = false;
+    const syncSavedTelegram = async () => {
+      const saved = loadSavedTelegramConfig();
+      if (saved && !cancelled) {
+        setMql5Config((prev) => ({
+          ...prev,
+          enableTelegram: true,
+          telegramBotToken: prev.telegramBotToken || saved.telegramBotToken,
+          telegramChatId: prev.telegramChatId || saved.telegramChatId,
+        }));
       }
-      return [
-        `<b>${headIcon} ${sig.direction} · US100 (M5)</b>`,
-        `____________________`,
-        `เงื่อนไข: ${condText}`,
-        `ค่า AO: ${sig.aoPrevFormatted} → ${sig.aoCurrFormatted}`,
-        `โหมด: ${modeLabel}`,
-        `เวลา: ${timeText} น.${tagLine}`,
-      ].join('\n');
-    },
-    []
-  );
-
-  const sendTelegramPayload = useCallback(
-    async (
-      text: string,
-      cfg: TelegramConfigState,
-      dedupeKey?: string
-    ): Promise<{ ok: boolean; message: string }> => {
       try {
-        const res = await fetch('/api/telegram/send', {
+        const res = await fetch('/api/monitor/status');
+        if (!res.ok) return;
+        const status = await res.json();
+        if (status.telegramConfigured) {
+          if (!cancelled) setTelegramSyncedReady(true);
+          return;
+        }
+        if (saved) {
+          const restoreRes = await fetch('/api/monitor/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(saved),
+          });
+          if (restoreRes.ok) {
+            const restored = await restoreRes.json();
+            if (!cancelled) setTelegramSyncedReady(Boolean(restored.telegramConfigured));
+            return;
+          }
+        }
+        if (!cancelled) setTelegramSyncedReady(false);
+      } catch {
+        // Ignore transient startup network errors
+      }
+    };
+    void syncSavedTelegram();
+
+    const syncSavedGithub = async () => {
+      const savedGithub = loadSavedGithubConfig();
+      if (!savedGithub) return;
+      try {
+        const res = await fetch('/api/github/status');
+        if (!res.ok) return;
+        const status = await res.json();
+        if (status.connected) return;
+        await fetch('/api/github/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            chatId: cfg.chatId,
-            text,
-            parseMode: cfg.parseMode,
-            ...(dedupeKey ? { dedupeKey } : {}),
+            ...savedGithub,
+            syncImmediately: false,
           }),
         });
-        const data = (await res.json()) as {
-          ok?: boolean;
-          message?: string;
-          messageId?: number;
-        };
-
-        if (data.ok) {
-          return {
-            ok: true,
-            message: `ส่งเข้า Telegram (${cfg.chatId}) สำเร็จ (Message #${data.messageId})`,
-          };
-        }
-        return {
-          ok: false,
-          message:
-            data.message || `เตรียมข้อความสำหรับกลุ่ม ${cfg.chatId} แล้ว`,
-        };
       } catch {
-        return {
-          ok: false,
-          message: 'ไม่สามารถติดต่อเซิร์ฟเวอร์แจ้งเตือน Telegram ได้',
-        };
+        // Ignore transient startup network errors
       }
-    },
-    []
-  );
-
-  const triggerFullSystemAlert = useCallback(
-    (sig: SignalRecord, dedupeKey?: string) => {
-      setLatestSignal(sig);
-      playAlertChime(sig.direction);
-
-      const pushGranted =
-        typeof window !== 'undefined' &&
-        'Notification' in window &&
-        Notification.permission === 'granted';
-      if (pushGranted) {
-        try {
-          new Notification(
-            `${sig.direction === 'BUY' ? '🟢' : '🔴'} ${sig.direction} · US100 (M5)`,
-            {
-              body: sig.pushMessage,
-            }
-          );
-        } catch {
-          // ignore iframe restrictions
-        }
-      }
-
-      const shouldTelegramSend =
-        telegramConfig.enabled &&
-        telegramConfig.serverTokenConfigured &&
-        (telegramConfig.sendCondition === 'always' || !pushGranted);
-
-      if (shouldTelegramSend) {
-        const tgMsg = formatTelegramSignalText(sig, telegramConfig);
-        void sendTelegramPayload(tgMsg, telegramConfig, dedupeKey);
-      }
-
-      if (
-        githubConfig.connected &&
-        githubConfig.uploadAllowed &&
-        githubConfig.autoLogSignals
-      ) {
-        void fetch('/api/github/signal-log', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ signal: sig }),
-        })
-          .then((r) => r.json())
-          .then((res: { ok?: boolean; uploadedAt?: string; commitUrl?: string }) => {
-            if (res.ok && res.uploadedAt) {
-              setGithubConfig((prev) => ({
-                ...prev,
-                lastUploadAt: res.uploadedAt,
-                lastCommitUrl: res.commitUrl || prev.lastCommitUrl,
-              }));
-            }
-          })
-          .catch(() => {});
-      }
-    },
-    [
-      formatTelegramSignalText,
-      githubConfig.autoLogSignals,
-      githubConfig.connected,
-      githubConfig.uploadAllowed,
-      sendTelegramPayload,
-      telegramConfig,
-    ]
-  );
-
-  const fetchLiveUs100 = useCallback(async () => {
-    setLiveLoading(true);
-    setLiveError(null);
-    try {
-      const res = await fetch('/api/market/us100-m5', { cache: 'no-store' });
-      const data = (await res.json()) as LiveMarketResponse;
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || 'ไม่สามารถโหลดกราฟจริง US100Cash M5 ได้');
-      }
-
-      const localizedCandles = data.candles.map((c) => ({
-        ...c,
-        timeLabel: toLocalHm(c.timestampIso, c.timeLabel),
-      }));
-
-      const localizedHist = data.lastHistoricalCross
-        ? {
-            ...data.lastHistoricalCross,
-            timeLabel: toLocalHm(
-              data.lastHistoricalCross.timestampIso,
-              data.lastHistoricalCross.timeLabel
-            ),
-          }
-        : null;
-
-      setLiveCandles(localizedCandles);
-      setLiveFeedSymbol(data.feedSymbol || 'US100Cash');
-      setLiveIsRealtime(Boolean(data.isRealtimeStream));
-      setLiveMarketPrice(data.marketPrice);
-      setLiveBid(typeof data.bid === 'number' ? data.bid : data.marketPrice);
-      setLiveAsk(typeof data.ask === 'number' ? data.ask : null);
-      setLiveSpread(typeof data.spread === 'number' ? data.spread : null);
-      setLiveBarCloseTimeIso(data.barCloseTimeIso ?? null);
-      setLiveUpdatedAt(data.updatedAt);
-      setLiveDirection(data.latestBarCross);
-      setLastHistoricalCross(localizedHist);
-      setNextRefreshInSec(5);
-
-      if (data.latestBarCross && localizedCandles.length >= 3) {
-        const bar1 =
-          localizedCandles.find((c) => c.shift === 1) ??
-          localizedCandles[localizedCandles.length - 2];
-        const liveKey = `${bar1.timestampIso}_${data.latestBarCross}`;
-        const matchesFilter =
-          alertFilter === 'both' ||
-          (alertFilter === 'buy_only' && data.latestBarCross === 'BUY') ||
-          (alertFilter === 'sell_only' && data.latestBarCross === 'SELL');
-
-        if (matchesFilter && lastAlertedLiveKeyRef.current !== liveKey) {
-          lastAlertedLiveKeyRef.current = liveKey;
-          if (typeof window !== 'undefined') {
-            try {
-              window.localStorage.setItem(LIVE_ALERTED_KEY_STORAGE, liveKey);
-            } catch {
-              // ignore quota errors
-            }
-          }
-          const liveSig = createSignalFromSeries(
-            'US100',
-            localizedCandles,
-            data.latestBarCross,
-            'Live US100 M5'
-          );
-          triggerFullSystemAlert(liveSig, liveKey);
-        }
-      }
-    } catch (err) {
-      setLiveError(
-        err instanceof Error ? err.message : 'เชื่อมต่อข้อมูลตลาด US100Cash M5 ไม่สำเร็จ'
-      );
-    } finally {
-      setLiveLoading(false);
-    }
-  }, [alertFilter, triggerFullSystemAlert]);
-
-  useEffect(() => {
-    fetchLiveUs100();
-  }, [fetchLiveUs100]);
-
-  // 5-second Auto-Refresh polling (keeps Live alerts active in background too) + 1s countdown
-  useEffect(() => {
-    if (!autoRefreshEnabled) return;
-
-    const pollId = window.setInterval(() => {
-      fetchLiveUs100();
-    }, 5000);
-
-    const countdownId = window.setInterval(() => {
-      setNextRefreshInSec((prev) => (prev <= 1 ? 5 : prev - 1));
-    }, 1000);
+    };
+    void syncSavedGithub();
 
     return () => {
-      window.clearInterval(pollId);
-      window.clearInterval(countdownId);
+      cancelled = true;
     };
-  }, [autoRefreshEnabled, fetchLiveUs100]);
-
-  useEffect(() => {
-    if (!sound10sEnabled) return;
-    const id = window.setInterval(() => {
-      const dir = chartMode === 'live' ? liveDirection : simDirection;
-      if (!dir) return;
-      if (alertFilter === 'buy_only' && dir !== 'BUY') return;
-      if (alertFilter === 'sell_only' && dir !== 'SELL') return;
-      playAlertChime(dir);
-    }, 10000);
-    return () => window.clearInterval(id);
-  }, [sound10sEnabled, chartMode, liveDirection, simDirection, alertFilter]);
-
-  // Simulated Moving Candlestick Playback Loop (2-down swings / 2-up swings)
-  useEffect(() => {
-    if (chartMode !== 'simulator' || !simPlaying) return;
-    const intervalMs = simSpeed === 2 ? 350 : 700;
-
-    const id = window.setInterval(() => {
-      const { nextState, candles: nextCandles, closedCross } = stepSimStream(
-        simStreamRef.current,
-        symbol
-      );
-      simStreamRef.current = nextState;
-      setSimCandles(nextCandles);
-      setSimTickInBar(nextState.tickInBar);
-      setSimSwingLabel(nextState.swingLabel);
-
-      if (closedCross) {
-        setSimDirection(closedCross);
-        const matchesFilter =
-          alertFilter === 'both' ||
-          (alertFilter === 'buy_only' && closedCross === 'BUY') ||
-          (alertFilter === 'sell_only' && closedCross === 'SELL');
-
-        if (matchesFilter) {
-          const newSig = createSignalFromSeries(
-            symbol,
-            nextCandles,
-            closedCross,
-            'M5 Simulator'
-          );
-          triggerFullSystemAlert(newSig);
-        }
-      }
-    }, intervalMs);
-
-    return () => window.clearInterval(id);
-  }, [
-    chartMode,
-    simPlaying,
-    simSpeed,
-    symbol,
-    alertFilter,
-    triggerFullSystemAlert,
-  ]);
-
-  const handleOpenTelegramAction = () => {
-    setTelegramSettingsOpen(true);
-  };
-
-  const handleConfigSynced = (
-    nextConfig: TelegramConfigState,
-    _toastMessage?: string
-  ) => {
-    setTelegramConfig(nextConfig);
-    if (typeof window !== 'undefined') {
-      try {
-        window.localStorage.setItem(
-          TELEGRAM_STORAGE_KEY,
-          JSON.stringify({
-            enabled: nextConfig.enabled,
-            chatId: nextConfig.chatId,
-            parseMode: nextConfig.parseMode,
-            sendCondition: nextConfig.sendCondition,
-            autoSendLive: nextConfig.autoSendLive,
-            autoSendSim: nextConfig.autoSendSim,
-            customTag: nextConfig.customTag,
-          })
-        );
-      } catch {
-        // ignore quota errors
-      }
-    }
-  };
-
-  const handleToggleSimPlay = () => {
-    setSimPlaying((prev) => {
-      const next = !prev;
-      if (
-        next &&
-        typeof window !== 'undefined' &&
-        'Notification' in window &&
-        Notification.permission === 'default'
-      ) {
-        void Notification.requestPermission().catch(() => {});
-      }
-      return next;
-    });
-  };
-
-  const handleToggleAutoRefresh = () => {
-    setAutoRefreshEnabled((prev) => {
-      const next = !prev;
-      if (next) {
-        setNextRefreshInSec(5);
-        fetchLiveUs100();
-      }
-      return next;
-    });
-  };
-
-  const handleToggleSound10s = () => {
-    setSound10sEnabled((prev) => {
-      const next = !prev;
-      if (next) {
-        playAlertChime('TEST');
-      }
-      return next;
-    });
-  };
-
-  const displayedCandles = chartMode === 'live' ? liveCandles : simCandles;
-  const displayedDirection = chartMode === 'live' ? liveDirection : simDirection;
-
-  const handleTestSound = () => {
-    playAlertChime(displayedDirection ?? 'TEST');
-  };
-
-  const handleTriggerMobileAlert = async () => {
-    const activeSig =
-      latestSignal ??
-      (displayedCandles.length >= 3
-        ? createSignalFromSeries(
-            symbol,
-            displayedCandles,
-            displayedDirection ?? 'BUY',
-            chartMode === 'live' ? 'Live US100 M5' : 'M5 Simulator'
-          )
-        : null);
-
-    if (!activeSig) {
-      return;
-    }
-
-    playAlertChime(activeSig.direction);
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      try {
-        if (Notification.permission === 'default') {
-          await Notification.requestPermission();
-        }
-        if (Notification.permission === 'granted') {
-          new Notification(
-            `${activeSig.direction === 'BUY' ? '🟢' : '🔴'} ${activeSig.direction} · US100 (M5)`,
-            {
-              body: activeSig.pushMessage,
-            }
-          );
-        }
-      } catch {
-        // fallback cleanly
-      }
-    }
-  };
-
-  const handleUseHistoricalLiveCross = () => {
-    if (!lastHistoricalCross) return;
-    const priceFormatted = lastHistoricalCross.price.toFixed(2);
-    const aoPrevFormatted = formatSignedAo(lastHistoricalCross.aoPrev, 3);
-    const aoCurrFormatted = formatSignedAo(lastHistoricalCross.aoCurr, 3);
-    const headIcon = lastHistoricalCross.direction === 'BUY' ? '🟢' : '🔴';
-    const condText =
-      lastHistoricalCross.direction === 'BUY'
-        ? 'AO ตัดเส้น 0 ขึ้น 🟢⬆️'
-        : 'AO ตัดเส้น 0 ลง 🔴⬇️';
-    const pushMessage = [
-      `${headIcon} ${lastHistoricalCross.direction} · US100 (M5)`,
-      '____________________',
-      `เงื่อนไข: ${condText}`,
-      `ค่า AO: ${aoPrevFormatted} → ${aoCurrFormatted}`,
-      `โหมด: กราฟจริง`,
-      `เวลา: ${lastHistoricalCross.timeLabel} น.`,
-    ].join('\n');
-
-    const liveSignal: SignalRecord = {
-      id: `live_hist_${Date.now()}`,
-      timestamp: lastHistoricalCross.timestampIso,
-      symbol: 'US100',
-      timeframe: 'M5',
-      direction: lastHistoricalCross.direction,
-      price: lastHistoricalCross.price,
-      priceFormatted,
-      aoPrev: lastHistoricalCross.aoPrev,
-      aoCurr: lastHistoricalCross.aoCurr,
-      aoPrevFormatted,
-      aoCurrFormatted,
-      pushMessage,
-      timeLabel: lastHistoricalCross.timeLabel,
-      source: 'Live US100 M5',
-      telegramStatus: 'pending',
-      sheetsLogged: false,
-    };
-    setLatestSignal(liveSignal);
-    playAlertChime(lastHistoricalCross.direction);
-  };
-
-  const handleGitHubConfigSynced = useCallback((nextConfig: GitHubConfigState) => {
-    setGithubConfig(nextConfig);
   }, []);
 
-  const handleManualGitHubUpload = useCallback(async () => {
-    setGithubUploading(true);
-    try {
-      const res = await fetch('/api/github/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          latestSignal,
-        }),
-      });
-      const data = (await res.json()) as {
-        ok?: boolean;
-        message?: string;
-        fileCount?: number;
-        commitUrl?: string;
-        uploadedAt?: string;
-      };
-      if (!res.ok || !data.ok) {
-        return {
-          ok: false,
-          message: data.message || 'อัปโหลดขึ้น GitHub ไม่สำเร็จ',
-        };
-      }
-      const uploadedAt = data.uploadedAt || new Date().toISOString();
-      setGithubConfig((prev) => ({
-        ...prev,
-        syncedFileCount:
-          typeof data.fileCount === 'number' ? data.fileCount : prev.syncedFileCount,
-        lastUploadAt: uploadedAt,
-        lastCommitUrl: data.commitUrl || prev.lastCommitUrl,
-      }));
-      return {
-        ok: true,
-        message: data.message || 'ซิงค์โค้ดขึ้น GitHub สำเร็จแล้ว',
-        commitUrl: data.commitUrl,
-        fileCount: data.fileCount,
-        uploadedAt,
-      };
-    } catch {
-      return {
-        ok: false,
-        message: 'ไม่สามารถติดต่อเซิร์ฟเวอร์เพื่ออัปโหลดขึ้น GitHub ได้',
-      };
-    } finally {
-      setGithubUploading(false);
-    }
-  }, [latestSignal]);
+  const handleSignalDetected = (record: SignalLogRecord) => {
+    setSignals((prev) => [record, ...prev].slice(0, 50));
+  };
 
-  const isStandaloneOnlinePreview =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('preview') === 'online';
+  const handleMarkSignalsSynced = (ids: string[]) => {
+    const idSet = new Set(ids);
+    setSignals((prev) =>
+      prev.map((item) =>
+        idSet.has(item.id) ? { ...item, syncedToSheet: true } : item
+      )
+    );
+  };
+
+  const handleAddManualTestSignal = () => {
+    const isBuy = signals.length % 2 === 0;
+    const nowStr = new Date().toLocaleString('th-TH', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    handleSignalDetected({
+      id: `sample-${Date.now()}`,
+      timestamp: nowStr,
+      symbol: 'US100',
+      timeframe: mql5Config.lockM5 ? 'M5' : 'Current',
+      signal: isBuy ? 'BUY' : 'SELL',
+      aoPrev: isBuy ? -18.42 : 21.45,
+      aoCurr: isBuy ? 14.25 : -16.3,
+      price: isBuy ? 20950.0 : 20935.5,
+      pushStatus: 'Android Push Sent',
+      note: isBuy ? 'AO ตัด 0 ขึ้น' : 'AO ตัด 0 ลง',
+      syncedToSheet: false,
+    });
+  };
+
+  const handleQuickDownload = () => {
+    const code = generateMql5Code(mql5Config);
+    const filename = getMql5Filename(mql5Config);
+    const blob = new Blob([code], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const unsyncedCount = signals.filter((s) => !s.syncedToSheet).length;
 
   return (
-    <div className="min-h-screen bg-[#f4f7fb] text-slate-900">
-      {/* Top Bar with นำขึ้น Server (hidden inside live iframe preview) */}
-      {!isStandaloneOnlinePreview && (
-        <header className="border-b border-slate-200 bg-white">
-          <div className="mx-auto flex max-w-2xl items-center justify-between px-3 py-2.5 sm:px-5">
-            <button
-              type="button"
-              onClick={() => setActivePage('chart')}
-              className={`border-b-2 pb-1 text-xs font-semibold transition-colors whitespace-nowrap ${
-                activePage === 'chart'
-                  ? 'border-slate-900 text-slate-900'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
+    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
+      {/* Studio Top Bar: hidden on deployed online web view to match clean live UI */}
+      {!isWebMode && (
+        <header className="border-b border-slate-200/80 bg-white">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-8 px-4 py-4 sm:px-6 lg:px-8">
+            {/* Zone 1: Brand wordmark only */}
+            <a
+              href="#top"
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveSection('simulator');
+              }}
+              className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
             >
-              กราฟ & สัญญาณ M5
-            </button>
+              AO Signal Studio
+            </a>
 
-            <button
-              type="button"
-              onClick={() =>
-                setActivePage((prev) => (prev === 'server' ? 'chart' : 'server'))
-              }
-              aria-pressed={activePage === 'server'}
-              className="rounded-xl bg-[#0f172a] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
+            {/* Zone 2: concise single-line nav links */}
+            <nav
+              aria-label="เมนูหลัก"
+              className="hidden md:flex items-center gap-6 text-sm font-medium"
             >
-              นำขึ้น Server
-            </button>
+              {NAV_ITEMS.map((item) => {
+                const isActive = activeSection === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setActiveSection(item.id)}
+                    className={`py-1 whitespace-nowrap shrink-0 border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${
+                      isActive
+                        ? 'border-blue-600 text-slate-900'
+                        : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
+                    }`}
+                  >
+                    {item.label}
+                    {item.id === 'sheets' && unsyncedCount > 0
+                      ? ` (${unsyncedCount})`
+                      : ''}
+                  </button>
+                );
+              })}
+            </nav>
+
+            {/* Zone 3: 1 primary action + optional PWA install */}
+            <div className="flex items-center gap-2 shrink-0">
+              <PWAInstallButton />
+              <button
+                type="button"
+                onClick={handleQuickDownload}
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-medium text-white whitespace-nowrap shrink-0 transition-colors hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-blue-600"
+              >
+                <Download className="h-3.5 w-3.5" />
+                ดาวน์โหลด .mq5
+              </button>
+            </div>
+          </div>
+
+          {/* Mobile Nav Switcher */}
+          <div className="flex md:hidden items-center gap-2 overflow-x-auto border-t border-slate-100 px-4 py-2">
+            {NAV_ITEMS.map((item) => {
+              const isActive = activeSection === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveSection(item.id)}
+                  className={`h-9 rounded-md px-3 text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
+                    isActive
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
           </div>
         </header>
       )}
 
-      <main className="mx-auto max-w-2xl space-y-3.5 px-2.5 py-3 sm:px-5 sm:py-5">
-        {!isStandaloneOnlinePreview && activePage === 'server' ? (
-          <ServerSyncPanel
-            config={githubConfig}
-            isUploading={githubUploading}
-            onConfigSynced={handleGitHubConfigSynced}
-            onManualUpload={handleManualGitHubUpload}
+      {/* Main Workspace */}
+      <main
+        id="top"
+        className={`mx-auto w-full max-w-6xl flex-1 px-4 sm:px-6 lg:px-8 ${
+          isWebMode ? 'py-5' : 'py-8'
+        }`}
+      >
+        {/* Dev preview exit pill (only visible when previewing web mode inside Dev Studio) */}
+        {devPreviewWeb && !import.meta.env.PROD && (
+          <div className="mb-3 flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            <span>กำลังดูตัวอย่างหน้าตาเว็บจริง (เมื่อนำขึ้น GitHub / Server ออนไลน์)</span>
+            <button
+              type="button"
+              onClick={() => {
+                setDevPreviewWeb(false);
+                setActiveSection('deploy');
+              }}
+              className="inline-flex items-center gap-1 font-semibold text-blue-700 hover:underline"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              กลับหน้า Studio
+            </button>
+          </div>
+        )}
+
+        {/* Back button when opening Telegram/Sheets sub-view from deployed web UI */}
+        {isWebMode && activeSection !== 'simulator' && (
+          <div className="mb-4">
+            <button
+              type="button"
+              onClick={() => setActiveSection('simulator')}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              กลับหน้ากราฟ
+            </button>
+          </div>
+        )}
+
+        {/* Clean Minimal Title */}
+        <div className={isWebMode ? 'mb-4' : 'mb-7'}>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
+            {isWebMode
+              ? 'แจ้งเตือน AO'
+              : `แจ้งเตือน AO ตัดเส้น 0 (${mql5Config.lockM5 ? 'M5' : 'Chart'}) เข้ามือถือ Android`}
+          </h1>
+          <p className="mt-1 text-xs text-slate-500">
+            {isWebMode
+              ? 'MetaTrader 5 · BUY / SELL'
+              : 'MetaTrader 5 · BUY / SELL · เสียงแจ้งเตือน 10 วินาที · Google Sheets'}
+          </p>
+        </div>
+
+        {/* Active Workspace View */}
+        {activeSection === 'simulator' && (
+          <AoChartSimulator
+            alertDirection={mql5Config.alertDirection}
+            lockM5={mql5Config.lockM5}
+            customPrefix={mql5Config.customPrefix}
+            onSignalDetected={handleSignalDetected}
+            recentSignals={signals}
+            onGoToSheets={() => setActiveSection('sheets')}
+            onGoToTelegram={() => setActiveSection('telegram')}
+            telegramSyncedReady={telegramSyncedReady}
+            isWebMode={isWebMode}
           />
-        ) : (
-          <AoChartPanel
-            symbol={symbol}
-            chartMode={chartMode}
-            onChangeChartMode={setChartMode}
-            alertFilter={alertFilter}
-            onChangeAlertFilter={setAlertFilter}
-            candles={displayedCandles}
-            activeDirection={displayedDirection}
-            liveFeedSymbol={liveFeedSymbol}
-            liveIsRealtime={liveIsRealtime}
-            liveMarketPrice={liveMarketPrice}
-            liveBid={liveBid}
-            liveAsk={liveAsk}
-            liveSpread={liveSpread}
-            liveBarCloseTimeIso={liveBarCloseTimeIso}
-            liveUpdatedAt={liveUpdatedAt}
-            nextRefreshInSec={nextRefreshInSec}
-            liveLoading={liveLoading}
-            liveError={liveError}
-            sound10sEnabled={sound10sEnabled}
-            onToggleSound10s={handleToggleSound10s}
-            autoRefreshEnabled={autoRefreshEnabled}
-            onToggleAutoRefresh={handleToggleAutoRefresh}
-            onTestSound={handleTestSound}
-            onTriggerMobileAlert={handleTriggerMobileAlert}
-            onOpenTelegramAction={handleOpenTelegramAction}
-            telegramEnabled={telegramConfig.enabled}
-            telegramAutoSend={
-              chartMode === 'live'
-                ? telegramConfig.autoSendLive
-                : telegramConfig.autoSendSim
-            }
-            telegramReady={telegramConfig.serverTokenConfigured}
-            telegramChatId={telegramConfig.chatId}
-            onRefreshLive={fetchLiveUs100}
-            lastHistoricalCross={lastHistoricalCross}
-            onUseHistoricalLiveCross={handleUseHistoricalLiveCross}
-            simPlaying={simPlaying}
-            simSpeed={simSpeed}
-            simTickInBar={simTickInBar}
-            simSwingLabel={simSwingLabel}
-            onToggleSimPlay={handleToggleSimPlay}
-            onChangeSimSpeed={setSimSpeed}
+        )}
+
+        {activeSection === 'mql5' && (
+          <Mql5Studio config={mql5Config} onChangeConfig={setMql5Config} />
+        )}
+
+        {activeSection === 'android' && <AndroidSetupGuide />}
+
+        {activeSection === 'telegram' && (
+          <TelegramConfig
+            mql5Config={mql5Config}
+            onUpdateMql5Config={setMql5Config}
+            onConfiguredChange={setTelegramSyncedReady}
+          />
+        )}
+
+        {activeSection === 'sheets' && (
+          <GoogleSheetsSync
+            pendingSignals={signals}
+            onMarkSignalsSynced={handleMarkSignalsSynced}
+            onAddManualTestSignal={handleAddManualTestSignal}
+          />
+        )}
+
+        {activeSection === 'deploy' && (
+          <ServerDeployPanel
+            onPreviewWebMode={() => {
+              setDevPreviewWeb(true);
+              setActiveSection('simulator');
+            }}
           />
         )}
       </main>
 
-      <TelegramSettingsModal
-        open={telegramSettingsOpen}
-        config={telegramConfig}
-        defaultChatId={serverDefaultChatId}
-        onClose={() => setTelegramSettingsOpen(false)}
-        onConfigSynced={handleConfigSynced}
-      />
+      {/* Quiet Clean Footer (shown in Studio mode only) */}
+      {!isWebMode && (
+        <footer className="border-t border-slate-200/80 bg-white py-4">
+          <div className="mx-auto flex max-w-6xl items-center justify-between px-4 text-xs text-slate-400 sm:px-6 lg:px-8">
+            <span>AO Signal Studio</span>
+            <span>US100 · M5 (US 100 Index Cash)</span>
+          </div>
+        </footer>
+      )}
+      <OfflineIndicator />
     </div>
   );
 }

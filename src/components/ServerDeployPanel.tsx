@@ -13,9 +13,8 @@ import {
   GitBranch,
   KeyRound,
   Lock,
+  RefreshCw,
   Server,
-  ShieldCheck,
-  ShieldOff,
   Terminal,
   Unlink,
   UploadCloud,
@@ -33,7 +32,6 @@ interface GithubSyncStatus {
   repo: string;
   branch: string;
   privateRepo: boolean;
-  uploadAllowed: boolean;
   autoSyncCode: boolean;
   syncSignals: boolean;
   lastSyncAt: string | null;
@@ -66,11 +64,9 @@ export const ServerDeployPanel: React.FC<ServerDeployPanelProps> = ({
   const [ghRepo, setGhRepo] = useState('ao-signal-studio');
   const [ghBranch, setGhBranch] = useState('main');
   const [ghPrivate, setGhPrivate] = useState(true);
-  const [ghUploadAllowed, setGhUploadAllowed] = useState(false);
   const [ghAutoSyncCode, setGhAutoSyncCode] = useState(true);
   const [ghSyncSignals, setGhSyncSignals] = useState(true);
   const [ghSaving, setGhSaving] = useState(false);
-  const [ghTogglingAllow, setGhTogglingAllow] = useState(false);
   const [ghSyncingNow, setGhSyncingNow] = useState(false);
   const [ghFeedback, setGhFeedback] = useState<{
     type: 'success' | 'error';
@@ -83,7 +79,6 @@ export const ServerDeployPanel: React.FC<ServerDeployPanelProps> = ({
       if (!res.ok) return;
       const data = (await res.json()) as GithubSyncStatus;
       setGhStatus(data);
-      setGhUploadAllowed(Boolean(data.uploadAllowed));
       if (hydrateFields) {
         const saved = loadSavedGithubConfig();
         setGhOwner(data.owner || saved?.githubOwner || '');
@@ -93,11 +88,6 @@ export const ServerDeployPanel: React.FC<ServerDeployPanelProps> = ({
           typeof data.privateRepo === 'boolean'
             ? data.privateRepo
             : saved?.githubPrivate ?? true
-        );
-        setGhUploadAllowed(
-          typeof data.uploadAllowed === 'boolean'
-            ? data.uploadAllowed
-            : saved?.githubUploadAllowed ?? false
         );
         setGhAutoSyncCode(
           typeof data.autoSyncCode === 'boolean'
@@ -175,7 +165,7 @@ export const ServerDeployPanel: React.FC<ServerDeployPanelProps> = ({
     }
   };
 
-  const handleSaveGithubConnection = async (e: React.FormEvent) => {
+  const handleConnectAndPushGithub = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedToken = ghToken.trim();
     if (!trimmedToken && !ghStatus?.hasToken) {
@@ -198,10 +188,10 @@ export const ServerDeployPanel: React.FC<ServerDeployPanelProps> = ({
           githubRepo: ghRepo.trim() || 'ao-signal-studio',
           githubBranch: ghBranch.trim() || 'main',
           githubPrivate: ghPrivate,
-          githubUploadAllowed: ghUploadAllowed,
           githubAutoSyncCode: ghAutoSyncCode,
           githubSyncSignals: ghSyncSignals,
-          syncImmediately: false,
+          syncImmediately: true,
+          forceSync: true,
         }),
       });
       const json = await res.json();
@@ -214,7 +204,6 @@ export const ServerDeployPanel: React.FC<ServerDeployPanelProps> = ({
       setGhStatus(nextStatus);
       setGhOwner(nextStatus.owner || ghOwner);
       setGhRepo(nextStatus.repo || ghRepo);
-      setGhUploadAllowed(Boolean(nextStatus.uploadAllowed));
 
       const effectiveToken = trimmedToken || loadSavedGithubConfig()?.githubToken || '';
       if (effectiveToken) {
@@ -224,129 +213,44 @@ export const ServerDeployPanel: React.FC<ServerDeployPanelProps> = ({
           githubRepo: nextStatus.repo,
           githubBranch: nextStatus.branch,
           githubPrivate: nextStatus.privateRepo,
-          githubUploadAllowed: nextStatus.uploadAllowed,
           githubAutoSyncCode: nextStatus.autoSyncCode,
           githubSyncSignals: nextStatus.syncSignals,
         });
       }
 
+      const count = json.syncResult?.syncedFilesCount ?? nextStatus.fileCount;
       setGhFeedback({
         type: 'success',
-        text: nextStatus.uploadAllowed
-          ? `บันทึกการเชื่อมต่อ GitHub (${nextStatus.owner}/${nextStatus.repo}) เรียบร้อยแล้ว`
-          : `เชื่อมต่อ GitHub (${nextStatus.owner}/${nextStatus.repo}) สำเร็จ — ยังไม่อัปโหลดจนกว่าจะกดปุ่ม "อนุญาตอัปโหลด"`,
+        text: `อัปโหลดทั้งหมด ${count} ไฟล์ขึ้น GitHub (${nextStatus.owner}/${nextStatus.repo}) สำเร็จ และเปิดซิงค์แบบเรียลไทม์แล้ว`,
       });
     } catch (err: any) {
       setGhFeedback({
         type: 'error',
-        text: err?.message || 'เชื่อมต่อ GitHub ไม่สำเร็จ',
+        text: err?.message || 'เชื่อมต่อและอัปโหลดขึ้น GitHub ไม่สำเร็จ',
       });
     } finally {
       setGhSaving(false);
     }
   };
 
-  const handleToggleUploadPermission = async () => {
-    const trimmedToken = ghToken.trim();
-    if (!trimmedToken && !ghStatus?.hasToken) {
-      setGhFeedback({
-        type: 'error',
-        text: 'กรุณากรอก GitHub Token และบันทึกการเชื่อมต่อก่อนกดอนุญาตอัปโหลด',
-      });
-      return;
-    }
-
-    const nextAllowed = !ghUploadAllowed;
-    setGhTogglingAllow(true);
-    setGhFeedback(null);
-    try {
-      const res = await fetch('/api/github/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...(trimmedToken ? { githubToken: trimmedToken } : {}),
-          githubOwner: ghOwner.trim(),
-          githubRepo: ghRepo.trim() || 'ao-signal-studio',
-          githubBranch: ghBranch.trim() || 'main',
-          githubPrivate: ghPrivate,
-          githubUploadAllowed: nextAllowed,
-          githubAutoSyncCode: ghAutoSyncCode,
-          githubSyncSignals: ghSyncSignals,
-          syncImmediately: false,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.ok) {
-        if (json.status) setGhStatus(json.status);
-        throw new Error(json.error || 'อัปเดตสิทธิ์อัปโหลดไม่สำเร็จ');
-      }
-
-      const nextStatus = json.status as GithubSyncStatus;
-      setGhStatus(nextStatus);
-      setGhUploadAllowed(Boolean(nextStatus.uploadAllowed));
-      setGhOwner(nextStatus.owner || ghOwner);
-      setGhRepo(nextStatus.repo || ghRepo);
-
-      const effectiveToken = trimmedToken || loadSavedGithubConfig()?.githubToken || '';
-      if (effectiveToken) {
-        saveGithubConfigLocally({
-          githubToken: effectiveToken,
-          githubOwner: nextStatus.owner,
-          githubRepo: nextStatus.repo,
-          githubBranch: nextStatus.branch,
-          githubPrivate: nextStatus.privateRepo,
-          githubUploadAllowed: nextStatus.uploadAllowed,
-          githubAutoSyncCode: nextStatus.autoSyncCode,
-          githubSyncSignals: nextStatus.syncSignals,
-        });
-      }
-
-      setGhFeedback({
-        type: 'success',
-        text: nextStatus.uploadAllowed
-          ? 'อนุญาตให้อัปโหลดขึ้น GitHub แล้ว — สามารถกดอัปโหลดตอนนี้หรือซิงค์อัตโนมัติได้เลย'
-          : 'ปิดการอนุญาตอัปโหลดขึ้น GitHub แล้ว ระบบจะไม่อัปโหลดไฟล์หรือสัญญาณจนกว่าจะกดอนุญาตใหม่',
-      });
-    } catch (err: any) {
-      setGhFeedback({
-        type: 'error',
-        text: err?.message || 'เปลี่ยนสถานะอนุญาตอัปโหลดไม่สำเร็จ',
-      });
-    } finally {
-      setGhTogglingAllow(false);
-    }
-  };
-
   const handleSyncGithubNow = async () => {
-    if (!ghUploadAllowed) {
-      setGhFeedback({
-        type: 'error',
-        text: 'กรุณากดปุ่ม "อนุญาตอัปโหลด" ก่อนส่งไฟล์ขึ้น GitHub',
-      });
-      return;
-    }
-
     setGhSyncingNow(true);
     setGhFeedback(null);
     try {
-      const res = await fetch('/api/github/sync-now', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approved: true }),
-      });
+      const res = await fetch('/api/github/sync-now', { method: 'POST' });
       const json = await res.json();
       if (json.status) setGhStatus(json.status);
       if (!res.ok || !json.ok) {
-        throw new Error(json.error || 'อัปโหลดขึ้น GitHub ไม่สำเร็จ');
+        throw new Error(json.error || 'ซิงค์ขึ้น GitHub ไม่สำเร็จ');
       }
       setGhFeedback({
         type: 'success',
-        text: `อัปโหลดทั้งหมด ${json.syncedFilesCount} ไฟล์ (รวมโค้ดและข้อมูลสัญญาณ) ขึ้น GitHub เรียบร้อยแล้ว`,
+        text: `ซิงค์ล่าสุด ${json.syncedFilesCount} ไฟล์ (รวมโค้ดและข้อมูลสัญญาณ) ขึ้น GitHub เรียบร้อย`,
       });
     } catch (err: any) {
       setGhFeedback({
         type: 'error',
-        text: err?.message || 'อัปโหลดขึ้น GitHub ไม่สำเร็จ',
+        text: err?.message || 'ซิงค์ขึ้น GitHub ไม่สำเร็จ',
       });
     } finally {
       setGhSyncingNow(false);
@@ -367,7 +271,6 @@ export const ServerDeployPanel: React.FC<ServerDeployPanelProps> = ({
       clearSavedGithubConfig();
       setGhToken('');
       setGhOwner('');
-      setGhUploadAllowed(false);
       setGhFeedback({
         type: 'success',
         text: 'ยกเลิกการเชื่อมต่อ GitHub.com แล้ว (ข้อมูลเดิมบน GitHub ยังอยู่ครบ)',
@@ -397,60 +300,53 @@ NODE_ENV=production npm start`;
   const envTemplate = `NODE_ENV=production
 PORT=3000
 TELEGRAM_BOT_TOKEN=ใส่_Bot_Token_จาก_BotFather
-TELEGRAM_CHAT_ID=-1004382980885
+TELEGRAM_CHAT_ID=ใส่_Chat_ID_ตัวเลขของคุณ
 TELEGRAM_MODE=always`;
 
   return (
     <div className="space-y-6">
       {/* Top Full-Width Section: Direct Real-Time GitHub.com Sync */}
-      <section className="rounded-xl border border-slate-200/90 bg-white p-6">
+      <section className="rounded-xl border border-slate-200 bg-white p-6">
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-4">
-          <div className="flex items-start gap-3.5">
+          <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
               <GitBranch className="h-5 w-5" />
             </div>
             <div>
               <h2 className="text-base font-semibold text-slate-900">
-                เชื่อมต่อ GitHub.com (ควบคุมด้วยปุ่มอนุญาตอัปโหลด)
+                เชื่อมต่อ GitHub.com (อัปโหลดทุกไฟล์ &amp; ข้อมูลสัญญาณแบบเรียลไทม์)
               </h2>
-              <p className="mt-1 text-[13px] leading-relaxed text-slate-600">
-                เชื่อม Repository ไว้ได้โดยยังไม่ส่งไฟล์อัตโนมัติ — ระบบจะอัปโหลดโค้ดและบันทึกสัญญาณ{' '}
-                <code className="font-mono text-xs text-slate-800">data/signals-log.json</code>{' '}
-                ก็ต่อเมื่อคุณกดปุ่ม <strong>อนุญาตอัปโหลด</strong> แล้วเท่านั้น
+              <p className="mt-0.5 text-xs text-slate-500">
+                เชื่อมครั้งเดียว ระบบจะส่งไฟล์โค้ดทั้งหมดในโปรเจกต์นี้และบันทึกสัญญาณ{' '}
+                <code className="font-mono text-slate-700">data/signals-log.json</code>{' '}
+                ขึ้น Repository ของคุณโดยอัตโนมัติทันทีที่มีการแก้ไขหรือเกิดสัญญาณใหม่
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-[13px]">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
             {onPreviewWebMode && (
               <button
                 type="button"
                 onClick={onPreviewWebMode}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3.5 text-xs font-medium text-blue-700 whitespace-nowrap transition-colors hover:bg-blue-100"
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100"
               >
-                <Eye className="h-4 w-4" />
+                <Eye className="h-3.5 w-3.5" />
                 ดูตัวอย่างหน้าเว็บออนไลน์
               </button>
             )}
             {ghStatus?.connected ? (
-              ghUploadAllowed ? (
-                <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-700">
-                  <CheckCircle2 className="h-4 w-4" />
-                  {ghStatus.isSyncing ? 'กำลังอัปโหลด...' : 'อนุญาตอัปโหลดแล้ว'}
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 font-semibold text-amber-700">
-                  <ShieldOff className="h-4 w-4" />
-                  เชื่อมต่อแล้ว (ยังไม่อนุญาตอัปโหลด)
-                </span>
-              )
+              <span className="inline-flex items-center gap-1.5 font-medium text-emerald-700">
+                <CheckCircle2 className="h-4 w-4" />
+                {ghStatus.isSyncing ? 'กำลังซิงค์...' : 'เชื่อมต่อและพร้อมซิงค์เรียลไทม์'}
+              </span>
             ) : (
-              <span className="text-xs font-medium text-slate-500">ยังไม่เชื่อมต่อ GitHub</span>
+              <span className="text-slate-400">ยังไม่เชื่อมต่อ GitHub</span>
             )}
           </div>
         </div>
 
-        <form onSubmit={(e) => void handleSaveGithubConnection(e)} className="mt-5 space-y-4">
+        <form onSubmit={(e) => void handleConnectAndPushGithub(e)} className="mt-5 space-y-4">
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
             {/* GitHub Token Input */}
             <div className="lg:col-span-5 space-y-1.5">
@@ -577,57 +473,34 @@ TELEGRAM_MODE=always`;
             <div className="flex flex-wrap items-center gap-2.5">
               <button
                 type="submit"
-                disabled={ghSaving || ghTogglingAllow || ghSyncingNow}
-                className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
+                disabled={ghSaving || ghSyncingNow}
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-5 text-xs font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
               >
-                <GitBranch className="h-4 w-4" />
+                <UploadCloud className="h-4 w-4" />
                 {ghSaving
-                  ? 'กำลังบันทึก...'
+                  ? 'กำลังเชื่อมต่อและอัปโหลด...'
                   : ghStatus?.connected
-                  ? 'บันทึกการเชื่อมต่อ GitHub'
-                  : 'เชื่อมต่อ GitHub.com'}
-              </button>
-
-              <button
-                type="button"
-                disabled={ghSaving || ghTogglingAllow || ghSyncingNow}
-                onClick={() => void handleToggleUploadPermission()}
-                className={`inline-flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-semibold transition-colors disabled:opacity-60 ${
-                  ghUploadAllowed
-                    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                    : 'border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
-                }`}
-              >
-                {ghUploadAllowed ? (
-                  <>
-                    <ShieldCheck className="h-4 w-4" />
-                    อนุญาตอัปโหลดแล้ว (คลิกเพื่อปิด)
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="h-4 w-4" />
-                    อนุญาตอัปโหลดขึ้น GitHub
-                  </>
-                )}
+                  ? 'บันทึกการตั้งค่า & อัปโหลดทั้งหมด'
+                  : 'เชื่อมต่อ GitHub & อัปโหลดทันที'}
               </button>
 
               {ghStatus?.connected && (
                 <>
                   <button
                     type="button"
-                    disabled={ghSaving || ghTogglingAllow || ghSyncingNow || !ghUploadAllowed}
+                    disabled={ghSaving || ghSyncingNow}
                     onClick={() => void handleSyncGithubNow()}
-                    className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60"
                   >
-                    <UploadCloud
-                      className={`h-4 w-4 ${ghSyncingNow ? 'animate-pulse' : ''}`}
+                    <RefreshCw
+                      className={`h-3.5 w-3.5 ${ghSyncingNow ? 'animate-spin' : ''}`}
                     />
-                    {ghSyncingNow ? 'กำลังอัปโหลด...' : 'อัปโหลดขึ้น GitHub ตอนนี้'}
+                    {ghSyncingNow ? 'กำลังซิงค์...' : 'ซิงค์ขึ้น GitHub ตอนนี้'}
                   </button>
 
                   <button
                     type="button"
-                    disabled={ghSaving || ghTogglingAllow || ghSyncingNow}
+                    disabled={ghSaving || ghSyncingNow}
                     onClick={() => void handleDisconnectGithub()}
                     className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3.5 text-xs font-medium text-rose-700 transition-colors hover:bg-rose-50 disabled:opacity-60"
                   >
@@ -700,7 +573,7 @@ TELEGRAM_MODE=always`;
             </div>
           )}
 
-          <p className="text-xs leading-relaxed text-slate-600">
+          <p className="text-[11px] text-slate-500">
             ความปลอดภัย: ระบบตัดไฟล์ลับ (<code className="font-mono">.env</code>,{' '}
             <code className="font-mono">.data/</code>, Bot Token และ GitHub Token)
             ออกก่อนอัปโหลดขึ้น GitHub ทุกครั้งเพื่อไม่ให้รหัสผ่านรั่วไหล
@@ -711,7 +584,7 @@ TELEGRAM_MODE=always`;
       {/* Bottom Grid: ZIP Download & 24/7 Cloud Hosting Guide */}
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
         {/* Left: One-click ZIP Download & Run Commands */}
-        <div className="lg:col-span-7 space-y-5 rounded-xl border border-slate-200/90 bg-white p-6">
+        <div className="lg:col-span-7 space-y-5 rounded-xl border border-slate-200 bg-white p-6">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div className="flex items-center gap-2.5">
               <FileArchive className="h-5 w-5 text-blue-600" />
@@ -719,20 +592,20 @@ TELEGRAM_MODE=always`;
                 <h2 className="text-base font-semibold text-slate-900">
                   ดาวน์โหลดซอร์สโค้ด (.zip) ขึ้น Server เอง
                 </h2>
-                <p className="mt-0.5 text-[13px] text-slate-600">
+                <p className="mt-0.5 text-xs text-slate-500">
                   แพ็กเกจเต็มพร้อมไฟล์ server.ts, หน้าเว็บ React, Dockerfile และ render.yaml
                 </p>
               </div>
             </div>
             {fileCount !== null && (
-              <span className="font-mono text-xs font-medium text-slate-600 tabular-nums">
+              <span className="font-mono text-xs text-slate-500 tabular-nums">
                 {fileCount} ไฟล์
               </span>
             )}
           </div>
 
-          <div className="rounded-xl bg-blue-50/70 p-4 sm:p-5 space-y-3.5">
-            <p className="text-[13px] text-slate-700 leading-relaxed">
+          <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-4 space-y-3">
+            <p className="text-xs text-slate-700 leading-relaxed">
               ไฟล์ <strong>.zip</strong> นี้ตัดข้อมูลชั่วคราว (<code>node_modules</code>,{' '}
               <code>.data</code>, และ secret ส่วนตัว) ออกเรียบร้อยแล้ว สามารถแตกไฟล์ไปติดตั้งบน{' '}
               <strong>Render, Railway, Fly.io, Docker</strong> หรือ <strong>VPS</strong> ได้ทันที
@@ -741,7 +614,7 @@ TELEGRAM_MODE=always`;
               type="button"
               disabled={downloading}
               onClick={() => void handleDownloadZip()}
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-5 text-[13px] font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-60"
+              className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-5 text-xs font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-60"
             >
               <Download className="h-4 w-4" />
               {downloading
@@ -821,14 +694,14 @@ TELEGRAM_MODE=always`;
 
         {/* Right: Free 24/7 Cloud Hosting Guide + File List */}
         <div className="lg:col-span-5 space-y-5">
-          <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 space-y-3.5">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
             <div className="flex items-center gap-2">
               <Cloud className="h-4 w-4 text-blue-600" />
-              <h3 className="text-[15px] font-semibold text-slate-900">
+              <h3 className="text-sm font-semibold text-slate-900">
                 วิธีนำไปรันฟรี 24 ชม. บน Render / Railway
               </h3>
             </div>
-            <ol className="space-y-2.5 text-[13px] text-slate-600 list-decimal list-inside leading-relaxed">
+            <ol className="space-y-2 text-xs text-slate-600 list-decimal list-inside leading-relaxed">
               <li>
                 เชื่อมต่อ <strong>GitHub.com</strong> ด้านบนเพื่อให้โค้ดทั้งหมดอัปโหลดขึ้น Repo อัตโนมัติ
                 (หรือแตกไฟล์ <strong>.zip</strong> อัปโหลดขึ้นเองก็ได้)
@@ -850,27 +723,27 @@ TELEGRAM_MODE=always`;
             </ol>
           </div>
 
-          <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 space-y-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Server className="h-4 w-4 text-slate-600" />
-                <h3 className="text-[15px] font-semibold text-slate-900">
+                <h3 className="text-sm font-semibold text-slate-900">
                   ไฟล์โค้ดที่จะถูกซิงค์ขึ้น GitHub
                 </h3>
               </div>
-              <span className="font-mono text-xs text-slate-500 tabular-nums">
+              <span className="font-mono text-xs text-slate-400">
                 {filesPreview.length} + signals-log.json
               </span>
             </div>
             {filesPreview.length > 0 ? (
-              <div className="max-h-56 overflow-y-auto rounded-lg bg-slate-50 p-3.5 font-mono text-xs text-slate-700 space-y-1">
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50 p-3 font-mono text-[11px] text-slate-700 space-y-1">
                 {filesPreview.map((file) => (
                   <div key={file}>{file}</div>
                 ))}
-                <div className="text-blue-700 font-medium">data/signals-log.json (อัปเดตสัญญาณ M5)</div>
+                <div className="text-blue-700">data/signals-log.json (อัปเดตสัญญาณ M5)</div>
               </div>
             ) : (
-              <p className="text-[13px] text-slate-500">กำลังโหลดรายการไฟล์...</p>
+              <p className="text-xs text-slate-400">กำลังโหลดรายการไฟล์...</p>
             )}
           </div>
         </div>

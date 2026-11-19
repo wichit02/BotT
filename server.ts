@@ -1,1932 +1,1971 @@
+import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import dotenv from 'dotenv';
+import { createRequire } from 'module';
+import type webpushTypes from 'web-push';
 
-dotenv.config();
+const require = createRequire(import.meta.url);
+const webpush = require('web-push') as typeof webpushTypes;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '-1004382980885';
-const TELEGRAM_RUNTIME_FILE = path.resolve(__dirname, '.telegram-runtime.json');
-const FIVE_MIN_MS = 5 * 60 * 1000;
+type TradingSymbol = 'US100';
 
-interface RuntimeTelegramStore {
-  botToken: string;
-  botUsername: string;
-  chatId: string;
-  sendCondition: 'always' | 'fallback';
-  lastSentLiveKey?: string;
-}
-
-function maskTelegramToken(token: string): string {
-  const trimmed = token.trim();
-  if (!trimmed) return '';
-  const colonIdx = trimmed.indexOf(':');
-  if (colonIdx > 0) {
-    const prefix = trimmed.slice(0, colonIdx);
-    const suffix = trimmed.slice(-4);
-    return `${prefix}:••••••${suffix}`;
-  }
-  if (trimmed.length <= 8) return '••••••••';
-  return `${trimmed.slice(0, 4)}••••••${trimmed.slice(-4)}`;
-}
-
-function loadRuntimeTelegramStore(): RuntimeTelegramStore {
-  const envToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || '';
-  const fallback: RuntimeTelegramStore = {
-    botToken: envToken,
-    botUsername: '',
-    chatId: DEFAULT_TELEGRAM_CHAT_ID,
-    sendCondition: 'always',
-  };
-  try {
-    if (!fs.existsSync(TELEGRAM_RUNTIME_FILE)) return fallback;
-    const parsed = JSON.parse(
-      fs.readFileSync(TELEGRAM_RUNTIME_FILE, 'utf8')
-    ) as Partial<RuntimeTelegramStore>;
-    return {
-      botToken:
-        typeof parsed.botToken === 'string' && parsed.botToken.trim()
-          ? parsed.botToken.trim()
-          : envToken,
-      botUsername: typeof parsed.botUsername === 'string' ? parsed.botUsername : '',
-      chatId:
-        typeof parsed.chatId === 'string' && parsed.chatId.trim()
-          ? parsed.chatId.trim()
-          : DEFAULT_TELEGRAM_CHAT_ID,
-      sendCondition: parsed.sendCondition === 'fallback' ? 'fallback' : 'always',
-      lastSentLiveKey:
-        typeof parsed.lastSentLiveKey === 'string' ? parsed.lastSentLiveKey : undefined,
-    };
-  } catch {
-    return fallback;
-  }
-}
-
-function saveRuntimeTelegramStore(store: RuntimeTelegramStore): void {
-  try {
-    fs.writeFileSync(TELEGRAM_RUNTIME_FILE, JSON.stringify(store, null, 2), 'utf8');
-  } catch {
-    // non-fatal if filesystem is read-only; in-memory store still works
-  }
-}
-
-const GITHUB_RUNTIME_FILE = path.resolve(__dirname, '.github-runtime.json');
-
-interface RuntimeGitHubStore {
-  token: string;
-  username: string;
-  repoName: string;
-  repo: string;
-  branch: string;
-  isPrivate: boolean;
-  autoUploadCode: boolean;
-  autoLogSignals: boolean;
-  uploadAllowed: boolean;
-  syncedFileCount?: number;
-  lastUploadAt?: string;
-  lastCommitUrl?: string;
-}
-
-function maskGitHubToken(token: string): string {
-  const trimmed = token.trim();
-  if (!trimmed) return '';
-  if (trimmed.length <= 10) return '••••••••';
-  return `${trimmed.slice(0, 4)}••••••${trimmed.slice(-4)}`;
-}
-
-function loadRuntimeGitHubStore(): RuntimeGitHubStore {
-  const envToken = process.env.GITHUB_TOKEN?.trim() || '';
-  const fallback: RuntimeGitHubStore = {
-    token: envToken,
-    username: '',
-    repoName: '',
-    repo: '',
-    branch: 'main',
-    isPrivate: true,
-    autoUploadCode: true,
-    autoLogSignals: true,
-    uploadAllowed: false,
-  };
-  try {
-    if (!fs.existsSync(GITHUB_RUNTIME_FILE)) return fallback;
-    const parsed = JSON.parse(
-      fs.readFileSync(GITHUB_RUNTIME_FILE, 'utf8')
-    ) as Partial<RuntimeGitHubStore>;
-    const rawRepo = typeof parsed.repo === 'string' ? parsed.repo : '';
-    const derivedRepoName =
-      typeof parsed.repoName === 'string' && parsed.repoName.trim()
-        ? parsed.repoName.trim()
-        : rawRepo.includes('/')
-          ? rawRepo.split('/')[1] || ''
-          : rawRepo;
-    return {
-      token:
-        typeof parsed.token === 'string' && parsed.token.trim()
-          ? parsed.token.trim()
-          : envToken,
-      username: typeof parsed.username === 'string' ? parsed.username : '',
-      repoName: derivedRepoName,
-      repo: rawRepo,
-      branch:
-        typeof parsed.branch === 'string' && parsed.branch.trim()
-          ? parsed.branch.trim()
-          : 'main',
-      isPrivate: typeof parsed.isPrivate === 'boolean' ? parsed.isPrivate : true,
-      autoUploadCode:
-        typeof parsed.autoUploadCode === 'boolean' ? parsed.autoUploadCode : true,
-      autoLogSignals:
-        typeof parsed.autoLogSignals === 'boolean' ? parsed.autoLogSignals : true,
-      uploadAllowed:
-        typeof parsed.uploadAllowed === 'boolean' ? parsed.uploadAllowed : false,
-      syncedFileCount:
-        typeof parsed.syncedFileCount === 'number' ? parsed.syncedFileCount : undefined,
-      lastUploadAt:
-        typeof parsed.lastUploadAt === 'string' ? parsed.lastUploadAt : undefined,
-      lastCommitUrl:
-        typeof parsed.lastCommitUrl === 'string' ? parsed.lastCommitUrl : undefined,
-    };
-  } catch {
-    return fallback;
-  }
-}
-
-function saveRuntimeGitHubStore(store: RuntimeGitHubStore): void {
-  try {
-    fs.writeFileSync(GITHUB_RUNTIME_FILE, JSON.stringify(store, null, 2), 'utf8');
-  } catch {
-    // ignore read-only fs errors
-  }
-}
-
-function collectProjectFilesForUpload(): Array<{ path: string; contentBase64: string }> {
-  const ignoredDirs = new Set([
-    'node_modules',
-    'dist',
-    'build',
-    '.git',
-    '.data',
-    'coverage',
-    '.aistudio',
-  ]);
-  const ignoredFiles = new Set([
-    '.telegram-runtime.json',
-    '.github-runtime.json',
-    '.DS_Store',
-  ]);
-  const out: Array<{ path: string; contentBase64: string }> = [];
-
-  const walk = (absDir: string, relDir: string) => {
-    const entries = fs.readdirSync(absDir, { withFileTypes: true });
-    for (const entry of entries) {
-      const relPath = relDir ? `${relDir}/${entry.name}` : entry.name;
-      const absPath = path.join(absDir, entry.name);
-      if (entry.isDirectory()) {
-        if (ignoredDirs.has(entry.name)) continue;
-        if (relPath === 'public/assets/aistudio') continue;
-        walk(absPath, relPath);
-      } else if (entry.isFile()) {
-        if (ignoredFiles.has(entry.name)) continue;
-        if (entry.name.startsWith('.env') && entry.name !== '.env.example') continue;
-        if (entry.name.endsWith('.log')) continue;
-        const stat = fs.statSync(absPath);
-        if (stat.size > 512 * 1024) continue;
-        const buf = fs.readFileSync(absPath);
-        out.push({ path: relPath, contentBase64: buf.toString('base64') });
-      }
-    }
-  };
-
-  walk(__dirname, '');
-  return out;
-}
-
-function ghHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: 'application/vnd.github+json',
-    'User-Agent': 'US100-M5-Studio',
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
-}
-
-interface RawBar {
-  timestampMs: number;
+interface M5Candle {
+  index: number;
+  timeLabel: string;
+  timestampIso: string;
   open: number;
   high: number;
   low: number;
   close: number;
+  median: number;
+  ao: number;
+  aoRising: boolean;
+  signal: 'BUY' | 'SELL' | null;
 }
 
-const CFD_FEED_CANDIDATES = [
-  { tvSymbol: 'VANTAGE:NAS100', label: 'US100Cash (CFD Real-time)' },
-  { tvSymbol: 'FPMARKETS:US100', label: 'US100Cash (FP CFD Real-time)' },
-  { tvSymbol: 'CAPITALCOM:NAS100', label: 'US100Cash (Capital CFD Real-time)' },
-];
-
-function packTvMessage(method: string, params: unknown[]): string {
-  const payload = JSON.stringify({ m: method, p: params });
-  return `~m~${payload.length}~m~${payload}`;
+interface MarketFeedResult {
+  symbol: TradingSymbol;
+  source: string;
+  marketState: string;
+  fetchedAt: string;
+  bars: M5Candle[];
 }
 
-function parseTvFrames(raw: string): Array<{ heartbeat?: string; message?: { m: string; p: unknown[] } }> {
-  const frames: Array<{ heartbeat?: string; message?: { m: string; p: unknown[] } }> = [];
-  let cursor = 0;
+interface MonitorAlertEvent {
+  id: string;
+  timestamp: string;
+  symbol: TradingSymbol;
+  signal: 'BUY' | 'SELL';
+  aoPrev: number;
+  aoCurr: number;
+  price: number;
+  deliveredToNtfy: boolean;
+  deliveredToTelegram: boolean;
+  deliveredWebPushCount: number;
+}
 
-  while (cursor < raw.length) {
-    if (!raw.startsWith('~m~', cursor)) break;
-    cursor += 3;
-    const lenEnd = raw.indexOf('~m~', cursor);
-    if (lenEnd === -1) break;
-    const length = Number.parseInt(raw.slice(cursor, lenEnd), 10);
-    if (!Number.isFinite(length) || length < 0) break;
-    cursor = lenEnd + 3;
-    const body = raw.slice(cursor, cursor + length);
-    cursor += length;
+interface StoredPushSubscription {
+  endpoint: string;
+  expirationTime?: number | null;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
 
-    if (body.startsWith('~h~')) {
-      frames.push({ heartbeat: body });
-    } else if (body.startsWith('{')) {
-      try {
-        const parsed = JSON.parse(body) as { m?: string; p?: unknown[] };
-        if (parsed.m && Array.isArray(parsed.p)) {
-          frames.push({ message: { m: parsed.m, p: parsed.p } });
+interface PersistedServerState {
+  vapidKeys: { publicKey: string; privateKey: string };
+  enabled: boolean;
+  symbols: TradingSymbol[];
+  ntfyTopic: string;
+  telegramBotToken: string;
+  telegramChatId: string;
+  telegramMode: 'fallback' | 'always';
+  direction: 'both' | 'buy_only' | 'sell_only';
+  subscriptions: StoredPushSubscription[];
+  events: MonitorAlertEvent[];
+  githubToken: string;
+  githubOwner: string;
+  githubRepo: string;
+  githubBranch: string;
+  githubPrivate: boolean;
+  githubAutoSyncCode: boolean;
+  githubSyncSignals: boolean;
+  githubLastSyncedHash: string;
+  githubLastSyncAt: string | null;
+  githubLastCommitUrl: string | null;
+  githubLastError: string | null;
+  alertedBarKeys: string[];
+  lastLiveDirectionBySymbol: Partial<Record<TradingSymbol, 'BUY' | 'SELL'>>;
+}
+
+const YAHOO_SYMBOL_MAP: Record<TradingSymbol, { ticker: string; digits: number }> = {
+  US100: { ticker: 'NQ=F', digits: 2 },
+};
+
+const ALL_SYMBOLS: TradingSymbol[] = ['US100'];
+const STATE_DIR = path.resolve(__dirname, '.data');
+const STATE_FILE = path.join(STATE_DIR, 'ao-server-state.json');
+
+const feedCache = new Map<TradingSymbol, { expiresAt: number; data: MarketFeedResult }>();
+
+function normalizeTelegramChatId(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  // Telegram supergroups/channels are 13-digit IDs starting with -100 (often copied without leading '-')
+  if (/^100\d{9,}$/.test(trimmed)) {
+    return `-${trimmed}`;
+  }
+  return trimmed;
+}
+
+function loadPersistedState(): PersistedServerState {
+  const envPublic = process.env.VAPID_PUBLIC_KEY?.trim();
+  const envPrivate = process.env.VAPID_PRIVATE_KEY?.trim();
+  const envTgToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || '';
+  const envTgChatId = normalizeTelegramChatId(process.env.TELEGRAM_CHAT_ID || '');
+  const envTgMode = process.env.TELEGRAM_MODE?.trim() === 'fallback' ? 'fallback' : 'always';
+  const envNtfy = process.env.NTFY_TOPIC?.trim() || '';
+  const envGithubToken = process.env.GITHUB_TOKEN?.trim() || '';
+  const envGithubOwner = process.env.GITHUB_OWNER?.trim() || '';
+  const envGithubRepo = process.env.GITHUB_REPO?.trim() || 'ao-signal-studio';
+  const envGithubBranch = process.env.GITHUB_BRANCH?.trim() || 'main';
+
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8')) as Partial<PersistedServerState>;
+      const vapidKeys =
+        envPublic && envPrivate
+          ? { publicKey: envPublic, privateKey: envPrivate }
+          : parsed.vapidKeys?.publicKey && parsed.vapidKeys?.privateKey
+          ? parsed.vapidKeys
+          : webpush.generateVAPIDKeys();
+
+      return {
+        vapidKeys,
+        enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : true,
+        symbols:
+          Array.isArray(parsed.symbols) &&
+          parsed.symbols.some((s): s is TradingSymbol => typeof s === 'string' && s in YAHOO_SYMBOL_MAP)
+            ? parsed.symbols.filter((s): s is TradingSymbol => typeof s === 'string' && s in YAHOO_SYMBOL_MAP)
+            : ALL_SYMBOLS,
+        ntfyTopic:
+          typeof parsed.ntfyTopic === 'string' && parsed.ntfyTopic
+            ? parsed.ntfyTopic
+            : envNtfy,
+        telegramBotToken:
+          typeof parsed.telegramBotToken === 'string' && parsed.telegramBotToken
+            ? parsed.telegramBotToken
+            : envTgToken,
+        telegramChatId:
+          typeof parsed.telegramChatId === 'string' && parsed.telegramChatId
+            ? normalizeTelegramChatId(parsed.telegramChatId)
+            : envTgChatId,
+        telegramMode:
+          parsed.telegramMode === 'fallback' || parsed.telegramMode === 'always'
+            ? parsed.telegramMode
+            : envTgMode,
+        direction:
+          parsed.direction === 'buy_only' || parsed.direction === 'sell_only'
+            ? parsed.direction
+            : 'both',
+        subscriptions: Array.isArray(parsed.subscriptions) ? parsed.subscriptions : [],
+        events: Array.isArray(parsed.events) ? parsed.events.slice(0, 30) : [],
+        githubToken:
+          typeof parsed.githubToken === 'string' && parsed.githubToken
+            ? parsed.githubToken
+            : envGithubToken,
+        githubOwner:
+          typeof parsed.githubOwner === 'string' && parsed.githubOwner
+            ? parsed.githubOwner
+            : envGithubOwner,
+        githubRepo:
+          typeof parsed.githubRepo === 'string' && parsed.githubRepo
+            ? parsed.githubRepo
+            : envGithubRepo,
+        githubBranch:
+          typeof parsed.githubBranch === 'string' && parsed.githubBranch
+            ? parsed.githubBranch
+            : envGithubBranch,
+        githubPrivate: typeof parsed.githubPrivate === 'boolean' ? parsed.githubPrivate : true,
+        githubAutoSyncCode:
+          typeof parsed.githubAutoSyncCode === 'boolean' ? parsed.githubAutoSyncCode : true,
+        githubSyncSignals:
+          typeof parsed.githubSyncSignals === 'boolean' ? parsed.githubSyncSignals : true,
+        githubLastSyncedHash:
+          typeof parsed.githubLastSyncedHash === 'string' ? parsed.githubLastSyncedHash : '',
+        githubLastSyncAt:
+          typeof parsed.githubLastSyncAt === 'string' ? parsed.githubLastSyncAt : null,
+        githubLastCommitUrl:
+          typeof parsed.githubLastCommitUrl === 'string' ? parsed.githubLastCommitUrl : null,
+        githubLastError:
+          typeof parsed.githubLastError === 'string' ? parsed.githubLastError : null,
+        alertedBarKeys: Array.isArray(parsed.alertedBarKeys)
+          ? parsed.alertedBarKeys.filter((k): k is string => typeof k === 'string').slice(0, 60)
+          : [],
+        lastLiveDirectionBySymbol:
+          parsed.lastLiveDirectionBySymbol && typeof parsed.lastLiveDirectionBySymbol === 'object'
+            ? parsed.lastLiveDirectionBySymbol
+            : {},
+      };
+    }
+  } catch {
+    // Fall back to fresh default state
+  }
+
+  const vapidKeys =
+    envPublic && envPrivate
+      ? { publicKey: envPublic, privateKey: envPrivate }
+      : webpush.generateVAPIDKeys();
+
+  const initial: PersistedServerState = {
+    vapidKeys,
+    enabled: true,
+    symbols: ALL_SYMBOLS,
+    ntfyTopic: envNtfy,
+    telegramBotToken: envTgToken,
+    telegramChatId: envTgChatId,
+    telegramMode: envTgMode,
+    direction: 'both',
+    subscriptions: [],
+    events: [],
+    githubToken: envGithubToken,
+    githubOwner: envGithubOwner,
+    githubRepo: envGithubRepo,
+    githubBranch: envGithubBranch,
+    githubPrivate: true,
+    githubAutoSyncCode: true,
+    githubSyncSignals: true,
+    githubLastSyncedHash: '',
+    githubLastSyncAt: null,
+    githubLastCommitUrl: null,
+    githubLastError: null,
+    alertedBarKeys: [],
+    lastLiveDirectionBySymbol: {},
+  };
+  savePersistedState(initial);
+  return initial;
+}
+
+function savePersistedState(state: PersistedServerState): void {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf-8');
+  } catch {
+    // Ignore read-only filesystem errors
+  }
+}
+
+const persisted = loadPersistedState();
+
+webpush.setVapidDetails(
+  'mailto:alerts@aosignal.local',
+  persisted.vapidKeys.publicKey,
+  persisted.vapidKeys.privateKey
+);
+
+const monitorRuntime = {
+  lastCheckedAt: null as string | null,
+  lastCheckedMs: 0,
+  isRunningCycle: false,
+  lastBarBySymbol: {} as Partial<Record<TradingSymbol, string>>,
+  dispatchedLiveSignalKeys: new Set<string>(),
+};
+
+function markLiveSignalDispatched(key: string) {
+  monitorRuntime.dispatchedLiveSignalKeys.add(key);
+  if (monitorRuntime.dispatchedLiveSignalKeys.size > 300) {
+    const first = monitorRuntime.dispatchedLiveSignalKeys.values().next().value;
+    if (first) monitorRuntime.dispatchedLiveSignalKeys.delete(first);
+  }
+}
+
+function normalizeM5BarKey(sym: TradingSymbol, barTimestampIso: string): string {
+  const ms = Date.parse(barTimestampIso);
+  if (Number.isFinite(ms)) {
+    const bucketMs = Math.floor(ms / 300000) * 300000;
+    return `${sym}-${new Date(bucketMs).toISOString()}`;
+  }
+  return `${sym}-${barTimestampIso}`;
+}
+
+function hasClosedBarBeenAlerted(
+  sym: TradingSymbol,
+  barTimestampIso: string,
+  signal: 'BUY' | 'SELL'
+): boolean {
+  const barKey = `${normalizeM5BarKey(sym, barTimestampIso)}-${signal}`;
+  return (
+    monitorRuntime.dispatchedLiveSignalKeys.has(barKey) ||
+    persisted.alertedBarKeys.includes(barKey)
+  );
+}
+
+function recordClosedBarAlerted(
+  sym: TradingSymbol,
+  barTimestampIso: string,
+  signal: 'BUY' | 'SELL'
+): void {
+  const barKey = `${normalizeM5BarKey(sym, barTimestampIso)}-${signal}`;
+  markLiveSignalDispatched(barKey);
+  if (!persisted.alertedBarKeys.includes(barKey)) {
+    persisted.alertedBarKeys = [barKey, ...persisted.alertedBarKeys].slice(0, 60);
+  }
+  persisted.lastLiveDirectionBySymbol[sym] = signal;
+  syncPersistence();
+}
+
+function syncPersistence() {
+  savePersistedState(persisted);
+}
+
+const CRC_TABLE = (() => {
+  const tbl = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    tbl[i] = c >>> 0;
+  }
+  return tbl;
+})();
+
+function crc32(buf: Buffer): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) {
+    crc = CRC_TABLE[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function collectDeployableFiles(rootDir: string): string[] {
+  const skipDirs = new Set(['node_modules', '.git', '.data', 'dist', '.vite']);
+  const skipFilePrefixes = ['.env'];
+  const skipExactFiles = new Set(['.env', '.env.local']);
+  const results: string[] = [];
+
+  const walk = (dir: string, relBase: string) => {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (skipDirs.has(entry.name)) continue;
+        if (relPath === 'public/assets/aistudio') continue;
+        walk(path.join(dir, entry.name), relPath);
+      } else if (entry.isFile()) {
+        if (skipExactFiles.has(entry.name)) continue;
+        if (skipFilePrefixes.some((p) => entry.name.startsWith(p) && entry.name !== '.env.example')) {
+          continue;
         }
-      } catch {
-        // Ignore malformed partial JSON frame
+        if (entry.name.endsWith('.zip')) continue;
+        results.push(relPath);
+      }
+    }
+  };
+
+  walk(rootDir, '');
+  return results.sort();
+}
+
+function buildZipBuffer(rootDir: string, relPaths: string[]): Buffer {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+
+  for (const relPath of relPaths) {
+    const fullPath = path.join(rootDir, relPath);
+    const raw = fs.readFileSync(fullPath);
+    const compressed = zlib.deflateRawSync(raw);
+    const crc = crc32(raw);
+    const nameBuf = Buffer.from(`ao-signal-studio/${relPath}`, 'utf-8');
+
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0x0800, 6);
+    localHeader.writeUInt16LE(8, 8);
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0x5421, 12);
+    localHeader.writeUInt32LE(crc, 14);
+    localHeader.writeUInt32LE(compressed.length, 18);
+    localHeader.writeUInt32LE(raw.length, 22);
+    localHeader.writeUInt16LE(nameBuf.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+
+    localParts.push(localHeader, nameBuf, compressed);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0x0800, 8);
+    centralHeader.writeUInt16LE(8, 10);
+    centralHeader.writeUInt16LE(0, 12);
+    centralHeader.writeUInt16LE(0x5421, 14);
+    centralHeader.writeUInt32LE(crc, 16);
+    centralHeader.writeUInt32LE(compressed.length, 20);
+    centralHeader.writeUInt32LE(raw.length, 24);
+    centralHeader.writeUInt16LE(nameBuf.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+
+    centralParts.push(centralHeader, nameBuf);
+    offset += localHeader.length + nameBuf.length + compressed.length;
+  }
+
+  const centralDir = Buffer.concat(centralParts);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(relPaths.length, 8);
+  eocd.writeUInt16LE(relPaths.length, 10);
+  eocd.writeUInt32LE(centralDir.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  eocd.writeUInt16LE(0, 20);
+
+  return Buffer.concat([...localParts, centralDir, eocd]);
+}
+
+const githubRuntime = {
+  isSyncing: false,
+  pendingResync: false,
+  debounceTimer: null as NodeJS.Timeout | null,
+};
+
+function sanitizeGithubRepoName(raw: string): string {
+  const cleaned = raw
+    .trim()
+    .replace(/^https?:\/\/github\.com\/[^/]+\//i, '')
+    .replace(/\.git$/i, '')
+    .replace(/[^A-Za-z0-9._-]/g, '-');
+  return cleaned || 'ao-signal-studio';
+}
+
+function buildSignalsSnapshotJson(): Buffer {
+  const payload = {
+    app: 'AO Signal Studio (M5)',
+    monitoredSymbols: persisted.symbols,
+    direction: persisted.direction,
+    totalCapturedSignals: persisted.events.length,
+    latestSignalAt: persisted.events[0]?.timestamp || null,
+    events: persisted.events.map((ev) => ({
+      id: ev.id,
+      timestamp: ev.timestamp,
+      symbol: ev.symbol,
+      signal: ev.signal,
+      aoPrev: ev.aoPrev,
+      aoCurr: ev.aoCurr,
+      price: ev.price,
+      deliveredToTelegram: ev.deliveredToTelegram,
+      deliveredToNtfy: ev.deliveredToNtfy,
+      deliveredWebPushCount: ev.deliveredWebPushCount,
+    })),
+  };
+  return Buffer.from(JSON.stringify(payload, null, 2) + '\n', 'utf-8');
+}
+
+function computeWorkspaceSnapshot(): {
+  entries: Array<{ path: string; buffer: Buffer }>;
+  hash: string;
+} {
+  const relFiles = collectDeployableFiles(__dirname);
+  const hasher = crypto.createHash('sha256');
+  const entries: Array<{ path: string; buffer: Buffer }> = [];
+
+  for (const relPath of relFiles) {
+    try {
+      const buf = fs.readFileSync(path.join(__dirname, relPath));
+      entries.push({ path: relPath, buffer: buf });
+      hasher.update(relPath);
+      hasher.update('\0');
+      hasher.update(buf);
+      hasher.update('\0');
+    } catch {
+      // Skip file if deleted mid-scan
+    }
+  }
+
+  if (persisted.githubSyncSignals) {
+    const signalsBuf = buildSignalsSnapshotJson();
+    entries.push({ path: 'data/signals-log.json', buffer: signalsBuf });
+    hasher.update('data/signals-log.json');
+    hasher.update('\0');
+    hasher.update(signalsBuf);
+    hasher.update('\0');
+  }
+
+  return {
+    entries,
+    hash: hasher.digest('hex'),
+  };
+}
+
+async function githubApiRequest<T = any>(
+  token: string,
+  method: string,
+  endpointPath: string,
+  body?: unknown
+): Promise<{ status: number; ok: boolean; data: T; errorMessage?: string }> {
+  const url = endpointPath.startsWith('https://')
+    ? endpointPath
+    : `https://api.github.com${endpointPath}`;
+
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${token}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'AO-Signal-Studio',
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(15000),
+  });
+
+  const text = await res.text();
+  let parsed: any = {};
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch {
+    parsed = { message: text };
+  }
+
+  return {
+    status: res.status,
+    ok: res.ok,
+    data: parsed as T,
+    errorMessage: !res.ok ? parsed?.message || `GitHub HTTP ${res.status}` : undefined,
+  };
+}
+
+async function fetchGithubAuthenticatedUser(token: string): Promise<{
+  ok: boolean;
+  login?: string;
+  name?: string;
+  error?: string;
+}> {
+  const clean = token.trim();
+  if (!clean) return { ok: false, error: 'กรุณากรอก GitHub Personal Access Token' };
+  try {
+    const res = await githubApiRequest<{ login?: string; name?: string }>(
+      clean,
+      'GET',
+      '/user'
+    );
+    if (!res.ok || !res.data?.login) {
+      return {
+        ok: false,
+        error:
+          res.status === 401
+            ? 'GitHub Token ไม่ถูกต้องหรือหมดอายุ กรุณาสร้าง Token ที่มีสิทธิ์ repo ใหม่'
+            : res.errorMessage || 'ตรวจสอบบัญชี GitHub ไม่สำเร็จ',
+      };
+    }
+    return { ok: true, login: res.data.login, name: res.data.name };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'เชื่อมต่อ GitHub.com ไม่สำเร็จ' };
+  }
+}
+
+async function ensureGithubRepoAndBranch(params: {
+  token: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  isPrivate: boolean;
+  authenticatedLogin: string;
+}): Promise<{ parentCommitSha: string }> {
+  const { token, owner, repo, branch, isPrivate, authenticatedLogin } = params;
+  const repoPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  let repoRes = await githubApiRequest<{ default_branch?: string }>(token, 'GET', repoPath);
+
+  if (repoRes.status === 404) {
+    if (owner.toLowerCase() !== authenticatedLogin.toLowerCase()) {
+      throw new Error(
+        `ไม่พบ Repository "${owner}/${repo}" หรือ Token ไม่มีสิทธิ์สร้างภายใต้ชื่อ ${owner}`
+      );
+    }
+    const createRes = await githubApiRequest<{ default_branch?: string }>(
+      token,
+      'POST',
+      '/user/repos',
+      {
+        name: repo,
+        private: isPrivate,
+        auto_init: true,
+        description:
+          'AO Signal Studio — Real-Time Awesome Oscillator M5 Monitor & Alert System',
+      }
+    );
+    if (!createRes.ok) {
+      throw new Error(createRes.errorMessage || `สร้าง Repository "${repo}" บน GitHub ไม่สำเร็จ`);
+    }
+    repoRes = createRes;
+    await new Promise((r) => setTimeout(r, 900));
+  } else if (!repoRes.ok) {
+    throw new Error(repoRes.errorMessage || 'ไม่สามารถเข้าถึง Repository บน GitHub ได้');
+  }
+
+  const refPath = `${repoPath}/git/ref/heads/${encodeURIComponent(branch)}`;
+  const refRes = await githubApiRequest<{ object?: { sha?: string } }>(token, 'GET', refPath);
+  if (refRes.ok && refRes.data?.object?.sha) {
+    return { parentCommitSha: refRes.data.object.sha };
+  }
+
+  // Try seeding empty repo or branching off default_branch
+  const defaultBranch = repoRes.data?.default_branch;
+  if (defaultBranch && defaultBranch !== branch) {
+    const defRefRes = await githubApiRequest<{ object?: { sha?: string } }>(
+      token,
+      'GET',
+      `${repoPath}/git/ref/heads/${encodeURIComponent(defaultBranch)}`
+    );
+    if (defRefRes.ok && defRefRes.data?.object?.sha) {
+      const createBranchRes = await githubApiRequest<{ object?: { sha?: string } }>(
+        token,
+        'POST',
+        `${repoPath}/git/refs`,
+        {
+          ref: `refs/heads/${branch}`,
+          sha: defRefRes.data.object.sha,
+        }
+      );
+      if (createBranchRes.ok && createBranchRes.data?.object?.sha) {
+        return { parentCommitSha: createBranchRes.data.object.sha };
       }
     }
   }
 
-  return frames;
+  // Repo is completely empty (404/409 on git/refs) -> bootstrap README via Contents API
+  const initContent = Buffer.from(
+    '# AO Signal Studio\n\nInitializing real-time workspace sync...\n',
+    'utf-8'
+  ).toString('base64');
+  const seedRes = await githubApiRequest<{ commit?: { sha?: string } }>(
+    token,
+    'PUT',
+    `${repoPath}/contents/README.md`,
+    {
+      message: 'chore: initialize repository',
+      content: initContent,
+      branch,
+    }
+  );
+  if (!seedRes.ok || !seedRes.data?.commit?.sha) {
+    throw new Error(
+      seedRes.errorMessage || `ไม่สามารถสร้าง Branch "${branch}" ใน Repository ได้`
+    );
+  }
+  return { parentCommitSha: seedRes.data.commit.sha };
 }
 
-function formatBkkHm(ms: number): string {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Bangkok',
+async function syncWorkspaceToGithub(options?: {
+  force?: boolean;
+  reason?: string;
+}): Promise<{
+  ok: boolean;
+  committed: boolean;
+  syncedFilesCount: number;
+  commitUrl?: string;
+  error?: string;
+}> {
+  const token = persisted.githubToken.trim();
+  const repo = sanitizeGithubRepoName(persisted.githubRepo);
+  const branch = persisted.githubBranch.trim() || 'main';
+  if (!token || !repo) {
+    return { ok: false, committed: false, syncedFilesCount: 0, error: 'ยังไม่ได้ตั้งค่า GitHub' };
+  }
+
+  if (githubRuntime.isSyncing) {
+    githubRuntime.pendingResync = true;
+    return {
+      ok: true,
+      committed: false,
+      syncedFilesCount: 0,
+    };
+  }
+
+  const snapshot = computeWorkspaceSnapshot();
+  if (!options?.force && snapshot.hash === persisted.githubLastSyncedHash) {
+    return {
+      ok: true,
+      committed: false,
+      syncedFilesCount: snapshot.entries.length,
+      commitUrl: persisted.githubLastCommitUrl || undefined,
+    };
+  }
+
+  githubRuntime.isSyncing = true;
+  try {
+    const userRes = await fetchGithubAuthenticatedUser(token);
+    if (!userRes.ok || !userRes.login) {
+      throw new Error(userRes.error || 'ตรวจสอบ GitHub Token ไม่สำเร็จ');
+    }
+
+    const owner = persisted.githubOwner.trim() || userRes.login;
+    if (persisted.githubOwner !== owner) {
+      persisted.githubOwner = owner;
+    }
+
+    const { parentCommitSha } = await ensureGithubRepoAndBranch({
+      token,
+      owner,
+      repo,
+      branch,
+      isPrivate: persisted.githubPrivate,
+      authenticatedLogin: userRes.login,
+    });
+
+    const repoPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const treeItems: Array<{
+      path: string;
+      mode: '100644';
+      type: 'blob';
+      sha: string;
+    }> = [];
+
+    // Upload file blobs in small parallel batches to stay fast without hitting secondary limits
+    const BATCH_SIZE = 8;
+    for (let i = 0; i < snapshot.entries.length; i += BATCH_SIZE) {
+      const batch = snapshot.entries.slice(i, i + BATCH_SIZE);
+      const uploaded = await Promise.all(
+        batch.map(async (item) => {
+          const blobRes = await githubApiRequest<{ sha?: string }>(
+            token,
+            'POST',
+            `${repoPath}/git/blobs`,
+            {
+              content: item.buffer.toString('base64'),
+              encoding: 'base64',
+            }
+          );
+          if (!blobRes.ok || !blobRes.data?.sha) {
+            throw new Error(
+              `อัปโหลดไฟล์ ${item.path} ไม่สำเร็จ: ${blobRes.errorMessage || 'Blob error'}`
+            );
+          }
+          return {
+            path: item.path,
+            mode: '100644' as const,
+            type: 'blob' as const,
+            sha: blobRes.data.sha,
+          };
+        })
+      );
+      treeItems.push(...uploaded);
+    }
+
+    const treeRes = await githubApiRequest<{ sha?: string }>(
+      token,
+      'POST',
+      `${repoPath}/git/trees`,
+      { tree: treeItems }
+    );
+    if (!treeRes.ok || !treeRes.data?.sha) {
+      throw new Error(treeRes.errorMessage || 'สร้าง Git Tree บน GitHub ไม่สำเร็จ');
+    }
+
+    const timestampBkk = new Date().toLocaleString('th-TH', {
+      timeZone: 'Asia/Bangkok',
+      hour12: false,
+    });
+    const reasonTag = options?.reason || 'realtime-sync';
+    const commitMsg = `sync(${reasonTag}): update ${snapshot.entries.length} files [${timestampBkk}]`;
+
+    const commitRes = await githubApiRequest<{ sha?: string; html_url?: string }>(
+      token,
+      'POST',
+      `${repoPath}/git/commits`,
+      {
+        message: commitMsg,
+        tree: treeRes.data.sha,
+        parents: [parentCommitSha],
+      }
+    );
+    if (!commitRes.ok || !commitRes.data?.sha) {
+      throw new Error(commitRes.errorMessage || 'สร้าง Commit บน GitHub ไม่สำเร็จ');
+    }
+
+    const patchRefRes = await githubApiRequest(
+      token,
+      'PATCH',
+      `${repoPath}/git/refs/heads/${encodeURIComponent(branch)}`,
+      {
+        sha: commitRes.data.sha,
+        force: false,
+      }
+    );
+    if (!patchRefRes.ok) {
+      throw new Error(patchRefRes.errorMessage || 'อัปเดต Branch บน GitHub ไม่สำเร็จ');
+    }
+
+    const commitUrl =
+      commitRes.data.html_url || `https://github.com/${owner}/${repo}/commit/${commitRes.data.sha}`;
+
+    persisted.githubLastSyncedHash = snapshot.hash;
+    persisted.githubLastSyncAt = new Date().toISOString();
+    persisted.githubLastCommitUrl = commitUrl;
+    persisted.githubLastError = null;
+    syncPersistence();
+
+    return {
+      ok: true,
+      committed: true,
+      syncedFilesCount: snapshot.entries.length,
+      commitUrl,
+    };
+  } catch (err: any) {
+    const errMsg = err?.message || 'ซิงค์ขึ้น GitHub ไม่สำเร็จ';
+    persisted.githubLastError = errMsg;
+    syncPersistence();
+    return {
+      ok: false,
+      committed: false,
+      syncedFilesCount: 0,
+      error: errMsg,
+    };
+  } finally {
+    githubRuntime.isSyncing = false;
+    if (githubRuntime.pendingResync) {
+      githubRuntime.pendingResync = false;
+      scheduleGithubAutoSync('pending-change', 1200);
+    }
+  }
+}
+
+function scheduleGithubAutoSync(reason: string, delayMs = 2500) {
+  if (!persisted.githubToken || !persisted.githubRepo) return;
+  if (reason === 'signal-event' && !persisted.githubSyncSignals) return;
+  if (reason !== 'signal-event' && !persisted.githubAutoSyncCode) return;
+
+  if (githubRuntime.debounceTimer) {
+    clearTimeout(githubRuntime.debounceTimer);
+  }
+  githubRuntime.debounceTimer = setTimeout(() => {
+    githubRuntime.debounceTimer = null;
+    void syncWorkspaceToGithub({ force: false, reason });
+  }, delayMs);
+}
+
+function startGithubWorkspaceWatchers() {
+  const watchTargets = [
+    'src',
+    'public',
+    'server.ts',
+    'package.json',
+    'index.html',
+    'Dockerfile',
+    'render.yaml',
+    'README.md',
+  ];
+
+  for (const target of watchTargets) {
+    const fullPath = path.join(__dirname, target);
+    if (!fs.existsSync(fullPath)) continue;
+    try {
+      fs.watch(fullPath, { recursive: fs.statSync(fullPath).isDirectory() }, (_event, fname) => {
+        const name = String(fname || '');
+        if (name.includes('.data') || name.includes('node_modules') || name.endsWith('.zip')) {
+          return;
+        }
+        scheduleGithubAutoSync('file-watch', 2500);
+      });
+    } catch {
+      // Fallback polling interval covers filesystems where recursive watch isn't supported
+    }
+  }
+
+  setInterval(() => {
+    if (persisted.githubToken && persisted.githubRepo && persisted.githubAutoSyncCode) {
+      void syncWorkspaceToGithub({ force: false, reason: 'auto-poll' });
+    }
+  }, 15000);
+}
+
+function buildGithubStatusResponse() {
+  const owner = persisted.githubOwner.trim();
+  const repo = sanitizeGithubRepoName(persisted.githubRepo);
+  const snapshot = computeWorkspaceSnapshot();
+  return {
+    hasToken: Boolean(persisted.githubToken),
+    connected: Boolean(persisted.githubToken && owner && repo),
+    owner,
+    repo,
+    branch: persisted.githubBranch || 'main',
+    privateRepo: persisted.githubPrivate,
+    autoSyncCode: persisted.githubAutoSyncCode,
+    syncSignals: persisted.githubSyncSignals,
+    lastSyncAt: persisted.githubLastSyncAt,
+    lastCommitUrl: persisted.githubLastCommitUrl,
+    lastError: persisted.githubLastError,
+    isSyncing: githubRuntime.isSyncing,
+    fileCount: snapshot.entries.length,
+    workspaceChanged: Boolean(
+      persisted.githubToken && snapshot.hash !== persisted.githubLastSyncedHash
+    ),
+    repoUrl: owner && repo ? `https://github.com/${owner}/${repo}` : null,
+  };
+}
+
+function roundTo(val: number, digits: number): number {
+  const f = Math.pow(10, digits);
+  return Math.round(val * f) / f;
+}
+
+function formatTimeLabel(date: Date): string {
+  return date.toLocaleTimeString('th-TH', {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  }).format(new Date(ms));
+    timeZone: 'Asia/Bangkok',
+  });
 }
 
-class LiveUs100CfdFeed {
-  private ws: WebSocket | null = null;
-  private barsByTime = new Map<number, RawBar>();
-  private candidateIdx = 0;
-  private seriesReady = false;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private connectAttemptId = 0;
-  private readyResolvers: Array<() => void> = [];
+function computeAwesomeOscillator(
+  rawBars: Array<Omit<M5Candle, 'ao' | 'aoRising' | 'signal'>>
+): M5Candle[] {
+  const out: M5Candle[] = [];
+  for (let i = 0; i < rawBars.length; i++) {
+    const bar = rawBars[i];
+    let ao = 0;
+    // Standard MT5 Awesome Oscillator: SMA(Median, 5) - SMA(Median, 34), PLOT_DRAW_BEGIN = 33
+    if (i >= 33) {
+      let sum5 = 0;
+      for (let k = i - 4; k <= i; k++) sum5 += rawBars[k].median;
+      let sum34 = 0;
+      for (let k = i - 33; k <= i; k++) sum34 += rawBars[k].median;
+      ao = sum5 / 5 - sum34 / 34;
+    }
 
-  public bid: number | null = null;
-  public ask: number | null = null;
-  public lastPrice: number | null = null;
-  public lastTickMs: number = 0;
-  public barCloseTimeMs: number | null = null;
-  public activeProvider: string = CFD_FEED_CANDIDATES[0].tvSymbol;
+    const prev = out[i - 1];
+    const aoRising = i > 33 && prev ? ao >= prev.ao : true;
+    let signal: 'BUY' | 'SELL' | null = null;
+    if (i >= 34 && prev) {
+      if (prev.ao <= 0 && ao > 0) signal = 'BUY';
+      else if (prev.ao >= 0 && ao < 0) signal = 'SELL';
+    }
 
-  public start(): void {
-    this.connect();
+    out.push({ ...bar, ao, aoRising, signal });
   }
-
-  private resolveWaiters(): void {
-    const waiters = this.readyResolvers.splice(0, this.readyResolvers.length);
-    for (const resolve of waiters) {
-      resolve();
-    }
-  }
-
-  public async waitForBars(timeoutMs = 5500): Promise<boolean> {
-    if (this.barsByTime.size >= 40 && this.seriesReady) {
-      return true;
-    }
-    if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
-      this.connect();
-    }
-    await Promise.race([
-      new Promise<void>((resolve) => {
-        this.readyResolvers.push(resolve);
-      }),
-      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
-    ]);
-    return this.barsByTime.size >= 38;
-  }
-
-  private scheduleReconnect(delayMs = 2500, rotateCandidate = false): void {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-    }
-    if (rotateCandidate) {
-      this.candidateIdx = (this.candidateIdx + 1) % CFD_FEED_CANDIDATES.length;
-    }
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect();
-    }, delayMs);
-  }
-
-  private connect(): void {
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
-      return;
-    }
-
-    const attemptId = ++this.connectAttemptId;
-    const candidate = CFD_FEED_CANDIDATES[this.candidateIdx];
-    this.activeProvider = candidate.tvSymbol;
-    this.seriesReady = false;
-
-    const chartSession = `cs_${Date.now().toString(36)}`;
-    const quoteSession = `qs_${Date.now().toString(36)}`;
-
-    let socket: WebSocket;
-    try {
-      socket = new WebSocket('wss://data.tradingview.com/socket.io/websocket?from=chart%2F', {
-        headers: {
-          Origin: 'https://www.tradingview.com',
-          'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36',
-        },
-      } as unknown as string[]);
-    } catch {
-      this.scheduleReconnect(3000, true);
-      return;
-    }
-
-    this.ws = socket;
-
-    // If initial series hasn't arrived in 7s, rotate to next CFD candidate
-    const startupWatchdog = setTimeout(() => {
-      if (attemptId === this.connectAttemptId && !this.seriesReady) {
-        try {
-          socket.close();
-        } catch {
-          // ignore
-        }
-        this.scheduleReconnect(1000, true);
-      }
-    }, 7000);
-
-    socket.addEventListener('open', () => {
-      if (attemptId !== this.connectAttemptId) return;
-      socket.send(packTvMessage('set_auth_token', ['unauthorized_user_token']));
-      socket.send(packTvMessage('chart_create_session', [chartSession, '']));
-      socket.send(packTvMessage('quote_create_session', [quoteSession]));
-      socket.send(packTvMessage('quote_add_symbols', [quoteSession, candidate.tvSymbol]));
-      socket.send(
-        packTvMessage('resolve_symbol', [
-          chartSession,
-          'sds_sym_1',
-          `=${JSON.stringify({ symbol: candidate.tvSymbol, adjustment: 'splits' })}`,
-        ])
-      );
-      socket.send(packTvMessage('create_series', [chartSession, 'sds_1', 's1', 'sds_sym_1', '5', 90]));
-    });
-
-    socket.addEventListener('message', (event) => {
-      if (attemptId !== this.connectAttemptId) return;
-      const raw = String(event.data);
-      const frames = parseTvFrames(raw);
-
-      for (const frame of frames) {
-        if (frame.heartbeat) {
-          const reply = `~m~${frame.heartbeat.length}~m~${frame.heartbeat}`;
-          if (socket.readyState === WebSocket.OPEN) {
-            socket.send(reply);
-          }
-          continue;
-        }
-
-        const msg = frame.message;
-        if (!msg) continue;
-
-        if (msg.m === 'qsd') {
-          const data = msg.p[1] as {
-            s?: string;
-            v?: { bid?: number; ask?: number; lp?: number; lp_time?: number };
-          };
-          if (data?.v) {
-            if (typeof data.v.bid === 'number' && Number.isFinite(data.v.bid)) {
-              this.bid = data.v.bid;
-            }
-            if (typeof data.v.ask === 'number' && Number.isFinite(data.v.ask)) {
-              this.ask = data.v.ask;
-            }
-            if (typeof data.v.lp === 'number' && Number.isFinite(data.v.lp)) {
-              this.lastPrice = data.v.lp;
-              this.applyLivePriceToFormingBar(data.v.lp);
-            } else if (typeof this.bid === 'number') {
-              this.applyLivePriceToFormingBar(this.bid);
-            }
-            this.lastTickMs =
-              typeof data.v.lp_time === 'number' && data.v.lp_time > 0
-                ? data.v.lp_time * 1000
-                : Date.now();
-          }
-        } else if (msg.m === 'timescale_update' || msg.m === 'du') {
-          const body = msg.p[1] as {
-            sds_1?: {
-              s?: Array<{ v?: number[] }>;
-              lbs?: { bar_close_time?: number };
-            };
-          };
-          const series = body?.sds_1;
-          if (series?.lbs?.bar_close_time) {
-            this.barCloseTimeMs = series.lbs.bar_close_time * 1000;
-          }
-          if (Array.isArray(series?.s)) {
-            for (const barObj of series.s) {
-              const v = barObj.v;
-              if (!Array.isArray(v) || v.length < 5) continue;
-              const tsMs = Math.round(v[0] * 1000);
-              const open = v[1];
-              const high = v[2];
-              const low = v[3];
-              const close = v[4];
-              if (
-                Number.isFinite(tsMs) &&
-                Number.isFinite(open) &&
-                Number.isFinite(high) &&
-                Number.isFinite(low) &&
-                Number.isFinite(close)
-              ) {
-                this.barsByTime.set(tsMs, { timestampMs: tsMs, open, high, low, close });
-              }
-            }
-            this.trimBars();
-            this.lastTickMs = Date.now();
-          }
-        } else if (msg.m === 'series_completed') {
-          this.seriesReady = true;
-          clearTimeout(startupWatchdog);
-          this.resolveWaiters();
-        } else if (msg.m === 'symbol_error' || msg.m === 'series_error') {
-          clearTimeout(startupWatchdog);
-          try {
-            socket.close();
-          } catch {
-            // ignore
-          }
-          this.scheduleReconnect(800, true);
-        }
-      }
-    });
-
-    socket.addEventListener('close', () => {
-      clearTimeout(startupWatchdog);
-      if (attemptId === this.connectAttemptId) {
-        this.ws = null;
-        this.scheduleReconnect(2500, !this.seriesReady);
-      }
-    });
-
-    socket.addEventListener('error', () => {
-      clearTimeout(startupWatchdog);
-      if (attemptId === this.connectAttemptId) {
-        try {
-          socket.close();
-        } catch {
-          // ignore
-        }
-      }
-    });
-  }
-
-  private applyLivePriceToFormingBar(price: number): void {
-    if (this.barsByTime.size === 0 || !Number.isFinite(price)) return;
-    const nowAligned = Math.floor(Date.now() / FIVE_MIN_MS) * FIVE_MIN_MS;
-    const latestKey = Math.max(...this.barsByTime.keys());
-    const existing = this.barsByTime.get(latestKey);
-    if (!existing) return;
-
-    if (nowAligned > latestKey && nowAligned - latestKey <= FIVE_MIN_MS * 6) {
-      // Seamlessly open the new M5 bar right on the 5m boundary while awaiting next `du`
-      this.barsByTime.set(nowAligned, {
-        timestampMs: nowAligned,
-        open: existing.close,
-        high: Math.max(existing.close, price),
-        low: Math.min(existing.close, price),
-        close: price,
-      });
-      this.barCloseTimeMs = nowAligned + FIVE_MIN_MS;
-      this.trimBars();
-    } else if (nowAligned === latestKey) {
-      existing.close = price;
-      if (price > existing.high) existing.high = price;
-      if (price < existing.low) existing.low = price;
-    }
-  }
-
-  private trimBars(): void {
-    if (this.barsByTime.size <= 110) return;
-    const sortedKeys = Array.from(this.barsByTime.keys()).sort((a, b) => a - b);
-    const excess = sortedKeys.length - 100;
-    for (let i = 0; i < excess; i++) {
-      this.barsByTime.delete(sortedKeys[i]);
-    }
-  }
-
-  public getOrderedBars(): RawBar[] {
-    return Array.from(this.barsByTime.values()).sort((a, b) => a.timestampMs - b.timestampMs);
-  }
+  return out;
 }
 
-function buildAoMarketPayload(params: {
-  rawBars: RawBar[];
-  feedSymbol: string;
-  feedProvider: string;
-  isRealtimeStream: boolean;
-  bid: number | null;
-  ask: number | null;
-  lastPrice: number | null;
-  lastTickMs: number;
-  barCloseTimeMs: number | null;
-}) {
-  const recentRaw = params.rawBars.slice(-90);
-  const medians = recentRaw.map((b) => (b.high + b.low) / 2);
-  const aoValues = new Array<number>(recentRaw.length).fill(0);
+async function fetchYahooM5(symbol: TradingSymbol): Promise<MarketFeedResult> {
+  const mapping = YAHOO_SYMBOL_MAP[symbol];
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+    mapping.ticker
+  )}?interval=5m&range=5d`;
 
-  for (let i = 33; i < recentRaw.length; i++) {
-    let sum5 = 0;
-    for (let j = i - 4; j <= i; j++) sum5 += medians[j];
-    let sum34 = 0;
-    for (let j = i - 33; j <= i; j++) sum34 += medians[j];
-    aoValues[i] = sum5 / 5 - sum34 / 34;
-  }
-
-  const visibleCount = 38;
-  const startIdx = recentRaw.length - visibleCount;
-
-  const candles = recentRaw.slice(startIdx).map((b, idx) => {
-    const absIdx = startIdx + idx;
-    const aoVal = aoValues[absIdx];
-    const prevAoVal = absIdx > 0 ? aoValues[absIdx - 1] : aoVal;
-    const shift = visibleCount - 1 - idx;
-
-    return {
-      index: idx,
-      timeLabel: formatBkkHm(b.timestampMs),
-      timestampIso: new Date(b.timestampMs).toISOString(),
-      open: Number(b.open.toFixed(2)),
-      high: Number(b.high.toFixed(2)),
-      low: Number(b.low.toFixed(2)),
-      close: Number(b.close.toFixed(2)),
-      median: (b.high + b.low) / 2,
-      ao: aoVal,
-      aoRising: aoVal >= prevAoVal,
-      shift,
-    };
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(8000),
   });
 
-  let latestBarCross: 'BUY' | 'SELL' | null = null;
-  let lastHistoricalCross: {
-    direction: 'BUY' | 'SELL';
-    shift: number;
-    timeLabel: string;
-    timestampIso: string;
-    price: number;
-    aoPrev: number;
-    aoCurr: number;
-  } | null = null;
-
-  for (let i = candles.length - 2; i >= 1; i--) {
-    const curr = candles[i];
-    const prev = candles[i - 1];
-    const isBuy = prev.ao <= 0 && curr.ao > 0;
-    const isSell = prev.ao >= 0 && curr.ao < 0;
-
-    if (isBuy || isSell) {
-      const direction = isBuy ? 'BUY' : 'SELL';
-      if (curr.shift === 1) {
-        latestBarCross = direction;
-      }
-      if (!lastHistoricalCross) {
-        lastHistoricalCross = {
-          direction,
-          shift: curr.shift,
-          timeLabel: curr.timeLabel,
-          timestampIso: curr.timestampIso,
-          price: curr.close,
-          aoPrev: prev.ao,
-          aoCurr: curr.ao,
-        };
-      }
-    }
+  if (!res.ok) {
+    throw new Error(`Market feed HTTP ${res.status}`);
   }
 
-  const lastCandle = candles[candles.length - 1];
-  const resolvedBid =
-    params.bid !== null
-      ? Number(params.bid.toFixed(2))
-      : params.lastPrice !== null
-        ? Number(params.lastPrice.toFixed(2))
-        : lastCandle.close;
-  const resolvedAsk =
-    params.ask !== null
-      ? Number(params.ask.toFixed(2))
-      : Number((resolvedBid + 0.9).toFixed(2));
-  const spread = Number(Math.max(0, resolvedAsk - resolvedBid).toFixed(2));
+  const json = (await res.json()) as any;
+  const result = json?.chart?.result?.[0];
+  const meta = result?.meta || {};
+  const timestamps: number[] = result?.timestamp || [];
+  const quote = result?.indicators?.quote?.[0] || {};
+  const opens: Array<number | null> = quote.open || [];
+  const highs: Array<number | null> = quote.high || [];
+  const lows: Array<number | null> = quote.low || [];
+  const closes: Array<number | null> = quote.close || [];
 
-  const nextCloseMs =
-    params.barCloseTimeMs && params.barCloseTimeMs > Date.now()
-      ? params.barCloseTimeMs
-      : Math.floor(Date.now() / FIVE_MIN_MS) * FIVE_MIN_MS + FIVE_MIN_MS;
-
-  return {
-    ok: true,
-    feedSymbol: params.feedSymbol,
-    feedProvider: params.feedProvider,
-    isRealtimeStream: params.isRealtimeStream,
-    displaySymbol: 'US100',
-    marketPrice: resolvedBid,
-    bid: resolvedBid,
-    ask: resolvedAsk,
-    spread,
-    marketState: params.isRealtimeStream ? 'LIVE' : 'FALLBACK',
-    barCloseTimeIso: new Date(nextCloseMs).toISOString(),
-    lastTickAt: new Date(params.lastTickMs || Date.now()).toISOString(),
-    updatedAt: new Date().toISOString(),
-    candles,
-    latestBarCross,
-    lastHistoricalCross,
-  };
-}
-
-async function fetchYahooFallbackBars(): Promise<{ bars: RawBar[]; symbol: string; price: number | null }> {
-  const fetchYahoo = async (ticker: string) => {
-    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-      ticker
-    )}?interval=5m&range=5d&includePrePost=true`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        Accept: 'application/json',
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`Feed HTTP ${response.status}`);
-    }
-    return (await response.json()) as {
-      chart?: {
-        result?: Array<{
-          meta?: { symbol?: string; regularMarketPrice?: number };
-          timestamp?: number[];
-          indicators?: {
-            quote?: Array<{
-              open?: Array<number | null>;
-              high?: Array<number | null>;
-              low?: Array<number | null>;
-              close?: Array<number | null>;
-            }>;
-          };
-        }>;
-      };
-    };
-  };
-
-  let data = await fetchYahoo('NQ=F');
-  let result = data.chart?.result?.[0];
-  if (!result?.timestamp?.length) {
-    data = await fetchYahoo('^NDX');
-    result = data.chart?.result?.[0];
-  }
-
-  const timestamps = result?.timestamp ?? [];
-  const quote = result?.indicators?.quote?.[0];
-  const rawBars: RawBar[] = [];
-
+  const cleaned: Array<Omit<M5Candle, 'ao' | 'aoRising' | 'signal'>> = [];
   for (let i = 0; i < timestamps.length; i++) {
-    const ts = timestamps[i];
-    const o = quote?.open?.[i];
-    const h = quote?.high?.[i];
-    const l = quote?.low?.[i];
-    const c = quote?.close?.[i];
-    if (
-      typeof ts === 'number' &&
-      typeof o === 'number' &&
-      typeof h === 'number' &&
-      typeof l === 'number' &&
-      typeof c === 'number' &&
-      Number.isFinite(o) &&
-      Number.isFinite(h) &&
-      Number.isFinite(l) &&
-      Number.isFinite(c)
-    ) {
-      rawBars.push({ timestampMs: ts * 1000, open: o, high: h, low: l, close: c });
+    const o = opens[i];
+    const h = highs[i];
+    const l = lows[i];
+    const c = closes[i];
+    if (o == null || h == null || l == null || c == null) continue;
+    const dt = new Date(timestamps[i] * 1000);
+    const open = roundTo(o, mapping.digits);
+    const high = roundTo(h, mapping.digits);
+    const low = roundTo(l, mapping.digits);
+    const close = roundTo(c, mapping.digits);
+    cleaned.push({
+      index: cleaned.length,
+      timeLabel: formatTimeLabel(dt),
+      timestampIso: dt.toISOString(),
+      open,
+      high,
+      low,
+      close,
+      median: (high + low) / 2,
+    });
+  }
+
+  // Merge latest regularMarketPrice tick onto the forming candle for sub-2s real-time responsiveness
+  const liveQuotePrice = Number(meta?.regularMarketPrice);
+  if (cleaned.length > 0 && Number.isFinite(liveQuotePrice) && liveQuotePrice > 0) {
+    const lastBar = cleaned[cleaned.length - 1];
+    const liveRounded = roundTo(liveQuotePrice, mapping.digits);
+    lastBar.close = liveRounded;
+    if (liveRounded > lastBar.high) lastBar.high = liveRounded;
+    if (liveRounded < lastBar.low) lastBar.low = liveRounded;
+    lastBar.median = (lastBar.high + lastBar.low) / 2;
+    const liveMarketTimeSec = Number(meta?.regularMarketTime);
+    if (Number.isFinite(liveMarketTimeSec) && liveMarketTimeSec > 0) {
+      const liveDt = new Date(liveMarketTimeSec * 1000);
+      if (liveDt.getTime() >= new Date(lastBar.timestampIso).getTime()) {
+        lastBar.timestampIso = liveDt.toISOString();
+        lastBar.timeLabel = formatTimeLabel(liveDt);
+      }
     }
   }
 
+  const warmupSlice = cleaned.slice(-260).map((b, idx) => ({ ...b, index: idx }));
+  if (warmupSlice.length < 36) {
+    throw new Error('ข้อมูล M5 ไม่เพียงพอสำหรับคำนวณ AO');
+  }
+
+  const bars = computeAwesomeOscillator(warmupSlice)
+    .slice(-180)
+    .map((b, idx) => ({ ...b, index: idx }));
+
+  const latestBarTs = new Date(bars[bars.length - 1].timestampIso).getTime();
+  const ageMinutes = (Date.now() - latestBarTs) / 60000;
+  const marketState = ageMinutes <= 20 ? 'LIVE' : 'MARKET CLOSED';
+
   return {
-    bars: rawBars,
-    symbol: result?.meta?.symbol || 'NQ=F',
-    price:
-      typeof result?.meta?.regularMarketPrice === 'number'
-        ? result.meta.regularMarketPrice
-        : null,
+    symbol,
+    source: `Live M5 (${mapping.ticker})`,
+    marketState,
+    fetchedAt: new Date().toISOString(),
+    bars,
   };
 }
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+async function getLiveM5Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
+  const cached = feedCache.get(symbol);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
 
-  const liveCfdFeed = new LiveUs100CfdFeed();
-  liveCfdFeed.start();
+  const data = await fetchYahooM5(symbol);
 
-  app.use(express.json({ limit: '1mb' }));
-
-  app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, service: 'ao-zerocross-m5-studio' });
+  feedCache.set(symbol, {
+    expiresAt: Date.now() + 5000,
+    data,
   });
+  return data;
+}
 
-  app.get('/api/market/us100-m5', async (_req, res) => {
-    try {
-      const hasRealtimeBars = await liveCfdFeed.waitForBars(5000);
-      const realtimeBars = liveCfdFeed.getOrderedBars();
+async function sendNtfyPush(topicOrUrl: string, title: string, body: string): Promise<boolean> {
+  const trimmed = topicOrUrl.trim();
+  if (!trimmed) return false;
+  const endpoint =
+    trimmed.startsWith('http://') || trimmed.startsWith('https://')
+      ? trimmed
+      : `https://ntfy.sh/${encodeURIComponent(trimmed)}`;
 
-      if (hasRealtimeBars && realtimeBars.length >= 38) {
-        const payload = buildAoMarketPayload({
-          rawBars: realtimeBars,
-          feedSymbol: 'US100Cash',
-          feedProvider: liveCfdFeed.activeProvider,
-          isRealtimeStream: true,
-          bid: liveCfdFeed.bid,
-          ask: liveCfdFeed.ask,
-          lastPrice: liveCfdFeed.lastPrice,
-          lastTickMs: liveCfdFeed.lastTickMs,
-          barCloseTimeMs: liveCfdFeed.barCloseTimeMs,
-        });
-        res.json(payload);
-        return;
-      }
-
-      const fallback = await fetchYahooFallbackBars();
-      if (fallback.bars.length < 38) {
-        res.status(502).json({
-          ok: false,
-          error: 'จำนวนแท่งเทียน M5 ไม่เพียงพอสำหรับคำนวณ AO(5, 34)',
-        });
-        return;
-      }
-
-      const payload = buildAoMarketPayload({
-        rawBars: fallback.bars,
-        feedSymbol: fallback.symbol,
-        feedProvider: `Yahoo (${fallback.symbol})`,
-        isRealtimeStream: false,
-        bid: fallback.price,
-        ask: fallback.price !== null ? fallback.price + 0.9 : null,
-        lastPrice: fallback.price,
-        lastTickMs: Date.now(),
-        barCloseTimeMs: null,
-      });
-      res.json(payload);
-    } catch (error) {
-      res.status(502).json({
-        ok: false,
-        error:
-          error instanceof Error
-            ? `ดึงข้อมูลกราฟจริง US100 ไม่สำเร็จ: ${error.message}`
-            : 'ไม่สามารถเชื่อมต่อฟีดข้อมูลตลาดได้',
-      });
-    }
-  });
-
-  let telegramStore = loadRuntimeTelegramStore();
-
-  app.get('/api/telegram/config', (_req, res) => {
-    const activeToken =
-      telegramStore.botToken.trim() || process.env.TELEGRAM_BOT_TOKEN?.trim() || '';
-    res.json({
-      configured: activeToken.length > 0,
-      maskedToken: activeToken ? maskTelegramToken(activeToken) : '',
-      botUsername: telegramStore.botUsername || undefined,
-      defaultChatId: DEFAULT_TELEGRAM_CHAT_ID,
-      chatId: telegramStore.chatId || DEFAULT_TELEGRAM_CHAT_ID,
-      sendCondition: telegramStore.sendCondition,
-    });
-  });
-
-  app.post('/api/telegram/config', async (req, res) => {
-    try {
-      const { botToken, chatId, sendCondition, testSend, parseMode } = req.body as {
-        botToken?: string;
-        chatId?: string;
-        sendCondition?: 'always' | 'fallback';
-        testSend?: boolean;
-        parseMode?: 'HTML' | 'Markdown';
-      };
-
-      const incomingToken = typeof botToken === 'string' ? botToken.trim() : '';
-      const resolvedToken =
-        incomingToken ||
-        telegramStore.botToken.trim() ||
-        process.env.TELEGRAM_BOT_TOKEN?.trim() ||
-        '';
-      const resolvedChatId =
-        typeof chatId === 'string' && chatId.trim()
-          ? chatId.trim()
-          : telegramStore.chatId || DEFAULT_TELEGRAM_CHAT_ID;
-      const resolvedCondition =
-        sendCondition === 'fallback' ? 'fallback' : 'always';
-
-      if (!resolvedToken) {
-        res.status(400).json({
-          ok: false,
-          message: 'กรุณากรอก Telegram Bot Token จาก @BotFather ก่อนบันทึก',
-        });
-        return;
-      }
-
-      let verifiedUsername = telegramStore.botUsername;
-      if (incomingToken || !verifiedUsername) {
-        const meRes = await fetch(
-          `https://api.telegram.org/bot${resolvedToken}/getMe`
-        );
-        const meData = (await meRes.json()) as {
-          ok?: boolean;
-          description?: string;
-          result?: { username?: string; first_name?: string };
-        };
-        if (!meRes.ok || !meData.ok) {
-          res.status(400).json({
-            ok: false,
-            message: `Bot Token ไม่ถูกต้อง: ${meData.description || 'Unauthorized'}`,
-          });
-          return;
-        }
-        verifiedUsername = meData.result?.username || meData.result?.first_name || '';
-      }
-
-      telegramStore = {
-        ...telegramStore,
-        botToken: resolvedToken,
-        botUsername: verifiedUsername,
-        chatId: resolvedChatId,
-        sendCondition: resolvedCondition,
-      };
-      saveRuntimeTelegramStore(telegramStore);
-
-      let testMessageId: number | undefined;
-      let testChatTitle: string | undefined;
-
-      if (testSend) {
-        const bkkTime = formatBkkHm(Date.now());
-        const botLabel = verifiedUsername ? `@${verifiedUsername}` : 'TelegramBot';
-        const testText =
-          parseMode === 'Markdown'
-            ? [
-                `*🟢 BUY · US100 (M5)*`,
-                `____________________`,
-                `เงื่อนไข: AO ตัดเส้น 0 ขึ้น 🟢⬆️`,
-                `ค่า AO: -1.250 → +0.420`,
-                `โหมด: ทดสอบ (${botLabel})`,
-                `เวลา: ${bkkTime} น.`,
-              ].join('\n')
-            : [
-                `<b>🟢 BUY · US100 (M5)</b>`,
-                `____________________`,
-                `เงื่อนไข: AO ตัดเส้น 0 ขึ้น 🟢⬆️`,
-                `ค่า AO: -1.250 → +0.420`,
-                `โหมด: ทดสอบ (${botLabel})`,
-                `เวลา: ${bkkTime} น.`,
-              ].join('\n');
-
-        const tgRes = await fetch(
-          `https://api.telegram.org/bot${resolvedToken}/sendMessage`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: resolvedChatId,
-              text: testText,
-              parse_mode: parseMode || 'HTML',
-              disable_web_page_preview: true,
-            }),
-          }
-        );
-        const tgData = (await tgRes.json()) as {
-          ok?: boolean;
-          description?: string;
-          result?: { message_id?: number; chat?: { title?: string } };
-        };
-        if (!tgRes.ok || !tgData.ok) {
-          res.status(400).json({
-            ok: false,
-            configured: true,
-            maskedToken: maskTelegramToken(resolvedToken),
-            botUsername: verifiedUsername,
-            chatId: resolvedChatId,
-            sendCondition: resolvedCondition,
-            message: `บันทึก Token แล้ว แต่ส่งเข้า Chat ID ${resolvedChatId} ไม่สำเร็จ: ${
-              tgData.description || 'ตรวจสอบว่าดึงบอทเข้ากลุ่มแล้ว'
-            }`,
-          });
-          return;
-        }
-        testMessageId = tgData.result?.message_id;
-        testChatTitle = tgData.result?.chat?.title;
-      }
-
-      res.json({
-        ok: true,
-        configured: true,
-        maskedToken: maskTelegramToken(resolvedToken),
-        botUsername: verifiedUsername,
-        chatId: resolvedChatId,
-        sendCondition: resolvedCondition,
-        messageId: testMessageId,
-        chatTitle: testChatTitle,
-        message: testSend
-          ? `บันทึกและทดสอบส่งข้อความเข้า ${testChatTitle || resolvedChatId} สำเร็จ (Message #${testMessageId})`
-          : `บันทึกการตั้งค่า Telegram Bot (@${verifiedUsername}) เรียบร้อยแล้ว`,
-      });
-    } catch (error) {
-      res.status(500).json({
-        ok: false,
-        message: error instanceof Error ? error.message : 'Server error',
-      });
-    }
-  });
-
-  app.post('/api/telegram/discover-chats', async (req, res) => {
-    try {
-      const { botToken, chatId } = req.body as {
-        botToken?: string;
-        chatId?: string;
-      };
-      const resolvedToken =
-        (typeof botToken === 'string' && botToken.trim()) ||
-        telegramStore.botToken.trim() ||
-        process.env.TELEGRAM_BOT_TOKEN?.trim() ||
-        '';
-      const targetChatId =
-        (typeof chatId === 'string' && chatId.trim()) ||
-        telegramStore.chatId ||
-        DEFAULT_TELEGRAM_CHAT_ID;
-
-      if (!resolvedToken) {
-        res.status(400).json({
-          ok: false,
-          message: 'กรุณากรอก Telegram Bot Token ก่อนตรวจสอบสิทธิ์และดึงรายชื่อกลุ่ม',
-        });
-        return;
-      }
-
-      const meRes = await fetch(`https://api.telegram.org/bot${resolvedToken}/getMe`);
-      const meData = (await meRes.json()) as {
-        ok?: boolean;
-        description?: string;
-        result?: { username?: string; first_name?: string };
-      };
-      if (!meRes.ok || !meData.ok) {
-        res.status(400).json({
-          ok: false,
-          message: `Bot Token ไม่ถูกต้อง: ${meData.description || 'Unauthorized'}`,
-        });
-        return;
-      }
-
-      const botUsername = meData.result?.username || meData.result?.first_name || '';
-
-      // Check current Chat ID access via getChat
-      let currentChatCheck: {
-        ok: boolean;
-        chatId: string;
-        title?: string;
-        type?: string;
-        error?: string;
-      } = { ok: false, chatId: targetChatId };
-
-      try {
-        const chatRes = await fetch(
-          `https://api.telegram.org/bot${resolvedToken}/getChat?chat_id=${encodeURIComponent(
-            targetChatId
-          )}`
-        );
-        const chatData = (await chatRes.json()) as {
-          ok?: boolean;
-          description?: string;
-          result?: { id?: number; title?: string; type?: string; username?: string };
-        };
-        if (chatRes.ok && chatData.ok && chatData.result) {
-          currentChatCheck = {
-            ok: true,
-            chatId: String(chatData.result.id ?? targetChatId),
-            title:
-              chatData.result.title ||
-              chatData.result.username ||
-              `Chat ${targetChatId}`,
-            type: chatData.result.type,
-          };
-        } else {
-          currentChatCheck = {
-            ok: false,
-            chatId: targetChatId,
-            error: chatData.description || 'ไม่พบกลุ่มหรือบอทยังไม่ได้เข้าร่วมกลุ่มนี้',
-          };
-        }
-      } catch {
-        currentChatCheck = {
-          ok: false,
-          chatId: targetChatId,
-          error: 'ไม่สามารถตรวจสอบกลุ่มได้',
-        };
-      }
-
-      // Discover all recent joined groups/chats via getUpdates
-      const discoveredMap = new Map<
-        string,
-        { id: string; title: string; type: string; username?: string }
-      >();
-
-      try {
-        const updRes = await fetch(
-          `https://api.telegram.org/bot${resolvedToken}/getUpdates?limit=50`
-        );
-        const updData = (await updRes.json()) as {
-          ok?: boolean;
-          result?: Array<{
-            message?: {
-              chat?: {
-                id: number;
-                title?: string;
-                first_name?: string;
-                username?: string;
-                type: string;
-              };
-            };
-            channel_post?: {
-              chat?: { id: number; title?: string; username?: string; type: string };
-            };
-            my_chat_member?: {
-              chat?: { id: number; title?: string; username?: string; type: string };
-              new_chat_member?: { status?: string };
-            };
-          }>;
-        };
-
-        if (updRes.ok && updData.ok && Array.isArray(updData.result)) {
-          for (const upd of updData.result) {
-            const chats = [
-              upd.message?.chat,
-              upd.channel_post?.chat,
-              upd.my_chat_member?.chat,
-            ];
-            for (const c of chats) {
-              if (!c || !c.id) continue;
-              const idStr = String(c.id);
-              const title =
-                c.title ||
-                ('first_name' in c && typeof c.first_name === 'string'
-                  ? c.first_name
-                  : '') ||
-                c.username ||
-                idStr;
-              discoveredMap.set(idStr, {
-                id: idStr,
-                title,
-                type: c.type || 'group',
-                username: c.username,
-              });
-            }
-          }
-        }
-      } catch {
-        // ignore update polling error
-      }
-
-      if (currentChatCheck.ok && currentChatCheck.title) {
-        discoveredMap.set(currentChatCheck.chatId, {
-          id: currentChatCheck.chatId,
-          title: currentChatCheck.title,
-          type: currentChatCheck.type || 'group',
-        });
-      }
-
-      res.json({
-        ok: true,
-        botUsername,
-        currentChatCheck,
-        discoveredChats: Array.from(discoveredMap.values()),
-      });
-    } catch (error) {
-      res.status(500).json({
-        ok: false,
-        message: error instanceof Error ? error.message : 'Server error',
-      });
-    }
-  });
-
-  app.post('/api/telegram/send', async (req, res) => {
-    try {
-      const { chatId, text, parseMode, dedupeKey } = req.body as {
-        chatId?: string;
-        text?: string;
-        parseMode?: 'HTML' | 'Markdown';
-        dedupeKey?: string;
-      };
-
-      const targetChatId =
-        (chatId && chatId.trim()) || telegramStore.chatId || DEFAULT_TELEGRAM_CHAT_ID;
-      if (!text || typeof text !== 'string' || !text.trim()) {
-        res.status(400).json({ ok: false, error: 'Message text is required' });
-        return;
-      }
-
-      if (dedupeKey && telegramStore.lastSentLiveKey === dedupeKey) {
-        res.json({
-          ok: true,
-          deduplicated: true,
-          chatId: targetChatId,
-        });
-        return;
-      }
-
-      const botToken =
-        telegramStore.botToken.trim() || process.env.TELEGRAM_BOT_TOKEN?.trim() || '';
-      const payload = {
-        chat_id: targetChatId,
-        text: text.trim(),
-        parse_mode: parseMode || 'HTML',
-        disable_web_page_preview: true,
-      };
-
-      if (!botToken) {
-        res.status(200).json({
-          ok: false,
-          reason: 'missing_server_token',
-          message:
-            'ยังไม่ได้ตั้งค่า Telegram Bot Token (กด "ตั้งค่า Telegram" เพื่อใส่ Bot Token และเชื่อมต่อกลุ่ม ' +
-            targetChatId +
-            ')',
-          previewPayload: payload,
-        });
-        return;
-      }
-
-      if (dedupeKey) {
-        telegramStore = { ...telegramStore, lastSentLiveKey: dedupeKey };
-        saveRuntimeTelegramStore(telegramStore);
-      }
-
-      const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const tgData = (await tgRes.json()) as {
-        ok?: boolean;
-        description?: string;
-        result?: { message_id?: number; chat?: { id?: number; title?: string } };
-      };
-
-      if (!tgRes.ok || !tgData.ok) {
-        if (dedupeKey && telegramStore.lastSentLiveKey === dedupeKey) {
-          telegramStore = { ...telegramStore, lastSentLiveKey: undefined };
-          saveRuntimeTelegramStore(telegramStore);
-        }
-        res.status(400).json({
-          ok: false,
-          reason: 'telegram_api_error',
-          message: tgData.description || 'Telegram API rejected the request',
-          previewPayload: payload,
-        });
-        return;
-      }
-
-      res.json({
-        ok: true,
-        messageId: tgData.result?.message_id,
-        chatId: targetChatId,
-        chatTitle: tgData.result?.chat?.title,
-      });
-    } catch (error) {
-      res.status(500).json({
-        ok: false,
-        reason: 'server_error',
-        message: error instanceof Error ? error.message : 'Unexpected server error',
-      });
-    }
-  });
-
-  // --- GitHub Connection & Upload Routes ---
-  let githubStore = loadRuntimeGitHubStore();
-  const signalHistoryBuffer: Array<Record<string, unknown>> = [];
-
-  const ensureGitHubRepoExists = async (params: {
-    token: string;
-    username: string;
-    repoName: string;
-    isPrivate: boolean;
-  }): Promise<{ ok: true; fullRepo: string; created: boolean } | { ok: false; message: string }> => {
-    const fullRepo = `${params.username}/${params.repoName}`;
-    const checkRes = await fetch(`https://api.github.com/repos/${fullRepo}`, {
-      headers: ghHeaders(params.token),
-    });
-    if (checkRes.ok) {
-      return { ok: true, fullRepo, created: false };
-    }
-    if (checkRes.status !== 404) {
-      const errData = (await checkRes.json().catch(() => ({}))) as { message?: string };
-      return {
-        ok: false,
-        message: `ไม่สามารถตรวจสอบ Repository "${fullRepo}": ${errData.message || checkRes.status}`,
-      };
-    }
-    // Repository does not exist yet — create automatically
-    const createRes = await fetch('https://api.github.com/user/repos', {
+  try {
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        ...ghHeaders(params.token),
-        'Content-Type': 'application/json',
+        Title: title,
+        Priority: 'high',
+        Tags: 'chart_with_upwards_trend',
       },
-      body: JSON.stringify({
-        name: params.repoName,
-        private: params.isPrivate,
-        auto_init: false,
-        description: 'US100 M5 AO ZeroCross Monitor & Alert System',
-      }),
+      body,
+      signal: AbortSignal.timeout(5000),
     });
-    const createData = (await createRes.json().catch(() => ({}))) as {
-      full_name?: string;
-      message?: string;
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function formatSignedAo(val: number): string {
+  const fixed = val.toFixed(3);
+  return val > 0 ? `+${fixed}` : fixed;
+}
+
+function escapeTelegramHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function formatTelegramSignalMessage(params: {
+  symbol: string;
+  timeframe: string;
+  signal: 'BUY' | 'SELL';
+  aoPrev: number;
+  aoCurr: number;
+  mode: 'live' | 'sim';
+  timestampIso?: string;
+}): string {
+  const badge = params.signal === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+  const condition =
+    params.signal === 'BUY' ? 'AO ตัดเส้น 0 ขึ้น 🟢⬆️' : 'AO ตัดเส้น 0 ลง 🔴⬇️';
+  const modeLabel = params.mode === 'live' ? 'กราฟจริง' : 'แบบจำลอง';
+  const timeDate = params.timestampIso ? new Date(params.timestampIso) : new Date();
+  const timeText = timeDate.toLocaleTimeString('th-TH', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Bangkok',
+  });
+
+  return [
+    `<b>${badge}  ·  ${escapeTelegramHtml(params.symbol)} (${escapeTelegramHtml(params.timeframe)})</b>`,
+    '──────────────',
+    `เงื่อนไข: ${condition}`,
+    `ค่า AO: ${formatSignedAo(params.aoPrev)} → ${formatSignedAo(params.aoCurr)}`,
+    `โหมด: ${modeLabel}`,
+    `เวลา: ${timeText} น.`,
+  ].join('\n');
+}
+
+function sanitizeTelegramToken(botToken: string): string {
+  return botToken.trim().replace(/[^0-9A-Za-z:_-]/g, '');
+}
+
+async function fetchTelegramBotInfo(botToken: string): Promise<{
+  ok: boolean;
+  username?: string;
+  botUrl?: string;
+  error?: string;
+}> {
+  const cleanToken = sanitizeTelegramToken(botToken);
+  if (!cleanToken) return { ok: false, error: 'กรุณากรอก Bot Token' };
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${cleanToken}/getMe`, {
+      signal: AbortSignal.timeout(6000),
+    });
+    const json = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      result?: { username?: string };
+      description?: string;
     };
-    if (!createRes.ok) {
+    if (!res.ok || !json.ok || !json.result?.username) {
       return {
         ok: false,
-        message: `สร้าง Repository "${params.repoName}" อัตโนมัติไม่สำเร็จ: ${
-          createData.message || createRes.status
-        }`,
+        error:
+          res.status === 401
+            ? 'Bot Token ไม่ถูกต้อง กรุณาตรวจสอบ Token จาก @BotFather'
+            : json.description || `Telegram HTTP ${res.status}`,
       };
     }
-    return { ok: true, fullRepo: createData.full_name || fullRepo, created: true };
-  };
-
-  app.get('/api/github/config', (_req, res) => {
-    const activeToken =
-      githubStore.token.trim() || process.env.GITHUB_TOKEN?.trim() || '';
-    res.json({
-      connected:
-        activeToken.length > 0 &&
-        githubStore.username.trim().length > 0 &&
-        githubStore.repoName.trim().length > 0,
-      hasToken: activeToken.length > 0,
-      maskedToken: activeToken ? maskGitHubToken(activeToken) : '',
-      username: githubStore.username,
-      repoName: githubStore.repoName,
-      repo: githubStore.repo,
-      branch: githubStore.branch || 'main',
-      isPrivate: githubStore.isPrivate,
-      autoUploadCode: githubStore.autoUploadCode,
-      autoLogSignals: githubStore.autoLogSignals,
-      uploadAllowed: githubStore.uploadAllowed,
-      syncedFileCount: githubStore.syncedFileCount,
-      lastUploadAt: githubStore.lastUploadAt,
-      lastCommitUrl: githubStore.lastCommitUrl,
-    });
-  });
-
-  app.post('/api/github/config', async (req, res) => {
-    try {
-      const {
-        token,
-        repoName,
-        repo,
-        username,
-        branch,
-        isPrivate,
-        autoUploadCode,
-        autoLogSignals,
-      } = req.body as {
-        token?: string;
-        repoName?: string;
-        repo?: string;
-        username?: string;
-        branch?: string;
-        isPrivate?: boolean;
-        autoUploadCode?: boolean;
-        autoLogSignals?: boolean;
-      };
-
-      const incomingToken = typeof token === 'string' ? token.trim() : '';
-      const activeToken =
-        incomingToken ||
-        githubStore.token.trim() ||
-        process.env.GITHUB_TOKEN?.trim() ||
-        '';
-
-      if (!activeToken) {
-        res.status(400).json({
-          ok: false,
-          message: 'กรุณากรอก GitHub Personal Access Token (สิทธิ์ repo) ก่อนบันทึก',
-        });
-        return;
-      }
-
-      const rawRepoInput = (
-        typeof repoName === 'string'
-          ? repoName
-          : typeof repo === 'string'
-            ? repo
-            : githubStore.repoName || githubStore.repo
-      )
-        .trim()
-        .replace(/^https?:\/\/github\.com\//i, '')
-        .replace(/\.git$/i, '')
-        .replace(/^\/+|\/+$/g, '');
-
-      let cleanRepoName = rawRepoInput;
-      let parsedOwnerFromRepo = '';
-      if (rawRepoInput.includes('/')) {
-        const parts = rawRepoInput.split('/').filter(Boolean);
-        parsedOwnerFromRepo = parts[0] || '';
-        cleanRepoName = parts[1] || '';
-      }
-
-      if (!cleanRepoName) {
-        res.status(400).json({
-          ok: false,
-          message: 'กรุณาระบุชื่อ Repository (เช่น BotT)',
-        });
-        return;
-      }
-
-      // Verify GitHub token and resolve username
-      const userRes = await fetch('https://api.github.com/user', {
-        headers: ghHeaders(activeToken),
-      });
-      const userData = (await userRes.json()) as {
-        login?: string;
-        message?: string;
-      };
-      if (!userRes.ok || !userData.login) {
-        res.status(400).json({
-          ok: false,
-          message: `GitHub Token ไม่ถูกต้อง: ${userData.message || 'Unauthorized'}`,
-        });
-        return;
-      }
-
-      const resolvedUsername =
-        (typeof username === 'string' && username.trim()) ||
-        parsedOwnerFromRepo ||
-        userData.login;
-      const cleanBranch =
-        (typeof branch === 'string' && branch.trim()) || githubStore.branch || 'main';
-      const nextPrivate =
-        typeof isPrivate === 'boolean' ? isPrivate : githubStore.isPrivate;
-      const nextAutoUploadCode =
-        typeof autoUploadCode === 'boolean' ? autoUploadCode : githubStore.autoUploadCode;
-      const nextAutoLogSignals =
-        typeof autoLogSignals === 'boolean' ? autoLogSignals : githubStore.autoLogSignals;
-
-      const repoCheck = await ensureGitHubRepoExists({
-        token: activeToken,
-        username: resolvedUsername,
-        repoName: cleanRepoName,
-        isPrivate: nextPrivate,
-      });
-      if (!repoCheck.ok) {
-        res.status(400).json({ ok: false, message: repoCheck.message });
-        return;
-      }
-
-      githubStore = {
-        ...githubStore,
-        token: activeToken,
-        username: resolvedUsername,
-        repoName: cleanRepoName,
-        repo: repoCheck.fullRepo,
-        branch: cleanBranch,
-        isPrivate: nextPrivate,
-        autoUploadCode: nextAutoUploadCode,
-        autoLogSignals: nextAutoLogSignals,
-      };
-      saveRuntimeGitHubStore(githubStore);
-
-      res.json({
-        ok: true,
-        connected: true,
-        maskedToken: maskGitHubToken(activeToken),
-        username: githubStore.username,
-        repoName: githubStore.repoName,
-        repo: githubStore.repo,
-        branch: githubStore.branch,
-        isPrivate: githubStore.isPrivate,
-        autoUploadCode: githubStore.autoUploadCode,
-        autoLogSignals: githubStore.autoLogSignals,
-        uploadAllowed: githubStore.uploadAllowed,
-        syncedFileCount: githubStore.syncedFileCount,
-        lastUploadAt: githubStore.lastUploadAt,
-        lastCommitUrl: githubStore.lastCommitUrl,
-        message: repoCheck.created
-          ? `สร้าง Repository "${githubStore.repo}" และบันทึกการเชื่อมต่อสำเร็จ (ยังไม่ส่งไฟล์จนกว่าจะกดอนุญาตอัปโหลด)`
-          : `บันทึกการเชื่อมต่อ GitHub (${githubStore.repo}) สำเร็จ`,
-      });
-    } catch (error) {
-      res.status(500).json({
-        ok: false,
-        message: error instanceof Error ? error.message : 'GitHub config error',
-      });
-    }
-  });
-
-  app.post('/api/github/permission', (req, res) => {
-    const { uploadAllowed } = req.body as { uploadAllowed?: boolean };
-    githubStore = {
-      ...githubStore,
-      uploadAllowed: Boolean(uploadAllowed),
-    };
-    saveRuntimeGitHubStore(githubStore);
-    res.json({
+    return {
       ok: true,
-      uploadAllowed: githubStore.uploadAllowed,
-      message: githubStore.uploadAllowed
-        ? 'อนุญาตอัปโหลดขึ้น GitHub แล้ว'
-        : 'ปิดการอนุญาตอัปโหลดแล้ว (โหมดเชื่อมต่ออย่างเดียว)',
-    });
-  });
-
-  app.post('/api/github/disconnect', (_req, res) => {
-    githubStore = {
-      token: '',
-      username: '',
-      repoName: '',
-      repo: '',
-      branch: 'main',
-      isPrivate: true,
-      autoUploadCode: true,
-      autoLogSignals: true,
-      uploadAllowed: false,
+      username: json.result.username,
+      botUrl: `https://t.me/${json.result.username}`,
     };
-    saveRuntimeGitHubStore(githubStore);
-    res.json({ ok: true, message: 'ยกเลิกการเชื่อมต่อ GitHub แล้ว' });
-  });
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'เชื่อมต่อ Telegram API ไม่สำเร็จ' };
+  }
+}
 
-  app.post('/api/github/signal-log', async (req, res) => {
-    try {
-      const { signal } = req.body as { signal?: Record<string, unknown> };
-      if (signal && typeof signal === 'object') {
-        signalHistoryBuffer.unshift(signal);
-        if (signalHistoryBuffer.length > 50) {
-          signalHistoryBuffer.length = 50;
-        }
-      }
+async function sendTelegramPush(
+  botToken: string,
+  chatId: string,
+  text: string,
+  parseMode?: 'HTML'
+): Promise<{ ok: boolean; error?: string; botUrl?: string; botUsername?: string }> {
+  const token = sanitizeTelegramToken(botToken);
+  const chat = normalizeTelegramChatId(chatId);
+  if (!token || !chat) {
+    return { ok: false, error: 'กรุณากรอก Bot Token และ Chat ID ของ Telegram' };
+  }
 
-      const activeToken =
-        githubStore.token.trim() || process.env.GITHUB_TOKEN?.trim() || '';
-      if (
-        !activeToken ||
-        !githubStore.repo ||
-        !githubStore.uploadAllowed ||
-        !githubStore.autoLogSignals
-      ) {
-        res.json({
-          ok: true,
-          skipped: true,
-          reason: 'upload_not_allowed_or_auto_log_disabled',
-        });
-        return;
-      }
+  // Reject obvious bot username mistyped as personal Chat ID
+  if (!/^-?\d+$/.test(chat) && !chat.startsWith('@')) {
+    const info = await fetchTelegramBotInfo(token);
+    return {
+      ok: false,
+      botUrl: info.botUrl,
+      botUsername: info.username,
+      error: `Chat ID "${chat}" ไม่ใช่ตัวเลขบัญชีผู้ใช้ (Chat ID ต้องเป็นตัวเลข เช่น 123456789) — กรุณาเปิดแชทบอทใน Telegram กด Start แล้วกดปุ่ม "ดึง Chat ID อัตโนมัติ"`,
+    };
+  }
 
-      const targetPath = 'data/signals-log.json';
-      const targetRepo = githubStore.repo;
-      const targetBranch = githubStore.branch || 'main';
-      const jsonContent = JSON.stringify(
-        {
-          updatedAt: new Date().toISOString(),
-          count: signalHistoryBuffer.length,
-          signals: signalHistoryBuffer,
-        },
-        null,
-        2
-      );
-      const contentBase64 = Buffer.from(jsonContent, 'utf8').toString('base64');
-
-      let existingSha: string | undefined;
-      const getRes = await fetch(
-        `https://api.github.com/repos/${targetRepo}/contents/${targetPath}?ref=${encodeURIComponent(
-          targetBranch
-        )}`,
-        { headers: ghHeaders(activeToken) }
-      );
-      if (getRes.ok) {
-        const getData = (await getRes.json()) as { sha?: string };
-        existingSha = getData.sha;
-      }
-
-      const putRes = await fetch(
-        `https://api.github.com/repos/${targetRepo}/contents/${targetPath}`,
-        {
-          method: 'PUT',
-          headers: {
-            ...ghHeaders(activeToken),
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            message: `chore: log US100 M5 signal (${formatBkkHm(Date.now())})`,
-            content: contentBase64,
-            branch: targetBranch,
-            ...(existingSha ? { sha: existingSha } : {}),
-          }),
-        }
-      );
-      const putData = (await putRes.json()) as {
-        message?: string;
-        commit?: { sha?: string; html_url?: string };
-      };
-      if (!putRes.ok) {
-        res.status(400).json({
-          ok: false,
-          message: putData.message || `HTTP ${putRes.status}`,
-        });
-        return;
-      }
-
-      const uploadedAt = new Date().toISOString();
-      githubStore = {
-        ...githubStore,
-        lastUploadAt: uploadedAt,
-        lastCommitUrl: putData.commit?.html_url || githubStore.lastCommitUrl,
-      };
-      saveRuntimeGitHubStore(githubStore);
-
-      res.json({
-        ok: true,
-        uploadedAt,
-        commitUrl: githubStore.lastCommitUrl,
-      });
-    } catch (error) {
-      res.status(500).json({
-        ok: false,
-        message: error instanceof Error ? error.message : 'Signal log upload error',
-      });
-    }
-  });
-
-  app.post('/api/github/upload', async (req, res) => {
-    try {
-      const { latestSignal } = (req.body || {}) as {
-        latestSignal?: Record<string, unknown> | null;
-      };
-
-      const activeToken =
-        githubStore.token.trim() || process.env.GITHUB_TOKEN?.trim() || '';
-      const targetRepo = githubStore.repo.trim();
-      const targetBranch = githubStore.branch.trim() || 'main';
-
-      if (!activeToken || !targetRepo) {
-        res.status(400).json({
-          ok: false,
-          message: 'กรุณากรอก Token และบันทึกการเชื่อมต่อ GitHub ก่อนอัปโหลด',
-        });
-        return;
-      }
-
-      if (!githubStore.uploadAllowed) {
-        res.status(403).json({
-          ok: false,
-          message: 'ยังไม่อนุญาตอัปโหลด — กรุณากดปุ่ม "อนุญาตอัปโหลดขึ้น GitHub" ก่อน',
-        });
-        return;
-      }
-
-      if (latestSignal && typeof latestSignal === 'object') {
-        const exists = signalHistoryBuffer.some((s) => s.id === latestSignal.id);
-        if (!exists) {
-          signalHistoryBuffer.unshift(latestSignal);
-          if (signalHistoryBuffer.length > 50) signalHistoryBuffer.length = 50;
-        }
-      }
-
-      if (githubStore.username && githubStore.repoName) {
-        const ensured = await ensureGitHubRepoExists({
-          token: activeToken,
-          username: githubStore.username,
-          repoName: githubStore.repoName,
-          isPrivate: githubStore.isPrivate,
-        });
-        if (!ensured.ok) {
-          res.status(400).json({ ok: false, message: ensured.message });
-          return;
-        }
-      }
-
-      const projectFiles = collectProjectFilesForUpload();
-      if (githubStore.autoLogSignals) {
-        const signalsJson = JSON.stringify(
-          {
-            updatedAt: new Date().toISOString(),
-            count: signalHistoryBuffer.length,
-            signals: signalHistoryBuffer,
-          },
-          null,
-          2
-        );
-        projectFiles.push({
-          path: 'data/signals-log.json',
-          contentBase64: Buffer.from(signalsJson, 'utf8').toString('base64'),
-        });
-      }
-
-      if (projectFiles.length === 0) {
-        res.status(400).json({ ok: false, message: 'ไม่พบไฟล์โปรเจกต์สำหรับอัปโหลด' });
-        return;
-      }
-
-      let refRes = await fetch(
-        `https://api.github.com/repos/${targetRepo}/git/ref/heads/${encodeURIComponent(
-          targetBranch
-        )}`,
-        { headers: ghHeaders(activeToken) }
-      );
-
-      if (refRes.status === 404 || refRes.status === 409) {
-        const firstFile =
-          projectFiles.find((f) => f.path === '.gitignore') || projectFiles[0];
-        const initRes = await fetch(
-          `https://api.github.com/repos/${targetRepo}/contents/${firstFile.path}`,
-          {
-            method: 'PUT',
-            headers: {
-              ...ghHeaders(activeToken),
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              message: `chore: initialize ${targetBranch} branch`,
-              content: firstFile.contentBase64,
-              branch: targetBranch,
-            }),
-          }
-        );
-        if (!initRes.ok) {
-          const initErr = (await initRes.json().catch(() => ({}))) as {
-            message?: string;
-          };
-          res.status(400).json({
-            ok: false,
-            message: `ไม่พบ Branch "${targetBranch}" และสร้าง Branch ใหม่ไม่สำเร็จ: ${
-              initErr.message || initRes.status
-            }`,
-          });
-          return;
-        }
-        refRes = await fetch(
-          `https://api.github.com/repos/${targetRepo}/git/ref/heads/${encodeURIComponent(
-            targetBranch
-          )}`,
-          { headers: ghHeaders(activeToken) }
-        );
-      }
-
-      if (!refRes.ok) {
-        const refErr = (await refRes.json().catch(() => ({}))) as { message?: string };
-        res.status(400).json({
-          ok: false,
-          message: `ไม่สามารถอ่าน Branch "${targetBranch}": ${
-            refErr.message || refRes.status
-          }`,
-        });
-        return;
-      }
-
-      const refData = (await refRes.json()) as { object?: { sha?: string } };
-      const headSha = refData.object?.sha;
-      if (!headSha) {
-        res.status(400).json({ ok: false, message: 'ไม่พบ Commit SHA ล่าสุดของ Branch' });
-        return;
-      }
-
-      const headCommitRes = await fetch(
-        `https://api.github.com/repos/${targetRepo}/git/commits/${headSha}`,
-        { headers: ghHeaders(activeToken) }
-      );
-      const headCommitData = (await headCommitRes.json()) as {
-        tree?: { sha?: string };
-      };
-      const baseTreeSha = headCommitData.tree?.sha;
-
-      const treeEntries: Array<{
-        path: string;
-        mode: '100644';
-        type: 'blob';
-        sha: string;
-      }> = [];
-
-      for (let i = 0; i < projectFiles.length; i += 5) {
-        const batch = projectFiles.slice(i, i + 5);
-        const batchResults = await Promise.all(
-          batch.map(async (f) => {
-            const blobRes = await fetch(
-              `https://api.github.com/repos/${targetRepo}/git/blobs`,
-              {
-                method: 'POST',
-                headers: {
-                  ...ghHeaders(activeToken),
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  content: f.contentBase64,
-                  encoding: 'base64',
-                }),
-              }
-            );
-            const blobData = (await blobRes.json()) as {
-              sha?: string;
-              message?: string;
-            };
-            if (!blobRes.ok || !blobData.sha) {
-              throw new Error(
-                `อัปโหลดไฟล์ ${f.path} ไม่สำเร็จ: ${blobData.message || blobRes.status}`
-              );
-            }
-            return {
-              path: f.path,
-              mode: '100644' as const,
-              type: 'blob' as const,
-              sha: blobData.sha,
-            };
-          })
-        );
-        treeEntries.push(...batchResults);
-      }
-
-      const treeRes = await fetch(
-        `https://api.github.com/repos/${targetRepo}/git/trees`,
-        {
-          method: 'POST',
-          headers: {
-            ...ghHeaders(activeToken),
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            ...(baseTreeSha ? { base_tree: baseTreeSha } : {}),
-            tree: treeEntries,
-          }),
-        }
-      );
-      const treeData = (await treeRes.json()) as { sha?: string; message?: string };
-      if (!treeRes.ok || !treeData.sha) {
-        res.status(400).json({
-          ok: false,
-          message: `สร้าง Git Tree ไม่สำเร็จ: ${treeData.message || treeRes.status}`,
-        });
-        return;
-      }
-
-      const commitMsg = `chore: sync US100 M5 Studio (${formatBkkHm(Date.now())})`;
-      const commitRes = await fetch(
-        `https://api.github.com/repos/${targetRepo}/git/commits`,
-        {
-          method: 'POST',
-          headers: {
-            ...ghHeaders(activeToken),
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            message: commitMsg,
-            tree: treeData.sha,
-            parents: [headSha],
-          }),
-        }
-      );
-      const commitData = (await commitRes.json()) as {
-        sha?: string;
-        html_url?: string;
-        message?: string;
-      };
-      if (!commitRes.ok || !commitData.sha) {
-        res.status(400).json({
-          ok: false,
-          message: `สร้าง Commit ไม่สำเร็จ: ${commitData.message || commitRes.status}`,
-        });
-        return;
-      }
-
-      const updateRefRes = await fetch(
-        `https://api.github.com/repos/${targetRepo}/git/refs/heads/${encodeURIComponent(
-          targetBranch
-        )}`,
-        {
-          method: 'PATCH',
-          headers: {
-            ...ghHeaders(activeToken),
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ sha: commitData.sha }),
-        }
-      );
-      if (!updateRefRes.ok) {
-        const refUpdErr = (await updateRefRes.json().catch(() => ({}))) as {
-          message?: string;
-        };
-        res.status(400).json({
-          ok: false,
-          message: `อัปเดต Branch ไม่สำเร็จ: ${
-            refUpdErr.message || updateRefRes.status
-          }`,
-        });
-        return;
-      }
-
-      const uploadedAt = new Date().toISOString();
-      const commitUrl =
-        commitData.html_url ||
-        `https://github.com/${targetRepo}/commit/${commitData.sha}`;
-      githubStore = {
-        ...githubStore,
-        syncedFileCount: treeEntries.length,
-        lastUploadAt: uploadedAt,
-        lastCommitUrl: commitUrl,
-      };
-      saveRuntimeGitHubStore(githubStore);
-
-      res.json({
-        ok: true,
-        fileCount: treeEntries.length,
-        commitSha: commitData.sha,
-        commitUrl,
-        uploadedAt,
-        message: `ซิงค์ ${treeEntries.length} ไฟล์ขึ้น ${targetRepo} (${targetBranch}) สำเร็จแล้ว`,
-      });
-    } catch (error) {
-      res.status(500).json({
-        ok: false,
-        message: error instanceof Error ? error.message : 'GitHub upload failed',
-      });
-    }
-  });
-
-  // 24/7 Server-side Live M5 AO ZeroCross Telegram Watcher (deduplicated with frontend)
-  const formatAo3 = (val: number) => `${val >= 0 ? '+' : '-'}${Math.abs(val).toFixed(3)}`;
-  setInterval(async () => {
-    try {
-      const bars = liveCfdFeed.getOrderedBars();
-      if (bars.length < 38) return;
-      const payload = buildAoMarketPayload({
-        rawBars: bars,
-        feedSymbol: 'US100Cash',
-        feedProvider: liveCfdFeed.activeProvider,
-        isRealtimeStream: true,
-        bid: liveCfdFeed.bid,
-        ask: liveCfdFeed.ask,
-        lastPrice: liveCfdFeed.lastPrice,
-        lastTickMs: liveCfdFeed.lastTickMs,
-        barCloseTimeMs: liveCfdFeed.barCloseTimeMs,
-      });
-      if (!payload.latestBarCross) return;
-
-      const bar1 = payload.candles.find((c) => c.shift === 1);
-      const bar2 = payload.candles.find((c) => c.shift === 2);
-      if (!bar1 || !bar2) return;
-
-      const liveKey = `${bar1.timestampIso}_${payload.latestBarCross}`;
-      if (telegramStore.lastSentLiveKey === liveKey) return;
-
-      const botToken =
-        telegramStore.botToken.trim() || process.env.TELEGRAM_BOT_TOKEN?.trim() || '';
-      const targetChatId = telegramStore.chatId.trim() || DEFAULT_TELEGRAM_CHAT_ID;
-      if (!botToken || !targetChatId) return;
-
-      telegramStore = { ...telegramStore, lastSentLiveKey: liveKey };
-      saveRuntimeTelegramStore(telegramStore);
-
-      const headIcon = payload.latestBarCross === 'BUY' ? '🟢' : '🔴';
-      const condText =
-        payload.latestBarCross === 'BUY'
-          ? 'AO ตัดเส้น 0 ขึ้น 🟢⬆️'
-          : 'AO ตัดเส้น 0 ลง 🔴⬇️';
-      const msgText = [
-        `<b>${headIcon} ${payload.latestBarCross} · US100 (M5)</b>`,
-        `____________________`,
-        `เงื่อนไข: ${condText}`,
-        `ค่า AO: ${formatAo3(bar2.ao)} → ${formatAo3(bar1.ao)}`,
-        `โหมด: กราฟจริง`,
-        `เวลา: ${bar1.timeLabel} น.`,
-      ].join('\n');
-
-      const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+  try {
+    const res = await fetch(
+      `https://api.telegram.org/bot${token}/sendMessage`,
+      {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          chat_id: targetChatId,
-          text: msgText,
-          parse_mode: 'HTML',
-          disable_web_page_preview: true,
+          chat_id: chat,
+          text,
+          ...(parseMode ? { parse_mode: parseMode } : {}),
         }),
-      });
-      if (!tgRes.ok) {
-        telegramStore = { ...telegramStore, lastSentLiveKey: undefined };
-        saveRuntimeTelegramStore(telegramStore);
+        signal: AbortSignal.timeout(6000),
       }
-    } catch {
-      // keep background monitor resilient
+    );
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as { description?: string };
+      const rawDesc = errBody.description || `Telegram HTTP ${res.status}`;
+      const info = await fetchTelegramBotInfo(token);
+
+      if (rawDesc.toLowerCase().includes('chat not found')) {
+        return {
+          ok: false,
+          botUrl: info.botUrl,
+          botUsername: info.username,
+          error: `ไม่พบแชท (${chat}) — ต้องเข้าไปกดปุ่ม Start ในแชทบอทก่อน และตรวจสอบว่าเป็น Chat ID ตัวเลขที่ถูกต้อง`,
+        };
+      }
+      if (rawDesc.toLowerCase().includes('blocked')) {
+        return {
+          ok: false,
+          botUrl: info.botUrl,
+          botUsername: info.username,
+          error: 'บอทถูกบล็อกในแชทนี้ กรุณาปลดบล็อกและกด Start ในแชทบอทอีกครั้ง',
+        };
+      }
+      if (res.status === 401) {
+        return {
+          ok: false,
+          error: 'Bot Token ไม่ถูกต้อง กรุณาคัดลอก Token จาก @BotFather ใหม่อีกครั้ง',
+        };
+      }
+      return {
+        ok: false,
+        botUrl: info.botUrl,
+        botUsername: info.username,
+        error: rawDesc,
+      };
     }
-  }, 5000);
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'เชื่อมต่อ Telegram API ไม่สำเร็จ' };
+  }
+}
+
+async function broadcastWebPush(payload: {
+  title: string;
+  body: string;
+  tag: string;
+  url: string;
+}): Promise<number> {
+  if (persisted.subscriptions.length === 0) return 0;
+
+  let delivered = 0;
+  const deadEndpoints = new Set<string>();
+  const jsonPayload = JSON.stringify(payload);
+
+  await Promise.all(
+    persisted.subscriptions.map(async (sub) => {
+      try {
+        await webpush.sendNotification(sub as webpushTypes.PushSubscription, jsonPayload);
+        delivered++;
+      } catch (err: any) {
+        const status = err?.statusCode;
+        if (status === 404 || status === 410) {
+          deadEndpoints.add(sub.endpoint);
+        }
+      }
+    })
+  );
+
+  if (deadEndpoints.size > 0) {
+    persisted.subscriptions = persisted.subscriptions.filter(
+      (s) => !deadEndpoints.has(s.endpoint)
+    );
+    syncPersistence();
+  }
+
+  return delivered;
+}
+
+async function runBackgroundMonitorCycle() {
+  if (!persisted.enabled || monitorRuntime.isRunningCycle) return;
+  monitorRuntime.isRunningCycle = true;
+  monitorRuntime.lastCheckedMs = Date.now();
+  monitorRuntime.lastCheckedAt = new Date().toISOString();
+
+  try {
+    for (const sym of persisted.symbols) {
+      try {
+        const feed = await getLiveM5Feed(sym);
+        const bars = feed.bars;
+        if (bars.length < 4) continue;
+
+        // Confirmed closed M5 bar [1] vs previous closed bar [2] (AO[2] <= 0 -> AO[1] > 0 or AO[2] >= 0 -> AO[1] < 0)
+        const closedBar = bars[bars.length - 2];
+        const prevClosedBar = bars[bars.length - 3];
+        if (!closedBar || !prevClosedBar || !closedBar.signal) continue;
+
+        const barAgeMinutes =
+          (Date.now() - new Date(closedBar.timestampIso).getTime()) / 60000;
+        if (barAgeMinutes > 20) continue;
+
+        const signal = closedBar.signal;
+        if (persisted.direction === 'buy_only' && signal !== 'BUY') continue;
+        if (persisted.direction === 'sell_only' && signal !== 'SELL') continue;
+
+        if (hasClosedBarBeenAlerted(sym, closedBar.timestampIso, signal)) {
+          continue;
+        }
+        recordClosedBarAlerted(sym, closedBar.timestampIso, signal);
+        monitorRuntime.lastBarBySymbol[sym] = `${closedBar.timestampIso}:${signal}`;
+
+        const title = `AO M5 ${signal}: ${sym}`;
+        const body = `${sym} M5 ${signal} | AO ${prevClosedBar.ao.toFixed(
+          3
+        )} → ${closedBar.ao.toFixed(3)} | ราคา ${closedBar.close}`;
+
+        const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
+          broadcastWebPush({
+            title,
+            body,
+            tag: `ao-${sym}-${signal}-${Date.now()}`,
+            url: '/',
+          }),
+          persisted.ntfyTopic
+            ? sendNtfyPush(persisted.ntfyTopic, title, body)
+            : Promise.resolve(false),
+        ]);
+
+        const shouldSendTelegram =
+          Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
+          (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
+
+        const tgRes = shouldSendTelegram
+          ? await sendTelegramPush(
+              persisted.telegramBotToken,
+              persisted.telegramChatId,
+              formatTelegramSignalMessage({
+                symbol: sym,
+                timeframe: 'M5',
+                signal,
+                aoPrev: prevClosedBar.ao,
+                aoCurr: closedBar.ao,
+                mode: 'live',
+                timestampIso: closedBar.timestampIso,
+              }),
+              'HTML'
+            )
+          : { ok: false };
+
+        persisted.events.unshift({
+          id: `${sym}-${closedBar.timestampIso}-${signal}-${Date.now()}`,
+          timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+          symbol: sym,
+          signal,
+          aoPrev: prevClosedBar.ao,
+          aoCurr: closedBar.ao,
+          price: closedBar.close,
+          deliveredToNtfy,
+          deliveredToTelegram: tgRes.ok,
+          deliveredWebPushCount,
+        });
+        persisted.events = persisted.events.slice(0, 30);
+        syncPersistence();
+        scheduleGithubAutoSync('signal-event', 1000);
+      } catch {
+        // Keep polling remaining symbols
+      }
+    }
+  } finally {
+    monitorRuntime.isRunningCycle = false;
+  }
+}
+
+setInterval(() => {
+  void runBackgroundMonitorCycle();
+}, 10000);
+
+setTimeout(() => {
+  void runBackgroundMonitorCycle();
+}, 2000);
+
+async function startServer() {
+  const app = express();
+  app.use(express.json());
+
+  app.get('/api/health', async (_req, res) => {
+    if (persisted.enabled && Date.now() - monitorRuntime.lastCheckedMs > 3000) {
+      void runBackgroundMonitorCycle();
+    }
+    res.json({
+      ok: true,
+      monitorEnabled: persisted.enabled,
+      symbols: persisted.symbols,
+      subscribersCount: persisted.subscriptions.length,
+      lastCheckedAt: monitorRuntime.lastCheckedAt,
+    });
+  });
+
+  app.get('/api/market/m5', async (req, res) => {
+    const rawSymbol = String(req.query.symbol || 'US100').toUpperCase();
+    if (!(rawSymbol in YAHOO_SYMBOL_MAP)) {
+      res.status(400).json({ error: 'ไม่รองรับสินทรัพย์นี้' });
+      return;
+    }
+    try {
+      const sym = rawSymbol as TradingSymbol;
+      const data = await getLiveM5Feed(sym);
+      res.json({
+        ...data,
+        alertedBarKeys: persisted.alertedBarKeys,
+        lastLiveDirection: persisted.lastLiveDirectionBySymbol[sym] || null,
+      });
+    } catch (err: any) {
+      res.status(502).json({
+        error: err?.message || 'ไม่สามารถดึงข้อมูลกราฟจริงได้ในขณะนี้',
+      });
+    }
+  });
+
+  app.get('/api/push/vapid-public-key', (_req, res) => {
+    res.json({ publicKey: persisted.vapidKeys.publicKey });
+  });
+
+  app.post('/api/push/subscribe', (req, res) => {
+    const sub = req.body?.subscription as StoredPushSubscription | undefined;
+    if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) {
+      res.status(400).json({ error: 'ข้อมูล Push Subscription ไม่ถูกต้อง' });
+      return;
+    }
+
+    const existsIdx = persisted.subscriptions.findIndex(
+      (s) => s.endpoint === sub.endpoint
+    );
+    if (existsIdx >= 0) {
+      persisted.subscriptions[existsIdx] = sub;
+    } else {
+      persisted.subscriptions.push(sub);
+    }
+    syncPersistence();
+    res.json({ ok: true, subscribersCount: persisted.subscriptions.length });
+  });
+
+  app.post('/api/push/unsubscribe', (req, res) => {
+    const endpoint = String(req.body?.endpoint || '');
+    if (endpoint) {
+      persisted.subscriptions = persisted.subscriptions.filter(
+        (s) => s.endpoint !== endpoint
+      );
+      syncPersistence();
+    }
+    res.json({ ok: true, subscribersCount: persisted.subscriptions.length });
+  });
+
+  app.post('/api/push/test', async (req, res) => {
+    const targetEndpoint = req.body?.endpoint ? String(req.body.endpoint) : null;
+    const targets = targetEndpoint
+      ? persisted.subscriptions.filter((s) => s.endpoint === targetEndpoint)
+      : persisted.subscriptions;
+
+    if (targets.length === 0) {
+      res.status(400).json({ error: 'ยังไม่มีอุปกรณ์ที่เปิดรับการแจ้งเตือน' });
+      return;
+    }
+
+    let okCount = 0;
+    const payload = JSON.stringify({
+      title: 'AO M5 ทดสอบระบบสำเร็จ',
+      body: 'เซิร์ฟเวอร์เชื่อมต่อมือถือเครื่องนี้แล้ว พร้อมส่งสัญญาณอัตโนมัติ',
+      tag: `ao-test-${Date.now()}`,
+      url: '/',
+    });
+
+    await Promise.all(
+      targets.map(async (sub) => {
+        try {
+          await webpush.sendNotification(sub as webpushTypes.PushSubscription, payload);
+          okCount++;
+        } catch {
+          // Ignore individual failures
+        }
+      })
+    );
+
+    if (okCount === 0) {
+      res.status(502).json({ error: 'ส่งแจ้งเตือนทดสอบไม่สำเร็จ กรุณากดเชื่อมต่อใหม่อีกครั้ง' });
+      return;
+    }
+
+    res.json({ ok: true, delivered: okCount });
+  });
+
+  app.get('/api/monitor/status', (_req, res) => {
+    res.json({
+      enabled: persisted.enabled,
+      symbols: persisted.symbols,
+      ntfyTopic: persisted.ntfyTopic,
+      telegramHasToken: Boolean(persisted.telegramBotToken),
+      telegramConfigured: Boolean(
+        persisted.telegramBotToken &&
+          persisted.telegramChatId &&
+          (/^-?\d+$/.test(persisted.telegramChatId) || persisted.telegramChatId.startsWith('@'))
+      ),
+      telegramChatId: persisted.telegramChatId,
+      telegramMode: persisted.telegramMode,
+      direction: persisted.direction,
+      subscribersCount: persisted.subscriptions.length,
+      lastCheckedAt: monitorRuntime.lastCheckedAt,
+      events: persisted.events,
+      alertedBarKeys: persisted.alertedBarKeys,
+      lastLiveDirectionBySymbol: persisted.lastLiveDirectionBySymbol,
+    });
+  });
+
+  app.post('/api/monitor/reset', (_req, res) => {
+    persisted.events = [];
+    persisted.alertedBarKeys = [];
+    persisted.lastLiveDirectionBySymbol = {};
+    persisted.subscriptions = [];
+    persisted.ntfyTopic = '';
+    persisted.symbols = [...ALL_SYMBOLS];
+    persisted.direction = 'both';
+    persisted.enabled = true;
+    persisted.telegramMode = 'always';
+    monitorRuntime.lastBarBySymbol = {};
+    monitorRuntime.dispatchedLiveSignalKeys.clear();
+    syncPersistence();
+    res.json({
+      ok: true,
+      symbols: persisted.symbols,
+      events: persisted.events,
+      alertedBarKeys: persisted.alertedBarKeys,
+      telegramChatId: persisted.telegramChatId,
+      telegramMode: persisted.telegramMode,
+    });
+  });
+
+  app.post('/api/monitor/config', (req, res) => {
+    const body = req.body || {};
+    if (typeof body.enabled === 'boolean') {
+      persisted.enabled = body.enabled;
+    }
+    if (Array.isArray(body.symbols)) {
+      const valid = body.symbols
+        .map((s: unknown) => String(s).toUpperCase())
+        .filter((s: string): s is TradingSymbol => s in YAHOO_SYMBOL_MAP);
+      if (valid.length > 0) {
+        persisted.symbols = valid;
+      }
+    }
+    if (typeof body.ntfyTopic === 'string') {
+      persisted.ntfyTopic = body.ntfyTopic.trim();
+    }
+    if (body.clearTelegram === true) {
+      persisted.telegramBotToken = '';
+      persisted.telegramChatId = '';
+    } else {
+      if (typeof body.telegramBotToken === 'string' && body.telegramBotToken.trim() !== '') {
+        persisted.telegramBotToken = body.telegramBotToken.trim();
+      }
+      if (typeof body.telegramChatId === 'string') {
+        persisted.telegramChatId = normalizeTelegramChatId(body.telegramChatId);
+      }
+    }
+    if (body.telegramMode === 'fallback' || body.telegramMode === 'always') {
+      persisted.telegramMode = body.telegramMode;
+    }
+    if (
+      body.direction === 'both' ||
+      body.direction === 'buy_only' ||
+      body.direction === 'sell_only'
+    ) {
+      persisted.direction = body.direction;
+    }
+
+    syncPersistence();
+
+    if (persisted.enabled) {
+      void runBackgroundMonitorCycle();
+    }
+
+    res.json({
+      enabled: persisted.enabled,
+      symbols: persisted.symbols,
+      ntfyTopic: persisted.ntfyTopic,
+      telegramHasToken: Boolean(persisted.telegramBotToken),
+      telegramConfigured: Boolean(
+        persisted.telegramBotToken &&
+          persisted.telegramChatId &&
+          (/^-?\d+$/.test(persisted.telegramChatId) || persisted.telegramChatId.startsWith('@'))
+      ),
+      telegramChatId: persisted.telegramChatId,
+      telegramMode: persisted.telegramMode,
+      direction: persisted.direction,
+      subscribersCount: persisted.subscriptions.length,
+      lastCheckedAt: monitorRuntime.lastCheckedAt,
+      events: persisted.events,
+    });
+  });
+
+  app.post('/api/monitor/telegram-detect', async (req, res) => {
+    const token = sanitizeTelegramToken(
+      String(req.body?.telegramBotToken || persisted.telegramBotToken || '')
+    );
+    if (!token) {
+      res.status(400).json({ error: 'กรุณากรอก Bot Token ก่อนดึง Chat ID' });
+      return;
+    }
+
+    const botInfo = await fetchTelegramBotInfo(token);
+    if (!botInfo.ok) {
+      res.status(400).json({ error: botInfo.error || 'Bot Token ไม่ถูกต้อง' });
+      return;
+    }
+
+    persisted.telegramBotToken = token;
+    syncPersistence();
+
+    try {
+      const updRes = await fetch(
+        `https://api.telegram.org/bot${token}/getUpdates?limit=20`,
+        { signal: AbortSignal.timeout(6000) }
+      );
+      type TgChat = { id?: number; username?: string; first_name?: string; title?: string };
+      const updJson = (await updRes.json().catch(() => ({}))) as {
+        ok?: boolean;
+        result?: Array<{
+          message?: { chat?: TgChat };
+          my_chat_member?: { chat?: TgChat };
+          channel_post?: { chat?: TgChat };
+        }>;
+      };
+
+      const chats: Array<{ id: string; label: string }> = [];
+      for (const item of updJson.result || []) {
+        const chat =
+          item.message?.chat || item.my_chat_member?.chat || item.channel_post?.chat;
+        if (chat?.id !== undefined) {
+          const idStr = String(chat.id);
+          const label =
+            chat.title ||
+            chat.first_name ||
+            (chat.username ? `@${chat.username}` : idStr);
+          if (!chats.some((c) => c.id === idStr)) {
+            chats.push({ id: idStr, label });
+          }
+        }
+      }
+
+      if (chats.length === 0) {
+        res.json({
+          ok: false,
+          needsStart: true,
+          botUsername: botInfo.username,
+          botUrl: botInfo.botUrl,
+          message: `ยังไม่พบข้อความในบอท @${botInfo.username} — กรุณากดเปิดแชทบอทแล้วกดปุ่ม Start จากนั้นกดดึง Chat ID อีกครั้ง`,
+        });
+        return;
+      }
+
+      const latest = chats[chats.length - 1];
+      persisted.telegramChatId = latest.id;
+      syncPersistence();
+
+      res.json({
+        ok: true,
+        botUsername: botInfo.username,
+        botUrl: botInfo.botUrl,
+        detectedChatId: latest.id,
+        detectedChatLabel: latest.label,
+      });
+    } catch (err: any) {
+      res.status(502).json({
+        error: err?.message || 'ดึงข้อมูล Chat ID จาก Telegram ไม่สำเร็จ',
+      });
+    }
+  });
+
+  app.post('/api/monitor/test-push', async (req, res) => {
+    const topic = String(req.body?.ntfyTopic || persisted.ntfyTopic || '').trim();
+    if (!topic) {
+      res.status(400).json({ error: 'กรุณากรอกชื่อ Topic ของ ntfy ก่อนทดสอบ' });
+      return;
+    }
+    const ok = await sendNtfyPush(
+      topic,
+      'AO M5 Test Alert',
+      'เชื่อมต่อการแจ้งเตือนอัตโนมัติเข้ามือถือ Android สำเร็จ'
+    );
+    if (!ok) {
+      res.status(502).json({ error: 'ส่งสัญญาณทดสอบไปยัง ntfy ไม่สำเร็จ' });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
+  app.post('/api/monitor/test-telegram', async (req, res) => {
+    const token = sanitizeTelegramToken(
+      String(req.body?.telegramBotToken || persisted.telegramBotToken || '')
+    );
+    const chatId = normalizeTelegramChatId(
+      String(req.body?.telegramChatId || persisted.telegramChatId || '')
+    );
+
+    if (!token || !chatId) {
+      res.status(400).json({ error: 'กรุณากรอก Bot Token และ Chat ID ของ Telegram' });
+      return;
+    }
+
+    persisted.telegramBotToken = token;
+    persisted.telegramChatId = chatId;
+    syncPersistence();
+
+    const tgRes = await sendTelegramPush(
+      token,
+      chatId,
+      [
+        '✅ ทดสอบระบบแจ้งเตือน AO (M5)',
+        '──────────────',
+        'สถานะ: เชื่อมต่อ Telegram สำเร็จ',
+        'สินทรัพย์: US100 (US 100 Index Cash)',
+      ].join('\n')
+    );
+    if (!tgRes.ok) {
+      res.status(502).json({
+        error: tgRes.error || 'ส่งข้อความเข้า Telegram ไม่สำเร็จ',
+        botUrl: tgRes.botUrl,
+        botUsername: tgRes.botUsername,
+      });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
+  app.post('/api/monitor/notify-signal', async (req, res) => {
+    const body = req.body || {};
+    const symbol = String(body.symbol || 'US100').toUpperCase();
+    const timeframe = String(body.timeframe || 'M5');
+    const signal = body.signal === 'SELL' ? 'SELL' : 'BUY';
+    const aoPrev = Number(body.aoPrev ?? 0);
+    const aoCurr = Number(body.aoCurr ?? 0);
+    const price = Number(body.price ?? 0);
+    const mode = body.mode === 'live' ? 'live' : 'sim';
+    const timestampIso = String(body.timestampIso || new Date().toISOString());
+
+    const hasTelegram = Boolean(persisted.telegramBotToken && persisted.telegramChatId);
+    const hasWebPush = persisted.subscriptions.length > 0;
+    const hasNtfy = Boolean(persisted.ntfyTopic);
+
+    if (!hasTelegram && !hasWebPush && !hasNtfy) {
+      res.json({ ok: false, skipped: true, reason: 'not_configured' });
+      return;
+    }
+
+    if (mode === 'live') {
+      const symTyped = (symbol in YAHOO_SYMBOL_MAP ? symbol : 'US100') as TradingSymbol;
+      if (hasClosedBarBeenAlerted(symTyped, timestampIso, signal)) {
+        res.json({ ok: true, deduplicated: true });
+        return;
+      }
+      recordClosedBarAlerted(symTyped, timestampIso, signal);
+    }
+
+    const modeBadge = mode === 'sim' ? '[จำลอง] ' : '';
+    const title = `${modeBadge}AO ${timeframe} ${signal}: ${symbol}`;
+    const pushBody = `${symbol} ${timeframe} ${signal} | AO ${aoPrev.toFixed(
+      3
+    )} → ${aoCurr.toFixed(3)} | ราคา ${price}`;
+
+    const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
+      hasWebPush
+        ? broadcastWebPush({
+            title,
+            body: pushBody,
+            tag: `ao-${mode}-${symbol}-${Date.now()}`,
+            url: '/',
+          })
+        : Promise.resolve(0),
+      hasNtfy ? sendNtfyPush(persisted.ntfyTopic, title, pushBody) : Promise.resolve(false),
+    ]);
+
+    let deliveredToTelegram = false;
+    let tgError: string | undefined;
+
+    if (hasTelegram) {
+      const text = formatTelegramSignalMessage({
+        symbol,
+        timeframe,
+        signal,
+        aoPrev,
+        aoCurr,
+        mode,
+        timestampIso,
+      });
+
+      const tgRes = await sendTelegramPush(
+        persisted.telegramBotToken,
+        persisted.telegramChatId,
+        text,
+        'HTML'
+      );
+      deliveredToTelegram = tgRes.ok;
+      tgError = tgRes.error;
+    }
+
+    if (!deliveredToTelegram && deliveredWebPushCount === 0 && !deliveredToNtfy) {
+      res.status(502).json({
+        ok: false,
+        error: tgError || 'ส่งสัญญาณแจ้งเตือนไม่สำเร็จ',
+      });
+      return;
+    }
+
+    persisted.events.unshift({
+      id: `${mode}-${symbol}-${Date.now()}`,
+      timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+      symbol: (symbol in YAHOO_SYMBOL_MAP ? symbol : 'US100') as TradingSymbol,
+      signal,
+      aoPrev,
+      aoCurr,
+      price,
+      deliveredToNtfy,
+      deliveredToTelegram,
+      deliveredWebPushCount,
+    });
+    persisted.events = persisted.events.slice(0, 30);
+    syncPersistence();
+    scheduleGithubAutoSync('signal-event', 1000);
+
+    res.json({
+      ok: true,
+      deliveredToTelegram,
+      deliveredWebPushCount,
+      deliveredToNtfy,
+    });
+  });
+
+  app.get('/api/github/status', (_req, res) => {
+    res.json(buildGithubStatusResponse());
+  });
+
+  app.post('/api/github/config', async (req, res) => {
+    const body = req.body || {};
+
+    if (body.clearGithub === true) {
+      persisted.githubToken = '';
+      persisted.githubOwner = '';
+      persisted.githubLastSyncedHash = '';
+      persisted.githubLastSyncAt = null;
+      persisted.githubLastCommitUrl = null;
+      persisted.githubLastError = null;
+      syncPersistence();
+      res.json({ ok: true, status: buildGithubStatusResponse() });
+      return;
+    }
+
+    const incomingToken =
+      typeof body.githubToken === 'string' && body.githubToken.trim()
+        ? body.githubToken.trim()
+        : persisted.githubToken;
+
+    if (!incomingToken) {
+      res.status(400).json({ error: 'กรุณากรอก GitHub Personal Access Token' });
+      return;
+    }
+
+    const userRes = await fetchGithubAuthenticatedUser(incomingToken);
+    if (!userRes.ok || !userRes.login) {
+      res.status(400).json({ error: userRes.error || 'GitHub Token ไม่ถูกต้อง' });
+      return;
+    }
+
+    persisted.githubToken = incomingToken;
+    persisted.githubOwner =
+      typeof body.githubOwner === 'string' && body.githubOwner.trim()
+        ? body.githubOwner.trim()
+        : userRes.login;
+    persisted.githubRepo = sanitizeGithubRepoName(
+      typeof body.githubRepo === 'string' && body.githubRepo.trim()
+        ? body.githubRepo
+        : persisted.githubRepo || 'ao-signal-studio'
+    );
+    persisted.githubBranch =
+      typeof body.githubBranch === 'string' && body.githubBranch.trim()
+        ? body.githubBranch.trim()
+        : persisted.githubBranch || 'main';
+    if (typeof body.githubPrivate === 'boolean') {
+      persisted.githubPrivate = body.githubPrivate;
+    }
+    if (typeof body.githubAutoSyncCode === 'boolean') {
+      persisted.githubAutoSyncCode = body.githubAutoSyncCode;
+    }
+    if (typeof body.githubSyncSignals === 'boolean') {
+      persisted.githubSyncSignals = body.githubSyncSignals;
+    }
+    persisted.githubLastError = null;
+    syncPersistence();
+
+    const shouldSyncImmediately = body.syncImmediately !== false;
+    let syncResult: Awaited<ReturnType<typeof syncWorkspaceToGithub>> | null = null;
+    if (shouldSyncImmediately) {
+      syncResult = await syncWorkspaceToGithub({
+        force: body.forceSync !== false,
+        reason: 'connect',
+      });
+      if (!syncResult.ok) {
+        res.status(502).json({
+          ok: false,
+          error: syncResult.error || 'อัปโหลดขึ้น GitHub ไม่สำเร็จ',
+          status: buildGithubStatusResponse(),
+        });
+        return;
+      }
+    } else if (persisted.githubAutoSyncCode) {
+      scheduleGithubAutoSync('restore-check', 1200);
+    }
+
+    res.json({
+      ok: true,
+      syncResult,
+      status: buildGithubStatusResponse(),
+    });
+  });
+
+  app.post('/api/github/sync-now', async (_req, res) => {
+    if (!persisted.githubToken || !persisted.githubRepo) {
+      res.status(400).json({ error: 'กรุณาเชื่อมต่อ GitHub.com ก่อนซิงค์' });
+      return;
+    }
+
+    const result = await syncWorkspaceToGithub({ force: true, reason: 'manual' });
+    if (!result.ok) {
+      res.status(502).json({
+        ok: false,
+        error: result.error || 'ซิงค์ขึ้น GitHub ไม่สำเร็จ',
+        status: buildGithubStatusResponse(),
+      });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      committed: result.committed,
+      syncedFilesCount: result.syncedFilesCount,
+      commitUrl: result.commitUrl,
+      status: buildGithubStatusResponse(),
+    });
+  });
+
+  app.get('/api/export/manifest', (_req, res) => {
+    try {
+      const files = collectDeployableFiles(__dirname);
+      res.json({ ok: true, count: files.length, files });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'อ่านรายการไฟล์ไม่สำเร็จ' });
+    }
+  });
+
+  app.get('/api/export/source.zip', (_req, res) => {
+    try {
+      const files = collectDeployableFiles(__dirname);
+      const zipBuffer = buildZipBuffer(__dirname, files);
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader(
+        'Content-Disposition',
+        'attachment; filename="ao-signal-studio-server.zip"'
+      );
+      res.setHeader('Content-Length', String(zipBuffer.length));
+      res.send(zipBuffer);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'สร้างไฟล์ดาวน์โหลดไม่สำเร็จ' });
+    }
+  });
 
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
@@ -1936,16 +1975,18 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
-    app.use(express.static(distPath));
-    app.get('/{*splat}', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    const distDir = path.resolve(__dirname, 'dist');
+    app.use(express.static(distDir));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(distDir, 'index.html'));
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`AO ZeroCross M5 Studio running on http://0.0.0.0:${PORT}`);
+  const port = Number(process.env.PORT || 3000);
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`Server listening on http://0.0.0.0:${port}`);
+    startGithubWorkspaceWatchers();
   });
 }
 
-startServer();
+void startServer();

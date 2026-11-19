@@ -2,13 +2,11 @@ export type Mql5ArtifactType = 'indicator' | 'ea';
 export type AlertDirection = 'both' | 'buy_only' | 'sell_only';
 export type TriggerMode = 'closed_bar' | 'live_bar';
 export type PushDurationMode = 'custom_sound_10s' | 'repeat_push_10s';
-export type Mql5TimeframeTarget = 'M5' | 'CURRENT';
 
 export interface Mql5Config {
   artifactType: Mql5ArtifactType;
   alertDirection: AlertDirection;
   lockM5: boolean;
-  targetTimeframe?: Mql5TimeframeTarget;
   triggerMode: TriggerMode;
   pushDurationMode: PushDurationMode;
   enablePush: boolean;
@@ -29,8 +27,7 @@ export const DEFAULT_MQL5_CONFIG: Mql5Config = {
   artifactType: 'indicator',
   alertDirection: 'both',
   lockM5: true,
-  targetTimeframe: 'M5',
-  triggerMode: 'live_bar',
+  triggerMode: 'closed_bar',
   pushDurationMode: 'custom_sound_10s',
   enablePush: true,
   enablePopup: true,
@@ -39,7 +36,7 @@ export const DEFAULT_MQL5_CONFIG: Mql5Config = {
   lineNotifyToken: '',
   enableTelegram: false,
   telegramBotToken: '',
-  telegramChatId: '-1004382980885',
+  telegramChatId: '',
   soundFile: 'ao_alert_10s.wav',
   customPrefix: 'AO M5',
   watchlistSymbols: 'US100',
@@ -53,11 +50,7 @@ export function getMql5Filename(config: Mql5Config): string {
 }
 
 export function generateMql5Code(config: Mql5Config): string {
-  const effectiveTarget: Mql5TimeframeTarget =
-    config.targetTimeframe === 'CURRENT' || !config.lockM5 ? 'CURRENT' : 'M5';
-  const timeframeExpr = effectiveTarget === 'M5' ? 'PERIOD_M5' : 'PERIOD_CURRENT';
-  const prevIdx = config.triggerMode === 'closed_bar' ? 2 : 1;
-  const currIdx = config.triggerMode === 'closed_bar' ? 1 : 0;
+  const timeframeExpr = config.lockM5 ? 'PERIOD_M5' : 'PERIOD_CURRENT';
   const checkBuy = config.alertDirection !== 'sell_only';
   const checkSell = config.alertDirection !== 'buy_only';
   const repeatCount = config.pushDurationMode === 'repeat_push_10s' ? 4 : 1;
@@ -103,7 +96,8 @@ double   AOColorBuffer[];
 int      aoMonitorHandle = INVALID_HANDLE;
 int      aoChartHandle   = INVALID_HANDLE;
 datetime lastSignalBarTime = 0;
-int      lastSignalDir     = 0; // 0=none, 1=BUY, -1=SELL
+double   prevLiveAo = EMPTY_VALUE;
+string   lastAlertDirection = "";
 
 //--- Repeat Push Queue State (non-blocking)
 int      pendingPushRemaining = 0;
@@ -250,16 +244,9 @@ int OnCalculate(const int rates_total,
       }
    }
 
-   //--- ตรวจสอบแท่งเทียน Timeframe เป้าหมาย (แจ้งเตือนทันทีเมื่อตัด 0 ไม่ต้องรอปิดแท่งเมื่อ InpConfirmClose=false)
+   //--- ตรวจสอบการตัดเส้น 0 ของ AO ใน Timeframe เป้าหมาย (เช่น M5)
    datetime currentBarTime = iTime(_Symbol, InpTimeframe, 0);
    if(currentBarTime == 0)
-      return(rates_total);
-   if(currentBarTime != lastSignalBarTime)
-   {
-      lastSignalBarTime = currentBarTime;
-      lastSignalDir = 0;
-   }
-   if(InpConfirmClose && lastSignalDir == 99)
       return(rates_total);
 
    double aoValues[3];
@@ -267,27 +254,43 @@ int OnCalculate(const int rates_total,
    if(CopyBuffer(aoMonitorHandle, 0, 0, 3, aoValues) < 3)
       return(rates_total);
 
-   int idxPrev = InpConfirmClose ? 2 : 1;
-   int idxCurr = InpConfirmClose ? 1 : 0;
+   if(InpConfirmClose)
+   {
+      if(currentBarTime == lastSignalBarTime)
+         return(rates_total);
 
-   double aoPrev = aoValues[idxPrev];
-   double aoCurr = aoValues[idxCurr];
+      double aoPrev = aoValues[2];
+      double aoCurr = aoValues[1];
 
-   //--- BUY ALERT: AO ตัดเส้น 0 ขึ้น (ลบ -> บวก)
-   if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0 && lastSignalDir != 1 && lastSignalDir != 99)
-   {
-      DispatchSignalAlert("BUY", aoPrev, aoCurr);
-      lastSignalDir = InpConfirmClose ? 99 : 1;
+      if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0 && lastAlertDirection != "BUY")
+      {
+         DispatchSignalAlert("BUY", aoPrev, aoCurr);
+         lastAlertDirection = "BUY";
+      }
+      else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0 && lastAlertDirection != "SELL")
+      {
+         DispatchSignalAlert("SELL", aoPrev, aoCurr);
+         lastAlertDirection = "SELL";
+      }
+      lastSignalBarTime = currentBarTime;
    }
-   //--- SELL ALERT: AO ตัดเส้น 0 ลง (บวก -> ลบ)
-   else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0 && lastSignalDir != -1 && lastSignalDir != 99)
+   else
    {
-      DispatchSignalAlert("SELL", aoPrev, aoCurr);
-      lastSignalDir = InpConfirmClose ? 99 : -1;
-   }
-   else if(InpConfirmClose)
-   {
-      lastSignalDir = 99;
+      // ไม่ต้องรอปิดแท่งเทียน: แจ้งเตือนทันทีที่ค่า AO ปัจจุบันตัดเส้น 0 ขึ้น/ลง
+      double aoCurr = aoValues[0];
+      double aoPrev = (prevLiveAo != EMPTY_VALUE) ? prevLiveAo : aoValues[1];
+      prevLiveAo = aoCurr;
+
+      if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0 && lastAlertDirection != "BUY")
+      {
+         DispatchSignalAlert("BUY", aoPrev, aoCurr);
+         lastAlertDirection = "BUY";
+      }
+      else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0 && lastAlertDirection != "SELL")
+      {
+         DispatchSignalAlert("SELL", aoPrev, aoCurr);
+         lastAlertDirection = "SELL";
+      }
    }
 
    return(rates_total);
@@ -330,7 +333,8 @@ struct SymbolWatcher
    string   symbol;
    int      aoHandle;
    datetime lastBarTime;
-   int      lastSignalDir;
+   double   prevLiveAo;
+   string   lastDirection;
 };
 
 SymbolWatcher watchers[];
@@ -386,7 +390,8 @@ int OnInit()
       watchers[validCount].symbol = symbolNames[i];
       watchers[validCount].aoHandle = handle;
       watchers[validCount].lastBarTime = 0;
-      watchers[validCount].lastSignalDir = 0;
+      watchers[validCount].prevLiveAo = EMPTY_VALUE;
+      watchers[validCount].lastDirection = "";
       validCount++;
    }
 
@@ -586,21 +591,11 @@ void ProcessRepeatPushQueue()
 //+------------------------------------------------------------------+
 void CheckAllWatchers()
 {
-   int idxPrev = ${prevIdx};
-   int idxCurr = ${currIdx};
-
    for(int i = 0; i < ArraySize(watchers); i++)
    {
       string sym = watchers[i].symbol;
       datetime currentBarTime = iTime(sym, InpTimeframe, 0);
       if(currentBarTime == 0)
-         continue;
-      if(currentBarTime != watchers[i].lastBarTime)
-      {
-         watchers[i].lastBarTime = currentBarTime;
-         watchers[i].lastSignalDir = 0;
-      }
-      if(InpConfirmClose && watchers[i].lastSignalDir == 99)
          continue;
 
       double aoValues[3];
@@ -608,24 +603,44 @@ void CheckAllWatchers()
       if(CopyBuffer(watchers[i].aoHandle, 0, 0, 3, aoValues) < 3)
          continue;
 
-      double aoPrev = aoValues[idxPrev];
-      double aoCurr = aoValues[idxCurr];
+      if(InpConfirmClose)
+      {
+         if(currentBarTime == watchers[i].lastBarTime)
+            continue;
 
-      // BUY: AO ตัดเส้น 0 ขึ้น
-      if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0 && watchers[i].lastSignalDir != 1 && watchers[i].lastSignalDir != 99)
-      {
-         DispatchSignalAlert(sym, "BUY", aoPrev, aoCurr);
-         watchers[i].lastSignalDir = InpConfirmClose ? 99 : 1;
+         double aoPrev = aoValues[2];
+         double aoCurr = aoValues[1];
+
+         if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0 && watchers[i].lastDirection != "BUY")
+         {
+            DispatchSignalAlert(sym, "BUY", aoPrev, aoCurr);
+            watchers[i].lastDirection = "BUY";
+         }
+         else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0 && watchers[i].lastDirection != "SELL")
+         {
+            DispatchSignalAlert(sym, "SELL", aoPrev, aoCurr);
+            watchers[i].lastDirection = "SELL";
+         }
+         watchers[i].lastBarTime = currentBarTime;
       }
-      // SELL: AO ตัดเส้น 0 ลง
-      else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0 && watchers[i].lastSignalDir != -1 && watchers[i].lastSignalDir != 99)
+      else
       {
-         DispatchSignalAlert(sym, "SELL", aoPrev, aoCurr);
-         watchers[i].lastSignalDir = InpConfirmClose ? 99 : -1;
-      }
-      else if(InpConfirmClose)
-      {
-         watchers[i].lastSignalDir = 99;
+         double aoCurr = aoValues[0];
+         double aoPrev = (watchers[i].prevLiveAo != EMPTY_VALUE)
+                         ? watchers[i].prevLiveAo
+                         : aoValues[1];
+         watchers[i].prevLiveAo = aoCurr;
+
+         if(InpAlertBuy && aoPrev <= 0.0 && aoCurr > 0.0 && watchers[i].lastDirection != "BUY")
+         {
+            DispatchSignalAlert(sym, "BUY", aoPrev, aoCurr);
+            watchers[i].lastDirection = "BUY";
+         }
+         else if(InpAlertSell && aoPrev >= 0.0 && aoCurr < 0.0 && watchers[i].lastDirection != "SELL")
+         {
+            DispatchSignalAlert(sym, "SELL", aoPrev, aoCurr);
+            watchers[i].lastDirection = "SELL";
+         }
       }
    }
 }
