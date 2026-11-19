@@ -1,35 +1,5 @@
 {
-  "app": "AO Signal Studio (M5)",
-  "monitoredSymbols": [
-    "US100"
-  ],
-  "direction": "both",
-  "totalCapturedSignals": 2,
-  "latestSignalAt": "19/11/2569 16:30:14",
-  "events": [
-    {
-      "id": "M30-CISD-US100-2026-11-19T09:00:00.000Z-SELL",
-      "timestamp": "19/11/2569 16:30:14",
-      "symbol": "US100",
-      "signal": "SELL",
-      "aoPrev": 0,
-      "aoCurr": 0,
-      "price": 27552.17,
-      "deliveredToTelegram": true,
-      "deliveredToNtfy": false,
-      "deliveredWebPushCount": 0
-    },
-    {
-      "id": "M15-CISD-US100-2026-11-19T09:00:00.000Z-SELL",
-      "timestamp": "19/11/2569 16:15:19",
-      "symbol": "US100",
-      "signal": "SELL",
-      "aoPrev": 0,
-      "aoCurr": 0,
-      "price": 27603.96,
-      "deliveredToTelegram": true,
-      "deliveredToNtfy": false,
-      "deliveredWebPushCount": 0
-    }
-  ]
+  "updatedAt": "2026-11-19T09:41:09.025Z",
+  "count": 0,
+  "signals": []
 }

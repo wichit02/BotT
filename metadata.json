@@ -1,8 +1,6 @@
 {
-  "name": "แรงซื้อ-แรงขาย",
-  "description": "cisd ระบบแจ้งเตือน เข้ามือถือ",
+  "name": "AO ZeroCross M5 Studio",
+  "description": "ระบบจำลองและสร้างโค้ด MQL5 แจ้งเตือน Awesome Oscillator (AO) ตัดเส้น 0 บนกรอบเวลา M5 เข้ามือถือ Android, Telegram และบันทึกสัญญาณลง Google Sheets",
   "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
