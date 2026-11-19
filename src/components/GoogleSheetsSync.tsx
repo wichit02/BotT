@@ -1,9 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import React, { useEffect, useState } from 'react';
 import type { User } from 'firebase/auth';
 import {
-  Check,
-  CheckCircle2,
   FileSpreadsheet,
   FolderPlus,
   Link2,
@@ -62,67 +59,6 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
   const [pendingMutation, setPendingMutation] = useState<PendingMutation>(null);
-  const [manualAddedFeedback, setManualAddedFeedback] = useState(false);
-  const [recentAddedIds, setRecentAddedIds] = useState<Set<string>>(() => new Set());
-  const [syncSuccessInfo, setSyncSuccessInfo] = useState<{
-    count: number;
-    sheetTitle: string;
-    token: number;
-  } | null>(null);
-
-  const manualFeedbackTimerRef = useRef<number | null>(null);
-  const syncSuccessTimerRef = useRef<number | null>(null);
-  const knownSignalIdsRef = useRef<Set<string>>(new Set(pendingSignals.map((s) => s.id)));
-
-  useEffect(() => {
-    const newIds: string[] = [];
-    for (const sig of pendingSignals) {
-      if (!knownSignalIdsRef.current.has(sig.id)) {
-        knownSignalIdsRef.current.add(sig.id);
-        newIds.push(sig.id);
-      }
-    }
-    if (newIds.length === 0) return;
-
-    setRecentAddedIds((prev) => {
-      const next = new Set(prev);
-      for (const id of newIds) next.add(id);
-      return next;
-    });
-
-    const timer = window.setTimeout(() => {
-      setRecentAddedIds((prev) => {
-        const next = new Set(prev);
-        for (const id of newIds) next.delete(id);
-        return next;
-      });
-    }, 1400);
-
-    return () => window.clearTimeout(timer);
-  }, [pendingSignals]);
-
-  useEffect(() => {
-    return () => {
-      if (manualFeedbackTimerRef.current !== null) {
-        window.clearTimeout(manualFeedbackTimerRef.current);
-      }
-      if (syncSuccessTimerRef.current !== null) {
-        window.clearTimeout(syncSuccessTimerRef.current);
-      }
-    };
-  }, []);
-
-  const handleAddManualClick = () => {
-    onAddManualTestSignal();
-    setManualAddedFeedback(true);
-    if (manualFeedbackTimerRef.current !== null) {
-      window.clearTimeout(manualFeedbackTimerRef.current);
-    }
-    manualFeedbackTimerRef.current = window.setTimeout(() => {
-      setManualAddedFeedback(false);
-      manualFeedbackTimerRef.current = null;
-    }, 1300);
-  };
 
   useEffect(() => {
     const unsub = initAuth(
@@ -276,18 +212,6 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
         setStatusMsg(
           `บันทึกสัญญาณจำนวน ${updatedCount} แถวลงแท็บ “${pendingMutation.sheetTitle}” เรียบร้อยแล้ว`
         );
-        setSyncSuccessInfo({
-          count: updatedCount,
-          sheetTitle: pendingMutation.sheetTitle,
-          token: Date.now(),
-        });
-        if (syncSuccessTimerRef.current !== null) {
-          window.clearTimeout(syncSuccessTimerRef.current);
-        }
-        syncSuccessTimerRef.current = window.setTimeout(() => {
-          setSyncSuccessInfo(null);
-          syncSuccessTimerRef.current = null;
-        }, 3500);
       }
     } catch (err: any) {
       if (err?.status === 401) setNeedsAuth(true);
@@ -302,16 +226,16 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
 
   if (needsAuth) {
     return (
-      <section className="rounded-xl border border-slate-200/90 bg-white p-10 sm:p-12">
+      <section className="rounded-xl border border-slate-200 bg-white p-10">
         <div className="mx-auto max-w-md text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
-            <FileSpreadsheet className="h-6 w-6" />
+          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
+            <FileSpreadsheet className="h-5 w-5" />
           </div>
-          <h2 className="mt-4 text-lg font-semibold text-slate-900">
+          <h2 className="mt-4 text-base font-semibold text-slate-900">
             เชื่อมต่อ Google Sheets
           </h2>
-          <p className="mt-2 text-[13px] leading-relaxed text-slate-600">
-            เข้าสู่ระบบด้วยบัญชี Google เพื่อบันทึกและดูประวัติสัญญาณ AO M5 แบบเป็นระเบียบ
+          <p className="mt-1.5 text-xs text-slate-500">
+            เข้าสู่ระบบด้วยบัญชี Google เพื่อบันทึกและดูประวัติสัญญาณ AO M5
           </p>
 
           {errorMsg && (
@@ -369,13 +293,13 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
   return (
     <section className="space-y-6">
       {/* Account & Spreadsheet Connection Header */}
-      <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6">
+      <div className="rounded-xl border border-slate-200 bg-white p-5">
         <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">
+            <h2 className="text-sm font-semibold text-slate-900">
               Google Sheets
             </h2>
-            <p className="mt-0.5 text-[13px] text-slate-600">
+            <p className="mt-0.5 text-xs text-slate-500">
               {user?.displayName || 'Google User'} · {user?.email}
             </p>
           </div>
@@ -383,7 +307,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
           <button
             type="button"
             onClick={handleLogout}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700 whitespace-nowrap transition-colors hover:bg-slate-50"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 whitespace-nowrap transition-colors hover:bg-slate-50"
           >
             <LogOut className="h-3.5 w-3.5" />
             ออกจากระบบ
@@ -391,23 +315,23 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
         </div>
 
         {/* Two ways to connect: Create New OR Connect Existing */}
-        <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Create New Sheet */}
-          <div className="rounded-xl bg-slate-50/90 p-4">
+          <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
             <label
               htmlFor="new-sheet-title"
-              className="block text-[13px] font-medium text-slate-700"
+              className="block text-xs font-medium text-slate-700"
             >
               สร้างไฟล์ใหม่
             </label>
-            <div className="mt-2.5 flex gap-2">
+            <div className="mt-2 flex gap-2">
               <input
                 id="new-sheet-title"
                 type="text"
                 value={newSheetTitle}
                 onChange={(e) => setNewSheetTitle(e.target.value)}
                 placeholder="AO M5 Signal Logbook"
-                className="h-10 flex-1 rounded-lg border border-slate-200 bg-white px-3.5 text-[13px] text-slate-900 focus:border-blue-600 focus:outline-none"
+                className="h-9 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
               />
               <button
                 type="button"
@@ -418,9 +342,9 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                     title: newSheetTitle.trim(),
                   })
                 }
-                className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-[13px] font-medium text-white whitespace-nowrap transition-colors hover:bg-blue-700 disabled:opacity-50"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 text-xs font-medium text-white whitespace-nowrap transition-colors hover:bg-blue-700 disabled:opacity-50"
               >
-                <FolderPlus className="h-4 w-4" />
+                <FolderPlus className="h-3.5 w-3.5" />
                 สร้างใหม่
               </button>
             </div>
@@ -429,69 +353,45 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
           {/* Connect Existing Sheet */}
           <form
             onSubmit={handleConnectExisting}
-            className="rounded-xl bg-slate-50/90 p-4"
+            className="rounded-lg border border-slate-200 bg-slate-50/60 p-4"
           >
             <label
               htmlFor="existing-sheet-url"
-              className="block text-[13px] font-medium text-slate-700"
+              className="block text-xs font-medium text-slate-700"
             >
               เชื่อมต่อไฟล์ที่มีอยู่ (URL / ID)
             </label>
-            <div className="mt-2.5 flex gap-2">
+            <div className="mt-2 flex gap-2">
               <input
                 id="existing-sheet-url"
                 type="text"
                 value={sheetUrlInput}
                 onChange={(e) => setSheetUrlInput(e.target.value)}
                 placeholder="https://docs.google.com/spreadsheets/d/..."
-                className="h-10 flex-1 rounded-lg border border-slate-200 bg-white px-3.5 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+                className="h-9 flex-1 rounded-lg border border-slate-200 bg-white px-3 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
               />
               <button
                 type="submit"
                 disabled={isLoadingSheet}
-                className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-medium text-slate-800 whitespace-nowrap transition-colors hover:bg-slate-100 disabled:opacity-50"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 text-xs font-medium text-slate-800 whitespace-nowrap transition-colors hover:bg-slate-100 disabled:opacity-50"
               >
-                <Link2 className="h-4 w-4" />
+                <Link2 className="h-3.5 w-3.5" />
                 เชื่อมต่อ
               </button>
             </div>
           </form>
         </div>
 
-        <AnimatePresence mode="wait">
-          {errorMsg && (
-            <motion.div
-              key={`err-${errorMsg}`}
-              initial={{ opacity: 0, y: -6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.2 }}
-              className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-800"
-            >
-              {errorMsg}
-            </motion.div>
-          )}
-          {statusMsg && (
-            <motion.div
-              key={`ok-${statusMsg}`}
-              initial={{ opacity: 0, y: -6, scale: 0.99 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-              className="mt-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800"
-            >
-              <motion.span
-                initial={{ scale: 0.5, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ type: 'spring', stiffness: 420, damping: 22 }}
-                className="inline-flex shrink-0 text-emerald-600"
-              >
-                <CheckCircle2 className="h-4 w-4" />
-              </motion.span>
-              <span>{statusMsg}</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {errorMsg && (
+          <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-800">
+            {errorMsg}
+          </div>
+        )}
+        {statusMsg && (
+          <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800">
+            {statusMsg}
+          </div>
+        )}
       </div>
 
       {/* Pending Signals Queue & Sheet Viewer */}
@@ -499,220 +399,92 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
         {/* Local Signal Queue ready to sync */}
         <div className="lg:col-span-4 rounded-xl border border-slate-200 bg-white p-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
-              <span>คิวรอบันทึก</span>
-              <motion.span
-                key={unsyncedSignals.length}
-                initial={{ scale: 1.18, color: '#059669' }}
-                animate={{ scale: 1, color: '#0f172a' }}
-                transition={{ duration: 0.28, ease: 'easeOut' }}
-                className="tabular-nums"
-              >
-                ({unsyncedSignals.length})
-              </motion.span>
+            <h3 className="text-sm font-semibold text-slate-900">
+              คิวรอบันทึก ({unsyncedSignals.length})
             </h3>
-            <motion.button
+            <button
               type="button"
-              whileTap={{ scale: 0.96 }}
-              onClick={handleAddManualClick}
-              className={`inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs font-medium transition-colors ${
-                manualAddedFeedback
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-              }`}
+              onClick={onAddManualTestSignal}
+              className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
             >
-              <AnimatePresence mode="wait" initial={false}>
-                {manualAddedFeedback ? (
-                  <motion.span
-                    key="added"
-                    initial={{ scale: 0.6, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    exit={{ scale: 0.6, opacity: 0 }}
-                    transition={{ duration: 0.16 }}
-                    className="inline-flex items-center gap-1"
-                  >
-                    <Check className="h-3.5 w-3.5 text-emerald-600" />
-                    เพิ่มแล้ว
-                  </motion.span>
-                ) : (
-                  <motion.span
-                    key="idle"
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    exit={{ scale: 0.9, opacity: 0 }}
-                    transition={{ duration: 0.16 }}
-                    className="inline-flex items-center gap-1"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    เพิ่มตัวอย่าง
-                  </motion.span>
-                )}
-              </AnimatePresence>
-            </motion.button>
+              <Plus className="h-3.5 w-3.5" />
+              เพิ่มตัวอย่าง
+            </button>
           </div>
 
-          <AnimatePresence mode="wait" initial={false}>
-            {unsyncedSignals.length === 0 ? (
-              syncSuccessInfo ? (
-                <motion.div
-                  key={`synced-${syncSuccessInfo.token}`}
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.97 }}
-                  transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-                  className="py-7 text-center"
-                >
-                  <div className="relative mx-auto flex h-10 w-10 items-center justify-center">
-                    <motion.span
-                      initial={{ scale: 0.7, opacity: 0.6 }}
-                      animate={{ scale: 1.55, opacity: 0 }}
-                      transition={{ duration: 0.9, ease: 'easeOut' }}
-                      className="absolute inset-0 rounded-full bg-emerald-200"
-                    />
-                    <motion.div
-                      initial={{ scale: 0.6, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-                      className="relative flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"
-                    >
-                      <CheckCircle2 className="h-5 w-5" />
-                    </motion.div>
-                  </div>
-                  <p className="mt-2.5 text-xs font-medium text-emerald-700">
-                    ส่งลง Google Sheets สำเร็จ
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-slate-500">
-                    บันทึกแล้ว {syncSuccessInfo.count} รายการใน “{syncSuccessInfo.sheetTitle}”
-                  </p>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="empty-queue"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="py-8 text-center"
-                >
-                  <p className="text-xs text-slate-400">ยังไม่มีสัญญาณค้างส่ง</p>
-                </motion.div>
-              )
-            ) : (
-              <motion.div
-                key="queue-list"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.18 }}
-                className="mt-3 space-y-2.5"
-              >
-                <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
-                  <AnimatePresence initial={false}>
-                    {unsyncedSignals.map((sig) => {
-                      const isNewlyAdded = recentAddedIds.has(sig.id);
-                      return (
-                        <motion.li
-                          key={sig.id}
-                          layout
-                          initial={{ opacity: 0, y: -10, scale: 0.98 }}
-                          animate={{
-                            opacity: 1,
-                            y: 0,
-                            scale: 1,
-                            backgroundColor: isNewlyAdded
-                              ? ['rgba(236, 253, 245, 0.9)', 'rgba(236, 253, 245, 0)']
-                              : 'rgba(255, 255, 255, 0)',
-                          }}
-                          exit={{ opacity: 0, x: 14, scale: 0.97 }}
-                          transition={{
-                            duration: 0.24,
-                            ease: [0.16, 1, 0.3, 1],
-                            backgroundColor: { duration: 1.2, ease: 'easeOut' },
-                          }}
-                          className="rounded-md px-1.5 py-2.5 text-xs"
+          {unsyncedSignals.length === 0 ? (
+            <div className="py-8 text-center">
+              <p className="text-xs text-slate-400">ยังไม่มีสัญญาณค้างส่ง</p>
+            </div>
+          ) : (
+            <div className="mt-3 space-y-2.5">
+              <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+                {unsyncedSignals.map((sig) => (
+                  <li key={sig.id} className="py-2.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-slate-900">
+                        <span
+                          className={
+                            sig.signal === 'BUY'
+                              ? 'text-emerald-700'
+                              : 'text-rose-700'
+                          }
                         >
-                          <div className="flex items-center justify-between">
-                            <span className="font-semibold text-slate-900">
-                              <span
-                                className={
-                                  sig.signal === 'BUY'
-                                    ? 'text-emerald-700'
-                                    : 'text-rose-700'
-                                }
-                              >
-                                {sig.signal}
-                              </span>{' '}
-                              · {sig.symbol} · {sig.timeframe}
-                            </span>
-                            <span className="font-mono text-slate-500 tabular-nums">
-                              {sig.price}
-                            </span>
-                          </div>
-                          <p className="mt-1 font-mono text-[11px] text-slate-400 tabular-nums">
-                            AO {sig.aoPrev.toFixed(5)} → {sig.aoCurr.toFixed(5)}
-                          </p>
-                        </motion.li>
-                      );
-                    })}
-                  </AnimatePresence>
-                </ul>
+                          {sig.signal}
+                        </span>{' '}
+                        · {sig.symbol} · {sig.timeframe}
+                      </span>
+                      <span className="font-mono text-slate-500 tabular-nums">
+                        {sig.price}
+                      </span>
+                    </div>
+                    <p className="mt-1 font-mono text-[11px] text-slate-400 tabular-nums">
+                      AO {sig.aoPrev.toFixed(5)} → {sig.aoCurr.toFixed(5)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
 
-                <button
-                  type="button"
-                  disabled={!spreadsheet || !selectedTab || isMutating}
-                  onClick={() => {
-                    if (!spreadsheet || !selectedTab) return;
-                    setPendingMutation({
-                      type: 'append',
-                      records: unsyncedSignals,
-                      sheetTitle: selectedTab,
-                    });
-                  }}
-                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <UploadCloud className="h-4 w-4" />
-                  {spreadsheet
-                    ? `บันทึก ${unsyncedSignals.length} รายการลง Sheet`
-                    : 'เชื่อมต่อ Sheet ก่อนบันทึก'}
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              <button
+                type="button"
+                disabled={!spreadsheet || !selectedTab || isMutating}
+                onClick={() => {
+                  if (!spreadsheet || !selectedTab) return;
+                  setPendingMutation({
+                    type: 'append',
+                    records: unsyncedSignals,
+                    sheetTitle: selectedTab,
+                  });
+                }}
+                className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <UploadCloud className="h-4 w-4" />
+                {spreadsheet
+                  ? `บันทึก ${unsyncedSignals.length} รายการลง Sheet`
+                  : 'เชื่อมต่อ Sheet ก่อนบันทึก'}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Connected Google Sheet Data Grid */}
-        <div className="lg:col-span-8 rounded-xl border border-slate-200/90 bg-white overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+        <div className="lg:col-span-8 rounded-xl border border-slate-200 bg-white overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-3.5">
             <div className="flex flex-wrap items-center gap-3">
-              <h3 className="text-[15px] font-semibold text-slate-900">
-                {spreadsheet ? spreadsheet.title : 'ตารางข้อมูล Google Sheets'}
+              <h3 className="text-sm font-semibold text-slate-900">
+                {spreadsheet ? spreadsheet.title : 'ตารางข้อมูล'}
               </h3>
               {spreadsheet && (
                 <a
                   href={spreadsheet.spreadsheetUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:underline"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
                 >
                   เปิดไฟล์
-                  <ExternalLink className="h-3.5 w-3.5" />
+                  <ExternalLink className="h-3 w-3" />
                 </a>
               )}
-              <AnimatePresence>
-                {syncSuccessInfo && (
-                  <motion.span
-                    key={`badge-${syncSuccessInfo.token}`}
-                    initial={{ opacity: 0, scale: 0.9, y: -2 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.92 }}
-                    transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                    className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700"
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    อัปเดต +{syncSuccessInfo.count} แถว
-                  </motion.span>
-                )}
-              </AnimatePresence>
             </div>
 
             {spreadsheet && (
@@ -721,7 +493,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                   aria-label="เลือกแท็บชีต"
                   value={selectedTab}
                   onChange={(e) => handleSelectTab(e.target.value)}
-                  className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 focus:border-blue-600 focus:outline-none"
+                  className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-800 focus:border-blue-600 focus:outline-none"
                 >
                   {spreadsheet.sheets.map((tab) => (
                     <option key={tab.sheetId} value={tab.title}>
@@ -733,7 +505,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                   type="button"
                   onClick={handleRefreshSheet}
                   disabled={isLoadingSheet}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
                   <RefreshCw
                     className={`h-3.5 w-3.5 ${isLoadingSheet ? 'animate-spin' : ''}`}
@@ -745,9 +517,9 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
           </div>
 
           {!spreadsheet ? (
-            <div className="p-12 text-center">
-              <p className="text-[13px] text-slate-500">
-                สร้างไฟล์ใหม่หรือวางลิงก์ Google Sheet ด้านบนเพื่อดูและบันทึกข้อมูล
+            <div className="p-10 text-center">
+              <p className="text-xs text-slate-400">
+                สร้างไฟล์ใหม่หรือวางลิงก์ Google Sheet ด้านบนเพื่อดูข้อมูล
               </p>
             </div>
           ) : isLoadingSheet ? (
@@ -755,25 +527,25 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
               {[0, 1, 2, 3].map((row) => (
                 <div
                   key={row}
-                  className="h-10 w-full animate-pulse rounded bg-slate-100"
+                  className="h-9 w-full animate-pulse rounded bg-slate-100"
                 />
               ))}
             </div>
           ) : sheetRows.length === 0 ? (
-            <div className="p-12 text-center">
-              <p className="text-[13px] text-slate-500">
+            <div className="p-10 text-center">
+              <p className="text-xs text-slate-400">
                 แท็บ “{selectedTab}” ยังไม่มีข้อมูล
               </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-[13px]">
+              <table className="w-full border-collapse text-left text-xs">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-xs text-slate-600">
+                  <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
                     {(sheetRows[0] || []).map((header, idx) => (
                       <th
                         key={idx}
-                        className="px-4 py-3 font-semibold whitespace-nowrap"
+                        className="px-4 py-2.5 font-semibold whitespace-nowrap"
                       >
                         {header}
                       </th>
@@ -781,61 +553,30 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {sheetRows.slice(1).map((row, rIdx, dataRows) => {
-                    const isFreshSyncedRow =
-                      syncSuccessInfo !== null &&
-                      syncSuccessInfo.sheetTitle === selectedTab &&
-                      rIdx >= dataRows.length - syncSuccessInfo.count;
-
-                    return (
-                      <motion.tr
-                        key={
-                          isFreshSyncedRow
-                            ? `fresh-${rIdx}-${syncSuccessInfo?.token}`
-                            : `row-${rIdx}`
-                        }
-                        initial={
-                          isFreshSyncedRow
-                            ? {
-                                opacity: 0.4,
-                                backgroundColor: 'rgba(16, 185, 129, 0.16)',
-                              }
-                            : false
-                        }
-                        animate={
-                          isFreshSyncedRow
-                            ? {
-                                opacity: 1,
-                                backgroundColor: 'rgba(16, 185, 129, 0)',
-                              }
-                            : undefined
-                        }
-                        transition={{ duration: 1.6, ease: 'easeOut' }}
-                        className="hover:bg-slate-50/80"
-                      >
-                        {row.map((cell, cIdx) => {
-                          const isSignalCol = cIdx === 3;
-                          const isNumeric = cIdx >= 4 && cIdx <= 6;
-                          return (
-                            <td
-                              key={cIdx}
-                              className={`px-4 py-3 whitespace-nowrap ${
-                                isNumeric ? 'font-mono text-xs tabular-nums text-right' : ''
-                              } ${
-                                isSignalCol && cell === 'BUY'
-                                  ? 'font-semibold text-emerald-700'
-                                  : isSignalCol && cell === 'SELL'
-                                  ? 'font-semibold text-rose-700'
-                                  : 'text-slate-700'
-                              }`}
-                            >
-                              {cell}
-                            </td>
-                          );
-                        })}
-                      </motion.tr>
-                    );
-                  })}
+                  {sheetRows.slice(1).map((row, rIdx) => (
+                    <tr key={rIdx} className="hover:bg-slate-50/80">
+                      {row.map((cell, cIdx) => {
+                        const isSignalCol = cIdx === 3;
+                        const isNumeric = cIdx >= 4 && cIdx <= 6;
+                        return (
+                          <td
+                            key={cIdx}
+                            className={`px-4 py-2.5 whitespace-nowrap ${
+                              isNumeric ? 'font-mono tabular-nums text-right' : ''
+                            } ${
+                              isSignalCol && cell === 'BUY'
+                                ? 'font-semibold text-emerald-700'
+                                : isSignalCol && cell === 'SELL'
+                                ? 'font-semibold text-rose-700'
+                                : 'text-slate-700'
+                            }`}
+                          >
+                            {cell}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

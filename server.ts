@@ -35,79 +35,23 @@ interface MarketFeedResult {
   source: string;
   marketState: string;
   fetchedAt: string;
+  lastTickAt?: string | null;
+  bid?: number;
+  ask?: number;
   bars: M5Candle[];
 }
-
-type AoTimeframe = 'M5';
-const AO_TIMEFRAME_ORDER: AoTimeframe[] = ['M5'];
-
-type CisdTimeframe = 'M30' | 'M15';
-const CISD_TIMEFRAME_ORDER: CisdTimeframe[] = ['M30', 'M15'];
 
 interface MonitorAlertEvent {
   id: string;
   timestamp: string;
   symbol: TradingSymbol;
-  timeframe?: string;
-  strategy?: 'AO' | 'CISD';
   signal: 'BUY' | 'SELL';
   aoPrev: number;
   aoCurr: number;
-  cisdLevel?: number | null;
   price: number;
   deliveredToNtfy: boolean;
   deliveredToTelegram: boolean;
   deliveredWebPushCount: number;
-  telegramError?: string;
-}
-
-interface M15CisdCandle {
-  index: number;
-  timeLabel: string;
-  timestampIso: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  cisdSignal: 'BUY' | 'SELL' | null;
-  cisdLevel: number | null;
-  closedBelowCisd: boolean;
-  closedAboveCisd: boolean;
-  activeBearCisdLevel: number | null;
-  activeBullCisdLevel: number | null;
-}
-
-interface M15CisdSegment {
-  id: string;
-  kind: 'bearish_break' | 'bullish_break';
-  level: number;
-  originIndex: number;
-  originTimeLabel: string;
-  endIndex: number;
-  triggeredIndex: number | null;
-  triggeredDirection: 'BUY' | 'SELL' | null;
-}
-
-interface LastCisdSignalInfo {
-  signal: 'BUY' | 'SELL';
-  level: number;
-  price: number;
-  timeLabel: string;
-  timestampIso: string;
-}
-
-interface M15MarketFeedResult {
-  symbol: TradingSymbol;
-  timeframe: CisdTimeframe;
-  source: string;
-  marketState: string;
-  fetchedAt: string;
-  bars: M15CisdCandle[];
-  segments: M15CisdSegment[];
-  latestBearCisdLevel: number | null;
-  latestBullCisdLevel: number | null;
-  currentTrend: 'BUY' | 'SELL' | null;
-  lastSignalInfo: LastCisdSignalInfo | null;
 }
 
 interface StoredPushSubscription {
@@ -122,17 +66,12 @@ interface StoredPushSubscription {
 interface PersistedServerState {
   vapidKeys: { publicKey: string; privateKey: string };
   enabled: boolean;
-  m15Enabled: boolean;
   symbols: TradingSymbol[];
   ntfyTopic: string;
   telegramBotToken: string;
   telegramChatId: string;
   telegramMode: 'fallback' | 'always';
   direction: 'both' | 'buy_only' | 'sell_only';
-  m15Direction: 'both' | 'buy_only' | 'sell_only';
-  aoImmediateCross: boolean;
-  aoTimeframes: AoTimeframe[];
-  cisdTimeframes: CisdTimeframe[];
   subscriptions: StoredPushSubscription[];
   events: MonitorAlertEvent[];
   githubToken: string;
@@ -140,13 +79,14 @@ interface PersistedServerState {
   githubRepo: string;
   githubBranch: string;
   githubPrivate: boolean;
-  githubUploadAllowed: boolean;
   githubAutoSyncCode: boolean;
   githubSyncSignals: boolean;
   githubLastSyncedHash: string;
   githubLastSyncAt: string | null;
   githubLastCommitUrl: string | null;
   githubLastError: string | null;
+  alertedBarKeys: string[];
+  lastLiveDirectionBySymbol: Partial<Record<TradingSymbol, 'BUY' | 'SELL'>>;
 }
 
 const YAHOO_SYMBOL_MAP: Record<TradingSymbol, { ticker: string; digits: number }> = {
@@ -157,27 +97,23 @@ const ALL_SYMBOLS: TradingSymbol[] = ['US100'];
 const STATE_DIR = path.resolve(__dirname, '.data');
 const STATE_FILE = path.join(STATE_DIR, 'ao-server-state.json');
 
-interface MarketTickResult {
-  symbol: TradingSymbol;
-  price: number;
-  marketState: string;
-  fetchedAt: string;
+const feedCache = new Map<TradingSymbol, { expiresAt: number; data: MarketFeedResult }>();
+
+function normalizeTelegramChatId(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  // Telegram supergroups/channels are 13-digit IDs starting with -100 (often copied without leading '-')
+  if (/^100\d{9,}$/.test(trimmed)) {
+    return `-${trimmed}`;
+  }
+  return trimmed;
 }
-
-const feedCache = new Map<string, { expiresAt: number; data: MarketFeedResult }>();
-const cisdFeedCache = new Map<
-  string,
-  { expiresAt: number; fetchedAtMs: number; data: M15MarketFeedResult }
->();
-const tickCache = new Map<TradingSymbol, { expiresAt: number; data: MarketTickResult }>();
-
-const FIXED_TELEGRAM_CHAT_ID = '-1004382980885';
 
 function loadPersistedState(): PersistedServerState {
   const envPublic = process.env.VAPID_PUBLIC_KEY?.trim();
   const envPrivate = process.env.VAPID_PRIVATE_KEY?.trim();
   const envTgToken = process.env.TELEGRAM_BOT_TOKEN?.trim() || '';
-  const envTgChatId = FIXED_TELEGRAM_CHAT_ID;
+  const envTgChatId = normalizeTelegramChatId(process.env.TELEGRAM_CHAT_ID || '');
   const envTgMode = process.env.TELEGRAM_MODE?.trim() === 'fallback' ? 'fallback' : 'always';
   const envNtfy = process.env.NTFY_TOPIC?.trim() || '';
   const envGithubToken = process.env.GITHUB_TOKEN?.trim() || '';
@@ -197,9 +133,12 @@ function loadPersistedState(): PersistedServerState {
 
       return {
         vapidKeys,
-        enabled: false,
-        m15Enabled: typeof parsed.m15Enabled === 'boolean' ? parsed.m15Enabled : true,
-        symbols: ALL_SYMBOLS,
+        enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : true,
+        symbols:
+          Array.isArray(parsed.symbols) &&
+          parsed.symbols.some((s): s is TradingSymbol => typeof s === 'string' && s in YAHOO_SYMBOL_MAP)
+            ? parsed.symbols.filter((s): s is TradingSymbol => typeof s === 'string' && s in YAHOO_SYMBOL_MAP)
+            : ALL_SYMBOLS,
         ntfyTopic:
           typeof parsed.ntfyTopic === 'string' && parsed.ntfyTopic
             ? parsed.ntfyTopic
@@ -208,7 +147,10 @@ function loadPersistedState(): PersistedServerState {
           typeof parsed.telegramBotToken === 'string' && parsed.telegramBotToken
             ? parsed.telegramBotToken
             : envTgToken,
-        telegramChatId: FIXED_TELEGRAM_CHAT_ID,
+        telegramChatId:
+          typeof parsed.telegramChatId === 'string' && parsed.telegramChatId
+            ? normalizeTelegramChatId(parsed.telegramChatId)
+            : envTgChatId,
         telegramMode:
           parsed.telegramMode === 'fallback' || parsed.telegramMode === 'always'
             ? parsed.telegramMode
@@ -217,18 +159,6 @@ function loadPersistedState(): PersistedServerState {
           parsed.direction === 'buy_only' || parsed.direction === 'sell_only'
             ? parsed.direction
             : 'both',
-        m15Direction:
-          parsed.m15Direction === 'buy_only' || parsed.m15Direction === 'sell_only'
-            ? parsed.m15Direction
-            : 'both',
-        aoImmediateCross:
-          typeof parsed.aoImmediateCross === 'boolean' ? parsed.aoImmediateCross : true,
-        aoTimeframes: ['M5'],
-        cisdTimeframes: Array.isArray(parsed.cisdTimeframes)
-          ? parsed.cisdTimeframes.filter((tf): tf is CisdTimeframe =>
-              CISD_TIMEFRAME_ORDER.includes(tf as CisdTimeframe)
-            )
-          : ['M30', 'M15'],
         subscriptions: Array.isArray(parsed.subscriptions) ? parsed.subscriptions : [],
         events: Array.isArray(parsed.events) ? parsed.events.slice(0, 30) : [],
         githubToken:
@@ -248,8 +178,6 @@ function loadPersistedState(): PersistedServerState {
             ? parsed.githubBranch
             : envGithubBranch,
         githubPrivate: typeof parsed.githubPrivate === 'boolean' ? parsed.githubPrivate : true,
-        githubUploadAllowed:
-          typeof parsed.githubUploadAllowed === 'boolean' ? parsed.githubUploadAllowed : false,
         githubAutoSyncCode:
           typeof parsed.githubAutoSyncCode === 'boolean' ? parsed.githubAutoSyncCode : true,
         githubSyncSignals:
@@ -262,6 +190,13 @@ function loadPersistedState(): PersistedServerState {
           typeof parsed.githubLastCommitUrl === 'string' ? parsed.githubLastCommitUrl : null,
         githubLastError:
           typeof parsed.githubLastError === 'string' ? parsed.githubLastError : null,
+        alertedBarKeys: Array.isArray(parsed.alertedBarKeys)
+          ? parsed.alertedBarKeys.filter((k): k is string => typeof k === 'string').slice(0, 60)
+          : [],
+        lastLiveDirectionBySymbol:
+          parsed.lastLiveDirectionBySymbol && typeof parsed.lastLiveDirectionBySymbol === 'object'
+            ? parsed.lastLiveDirectionBySymbol
+            : {},
       };
     }
   } catch {
@@ -275,18 +210,13 @@ function loadPersistedState(): PersistedServerState {
 
   const initial: PersistedServerState = {
     vapidKeys,
-    enabled: false,
-    m15Enabled: true,
+    enabled: true,
     symbols: ALL_SYMBOLS,
     ntfyTopic: envNtfy,
     telegramBotToken: envTgToken,
     telegramChatId: envTgChatId,
     telegramMode: envTgMode,
     direction: 'both',
-    m15Direction: 'both',
-    aoImmediateCross: true,
-    aoTimeframes: ['M5'],
-    cisdTimeframes: ['M30', 'M15'],
     subscriptions: [],
     events: [],
     githubToken: envGithubToken,
@@ -294,13 +224,14 @@ function loadPersistedState(): PersistedServerState {
     githubRepo: envGithubRepo,
     githubBranch: envGithubBranch,
     githubPrivate: true,
-    githubUploadAllowed: false,
     githubAutoSyncCode: true,
     githubSyncSignals: true,
     githubLastSyncedHash: '',
     githubLastSyncAt: null,
     githubLastCommitUrl: null,
     githubLastError: null,
+    alertedBarKeys: [],
+    lastLiveDirectionBySymbol: {},
   };
   savePersistedState(initial);
   return initial;
@@ -328,7 +259,7 @@ const monitorRuntime = {
   lastCheckedMs: 0,
   isRunningCycle: false,
   lastBarBySymbol: {} as Partial<Record<TradingSymbol, string>>,
-  lastM15BarBySymbol: {} as Partial<Record<TradingSymbol, string>>,
+  lastClosedBarBucketMsBySymbol: {} as Partial<Record<TradingSymbol, number>>,
   dispatchedLiveSignalKeys: new Set<string>(),
 };
 
@@ -340,21 +271,41 @@ function markLiveSignalDispatched(key: string) {
   }
 }
 
-for (const ev of persisted.events) {
-  if (ev.id) {
-    markLiveSignalDispatched(`live-${ev.id}`);
+function normalizeM5BarKey(sym: TradingSymbol, barTimestampIso: string): string {
+  const ms = Date.parse(barTimestampIso);
+  if (Number.isFinite(ms)) {
+    const bucketMs = Math.floor(ms / 300000) * 300000;
+    return `${sym}-${new Date(bucketMs).toISOString()}`;
   }
+  return `${sym}-${barTimestampIso}`;
 }
 
-function maskTelegramToken(token: string): string {
-  const clean = sanitizeTelegramToken(token);
-  if (!clean) return '';
-  if (clean.length <= 14) return `${clean.slice(0, 4)}••••${clean.slice(-3)}`;
-  const colonIdx = clean.indexOf(':');
-  if (colonIdx > 0 && clean.length - colonIdx > 10) {
-    return `${clean.slice(0, colonIdx + 1)}••••••${clean.slice(-5)}`;
+function hasClosedBarBeenAlerted(
+  sym: TradingSymbol,
+  barTimestampIso: string,
+  _signal?: 'BUY' | 'SELL'
+): boolean {
+  const bucketKey = normalizeM5BarKey(sym, barTimestampIso);
+  return (
+    monitorRuntime.dispatchedLiveSignalKeys.has(bucketKey) ||
+    persisted.alertedBarKeys.includes(bucketKey) ||
+    persisted.alertedBarKeys.includes(`${bucketKey}-BUY`) ||
+    persisted.alertedBarKeys.includes(`${bucketKey}-SELL`)
+  );
+}
+
+function recordClosedBarAlerted(
+  sym: TradingSymbol,
+  barTimestampIso: string,
+  signal: 'BUY' | 'SELL'
+): void {
+  const bucketKey = normalizeM5BarKey(sym, barTimestampIso);
+  markLiveSignalDispatched(bucketKey);
+  if (!persisted.alertedBarKeys.includes(bucketKey)) {
+    persisted.alertedBarKeys = [bucketKey, ...persisted.alertedBarKeys].slice(0, 60);
   }
-  return `${clean.slice(0, 6)}••••••${clean.slice(-4)}`;
+  persisted.lastLiveDirectionBySymbol[sym] = signal;
+  syncPersistence();
 }
 
 function syncPersistence() {
@@ -711,7 +662,6 @@ async function ensureGithubRepoAndBranch(params: {
 async function syncWorkspaceToGithub(options?: {
   force?: boolean;
   reason?: string;
-  approved?: boolean;
 }): Promise<{
   ok: boolean;
   committed: boolean;
@@ -724,14 +674,6 @@ async function syncWorkspaceToGithub(options?: {
   const branch = persisted.githubBranch.trim() || 'main';
   if (!token || !repo) {
     return { ok: false, committed: false, syncedFilesCount: 0, error: 'ยังไม่ได้ตั้งค่า GitHub' };
-  }
-  if (!persisted.githubUploadAllowed && !options?.approved) {
-    return {
-      ok: false,
-      committed: false,
-      syncedFilesCount: 0,
-      error: 'ยังไม่อนุญาตให้อัปโหลดขึ้น GitHub (กรุณากดปุ่มอนุญาตอัปโหลดก่อน)',
-    };
   }
 
   if (githubRuntime.isSyncing) {
@@ -892,7 +834,6 @@ async function syncWorkspaceToGithub(options?: {
 }
 
 function scheduleGithubAutoSync(reason: string, delayMs = 2500) {
-  if (!persisted.githubUploadAllowed) return;
   if (!persisted.githubToken || !persisted.githubRepo) return;
   if (reason === 'signal-event' && !persisted.githubSyncSignals) return;
   if (reason !== 'signal-event' && !persisted.githubAutoSyncCode) return;
@@ -935,12 +876,7 @@ function startGithubWorkspaceWatchers() {
   }
 
   setInterval(() => {
-    if (
-      persisted.githubUploadAllowed &&
-      persisted.githubToken &&
-      persisted.githubRepo &&
-      persisted.githubAutoSyncCode
-    ) {
+    if (persisted.githubToken && persisted.githubRepo && persisted.githubAutoSyncCode) {
       void syncWorkspaceToGithub({ force: false, reason: 'auto-poll' });
     }
   }, 15000);
@@ -957,7 +893,6 @@ function buildGithubStatusResponse() {
     repo,
     branch: persisted.githubBranch || 'main',
     privateRepo: persisted.githubPrivate,
-    uploadAllowed: persisted.githubUploadAllowed,
     autoSyncCode: persisted.githubAutoSyncCode,
     syncSignals: persisted.githubSyncSignals,
     lastSyncAt: persisted.githubLastSyncAt,
@@ -1015,297 +950,281 @@ function computeAwesomeOscillator(
   return out;
 }
 
-let cachedMarketCalibration: { cashBasis: number; qqqRatio: number; expiresAt: number } = {
-  cashBasis: 0,
-  qqqRatio: 0,
-  expiresAt: 0,
-};
-const nyOffsetCache = new Map<number, number>();
-
-function getXmServerOffsetSeconds(unixSec: number): number {
-  // Cache per 6-hour block since NY DST only flips twice a year
-  const cacheKey = Math.floor(unixSec / 21600);
-  const cached = nyOffsetCache.get(cacheKey);
-  if (cached !== undefined) return cached;
-
-  const dt = new Date(unixSec * 1000);
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    timeZoneName: 'shortOffset',
-  }).formatToParts(dt);
-  const tzStr = parts.find((p) => p.type === 'timeZoneName')?.value || 'GMT-5';
-  const match = tzStr.match(/GMT([+-]\d+)/);
-  const nyOffsetHrs = match ? parseInt(match[1], 10) : -5;
-  // XM MT5 Server Time = NY Close (17:00 NY = 00:00 Server) -> NY + 7h = EET (+2) / EEST (+3)
-  const xmOffsetSec = (nyOffsetHrs + 7) * 3600;
-  nyOffsetCache.set(cacheKey, xmOffsetSec);
-  return xmOffsetSec;
+interface RawM5Bar {
+  tSec: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
 }
 
-const YAHOO_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-  Accept: 'application/json',
+const CFD_TICKERS = ['PEPPERSTONE:NAS100', 'VANTAGE:NAS100', 'ICMARKETS:USTEC'] as const;
+
+const cfdStreamState = {
+  tickerIndex: 0,
+  barsMap: new Map<number, RawM5Bar>(),
+  bid: 0,
+  ask: 0,
+  connected: false,
+  lastTickAtMs: 0,
+  lastError: null as string | null,
+  ws: null as WebSocket | null,
+  reconnectTimer: null as NodeJS.Timeout | null,
 };
 
-async function getLiveMarketCalibration(): Promise<{ cashBasis: number; qqqRatio: number }> {
-  if (cachedMarketCalibration.expiresAt > Date.now()) {
-    return {
-      cashBasis: cachedMarketCalibration.cashBasis,
-      qqqRatio: cachedMarketCalibration.qqqRatio,
-    };
+const xmMt5Bridge = {
+  symbolName: 'US100Cash#',
+  broker: 'XM Global MT5',
+  bid: 0,
+  ask: 0,
+  updatedAtMs: 0,
+  bars: [] as Array<Omit<M5Candle, 'ao' | 'aoRising' | 'signal'>>,
+};
+
+function tvFrame(method: string, params: unknown[]): string {
+  const payload = JSON.stringify({ m: method, p: params });
+  return `~m~${payload.length}~m~${payload}`;
+}
+
+function connectRealtimeCfdStream() {
+  if (cfdStreamState.reconnectTimer) {
+    clearTimeout(cfdStreamState.reconnectTimer);
+    cfdStreamState.reconnectTimer = null;
   }
-  let nextCashBasis = cachedMarketCalibration.cashBasis;
-  let nextQqqRatio = cachedMarketCalibration.qqqRatio;
+  if (cfdStreamState.ws) {
+    try {
+      cfdStreamState.ws.close();
+    } catch {
+      // Ignore close error
+    }
+    cfdStreamState.ws = null;
+  }
+
+  const ticker = CFD_TICKERS[cfdStreamState.tickerIndex % CFD_TICKERS.length];
+  const sessionId = `cs_${Math.random().toString(36).slice(2, 10)}`;
+  const quoteSessionId = `qs_${Math.random().toString(36).slice(2, 10)}`;
 
   try {
-    const [futRes, cashRes, qqqRes] = await Promise.all([
-      fetch(
-        'https://query1.finance.yahoo.com/v8/finance/chart/NQ%3DF?interval=15m&range=5d&includePrePost=true',
-        { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(5000) }
-      ),
-      fetch(
-        'https://query1.finance.yahoo.com/v8/finance/chart/%5ENDX?interval=15m&range=5d&includePrePost=true',
-        { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(5000) }
-      ),
-      fetch(
-        'https://query1.finance.yahoo.com/v8/finance/chart/QQQ?interval=15m&range=5d&includePrePost=true',
-        { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(5000) }
-      ),
-    ]);
+    const WsCtor = WebSocket as unknown as new (
+      url: string,
+      opts?: { headers?: Record<string, string> }
+    ) => WebSocket;
+    const ws = new WsCtor(
+      'wss://data.tradingview.com/socket.io/websocket?from=chart%2F',
+      { headers: { Origin: 'https://www.tradingview.com' } }
+    );
+    cfdStreamState.ws = ws;
 
-    const [futJson, cashJson, qqqJson] = await Promise.all([
-      futRes.ok ? futRes.json().catch(() => null) : null,
-      cashRes.ok ? cashRes.json().catch(() => null) : null,
-      qqqRes.ok ? qqqRes.json().catch(() => null) : null,
-    ]);
+    ws.onopen = () => {
+      cfdStreamState.connected = true;
+      cfdStreamState.lastError = null;
+      ws.send(tvFrame('set_auth_token', ['unauthorized_user_token']));
+      ws.send(tvFrame('chart_create_session', [sessionId, '']));
+      ws.send(
+        tvFrame('resolve_symbol', [
+          sessionId,
+          'sds_sym_1',
+          '=' + JSON.stringify({ symbol: ticker, adjustment: 'splits' }),
+        ])
+      );
+      ws.send(tvFrame('create_series', [sessionId, 'sds_1', 's1', 'sds_sym_1', '5', 260]));
+      ws.send(tvFrame('quote_create_session', [quoteSessionId]));
+      ws.send(tvFrame('quote_add_symbols', [quoteSessionId, ticker]));
+    };
 
-    const cashResult = cashJson?.chart?.result?.[0];
-    const cashTs: number[] = cashResult?.timestamp || [];
-    const cashCloses: Array<number | null> = cashResult?.indicators?.quote?.[0]?.close || [];
-    const cashMap = new Map<number, number>();
-    for (let i = 0; i < cashTs.length; i++) {
-      if (cashCloses[i] != null && Number(cashCloses[i]) > 0) {
-        cashMap.set(cashTs[i], Number(cashCloses[i]));
-      }
-    }
-
-    const futResult = futJson?.chart?.result?.[0];
-    const futTs: number[] = futResult?.timestamp || [];
-    const futCloses: Array<number | null> = futResult?.indicators?.quote?.[0]?.close || [];
-    const diffs: number[] = [];
-    for (let i = 0; i < futTs.length; i++) {
-      if (futCloses[i] != null && cashMap.has(futTs[i])) {
-        diffs.push(Number(futCloses[i]) - (cashMap.get(futTs[i]) as number));
-      }
-    }
-    if (diffs.length >= 3) {
-      const recent = diffs.slice(-20).sort((a, b) => a - b);
-      const median = recent[Math.floor(recent.length / 2)];
-      nextCashBasis = Math.round(median * 4) / 4;
-    }
-
-    const qqqResult = qqqJson?.chart?.result?.[0];
-    const qqqTs: number[] = qqqResult?.timestamp || [];
-    const qqqCloses: Array<number | null> = qqqResult?.indicators?.quote?.[0]?.close || [];
-    const exactRatios: number[] = [];
-    const futDerivedRatios: number[] = [];
-    const futMap = new Map<number, number>();
-    for (let i = 0; i < futTs.length; i++) {
-      if (futCloses[i] != null && Number(futCloses[i]) > 0) {
-        futMap.set(futTs[i], Number(futCloses[i]));
-      }
-    }
-    for (let i = 0; i < qqqTs.length; i++) {
-      const qClose = Number(qqqCloses[i]);
-      if (!Number.isFinite(qClose) || qClose <= 0) continue;
-      const ndxClose = cashMap.get(qqqTs[i]);
-      if (ndxClose && ndxClose > 0) {
-        exactRatios.push(ndxClose / qClose);
-      } else {
-        const futClose = futMap.get(qqqTs[i]);
-        if (futClose && futClose > 0) {
-          futDerivedRatios.push((futClose - nextCashBasis) / qClose);
+    ws.onmessage = (evt: MessageEvent) => {
+      const raw = typeof evt.data === 'string' ? evt.data : String(evt.data || '');
+      const parts = raw.split(/~m~\d+~m~/).filter(Boolean);
+      for (const part of parts) {
+        if (part.startsWith('~h~')) {
+          try {
+            ws.send(`~m~${part.length}~m~${part}`);
+          } catch {
+            // Ignore send error on closed socket
+          }
+          continue;
+        }
+        try {
+          const msg = JSON.parse(part) as { m?: string; p?: any[] };
+          if (msg.m === 'symbol_error') {
+            cfdStreamState.lastError = `Symbol error: ${ticker}`;
+            cfdStreamState.tickerIndex = (cfdStreamState.tickerIndex + 1) % CFD_TICKERS.length;
+            ws.close();
+            return;
+          }
+          if (msg.m === 'qsd') {
+            const v = msg.p?.[1]?.v;
+            if (v && typeof v === 'object') {
+              const bidVal = Number(v.bid);
+              const askVal = Number(v.ask);
+              const lpVal = Number(v.lp);
+              if (Number.isFinite(bidVal) && bidVal > 0) {
+                cfdStreamState.bid = roundTo(bidVal, 2);
+              }
+              if (Number.isFinite(askVal) && askVal > 0) {
+                cfdStreamState.ask = roundTo(askVal, 2);
+              }
+              const tickPrice =
+                Number.isFinite(lpVal) && lpVal > 0
+                  ? roundTo(lpVal, 2)
+                  : Number.isFinite(bidVal) && bidVal > 0
+                  ? roundTo(bidVal, 2)
+                  : 0;
+              if (tickPrice > 0) {
+                cfdStreamState.lastTickAtMs = Date.now();
+                if (cfdStreamState.barsMap.size > 0) {
+                  const currentBucketSec = Math.floor(Date.now() / 300000) * 300;
+                  const existing = cfdStreamState.barsMap.get(currentBucketSec);
+                  if (existing) {
+                    existing.close = tickPrice;
+                    if (tickPrice > existing.high) existing.high = tickPrice;
+                    if (tickPrice < existing.low) existing.low = tickPrice;
+                  }
+                }
+              }
+            }
+          }
+          if (msg.m === 'timescale_update' || msg.m === 'du') {
+            const rows: Array<{ v?: number[] }> = msg.p?.[1]?.sds_1?.s || [];
+            if (rows.length > 0) {
+              for (const row of rows) {
+                const v = row?.v;
+                if (!Array.isArray(v) || v.length < 5) continue;
+                const tSec = Math.floor(Number(v[0]));
+                const open = roundTo(Number(v[1]), 2);
+                const high = roundTo(Number(v[2]), 2);
+                const low = roundTo(Number(v[3]), 2);
+                const close = roundTo(Number(v[4]), 2);
+                if (
+                  !Number.isFinite(tSec) ||
+                  !Number.isFinite(open) ||
+                  !Number.isFinite(high) ||
+                  !Number.isFinite(low) ||
+                  !Number.isFinite(close)
+                ) {
+                  continue;
+                }
+                cfdStreamState.barsMap.set(tSec, { tSec, open, high, low, close });
+              }
+              if (cfdStreamState.barsMap.size > 320) {
+                const sortedKeys = Array.from(cfdStreamState.barsMap.keys()).sort((a, b) => a - b);
+                const toDelete = sortedKeys.length - 300;
+                for (let i = 0; i < toDelete; i++) {
+                  cfdStreamState.barsMap.delete(sortedKeys[i]);
+                }
+              }
+              cfdStreamState.lastTickAtMs = Date.now();
+            }
+          }
+        } catch {
+          // Ignore non-JSON control frames
         }
       }
-    }
-    const chosenRatios = exactRatios.length >= 3 ? exactRatios : futDerivedRatios;
-    if (chosenRatios.length >= 3) {
-      const recentRatios = chosenRatios.slice(-16).sort((a, b) => a - b);
-      nextQqqRatio = recentRatios[Math.floor(recentRatios.length / 2)];
-    }
+    };
 
-    if (diffs.length >= 3 || chosenRatios.length >= 3) {
-      cachedMarketCalibration = {
-        cashBasis: nextCashBasis,
-        qqqRatio: nextQqqRatio,
-        expiresAt: Date.now() + 60000,
-      };
-      return { cashBasis: nextCashBasis, qqqRatio: nextQqqRatio };
-    }
-  } catch {
-    // Keep previous cached calibration on transient upstream failure
+    ws.onerror = () => {
+      cfdStreamState.connected = false;
+    };
+
+    ws.onclose = () => {
+      cfdStreamState.connected = false;
+      if (cfdStreamState.ws === ws) {
+        cfdStreamState.ws = null;
+        if (!cfdStreamState.reconnectTimer) {
+          cfdStreamState.reconnectTimer = setTimeout(() => {
+            connectRealtimeCfdStream();
+          }, 2500);
+        }
+      }
+    };
+  } catch (err: any) {
+    cfdStreamState.connected = false;
+    cfdStreamState.lastError = err?.message || 'WebSocket init error';
+    cfdStreamState.reconnectTimer = setTimeout(() => {
+      connectRealtimeCfdStream();
+    }, 3000);
   }
+}
 
-  cachedMarketCalibration = {
-    cashBasis: nextCashBasis,
-    qqqRatio: nextQqqRatio,
-    expiresAt: Date.now() + 15000,
+connectRealtimeCfdStream();
+
+// Watchdog: reconnect CFD stream if silent for >90s
+setInterval(() => {
+  if (
+    cfdStreamState.connected &&
+    cfdStreamState.lastTickAtMs > 0 &&
+    Date.now() - cfdStreamState.lastTickAtMs > 90000
+  ) {
+    connectRealtimeCfdStream();
+  }
+}, 30000);
+
+function buildCfdMarketFeed(symbol: TradingSymbol): MarketFeedResult | null {
+  if (cfdStreamState.barsMap.size < 36) return null;
+  const sorted = Array.from(cfdStreamState.barsMap.values())
+    .sort((a, b) => a.tSec - b.tSec)
+    .slice(-260);
+
+  const warmupSlice: Array<Omit<M5Candle, 'ao' | 'aoRising' | 'signal'>> = sorted.map((b, idx) => {
+    const dt = new Date(b.tSec * 1000);
+    return {
+      index: idx,
+      timeLabel: formatTimeLabel(dt),
+      timestampIso: dt.toISOString(),
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+      median: (b.high + b.low) / 2,
+    };
+  });
+
+  const bars = computeAwesomeOscillator(warmupSlice)
+    .slice(-180)
+    .map((b, idx) => ({ ...b, index: idx }));
+
+  const latestBar = bars[bars.length - 1];
+  const latestBarTs = new Date(latestBar.timestampIso).getTime();
+  const ageMinutes = (Date.now() - latestBarTs) / 60000;
+  const isStreamFresh = Date.now() - cfdStreamState.lastTickAtMs <= 20000;
+  const marketState = isStreamFresh || ageMinutes <= 8 ? 'LIVE' : 'MARKET CLOSED';
+  const activeTicker = CFD_TICKERS[cfdStreamState.tickerIndex % CFD_TICKERS.length];
+
+  return {
+    symbol,
+    source: `MT5 Forex CFD (${activeTicker})`,
+    marketState,
+    fetchedAt: new Date().toISOString(),
+    lastTickAt: cfdStreamState.lastTickAtMs
+      ? new Date(cfdStreamState.lastTickAtMs).toISOString()
+      : null,
+    bid: cfdStreamState.bid > 0 ? cfdStreamState.bid : latestBar.close,
+    ask: cfdStreamState.ask > 0 ? cfdStreamState.ask : roundTo(latestBar.close + 1.1, 2),
+    bars,
   };
-  return { cashBasis: nextCashBasis, qqqRatio: nextQqqRatio };
 }
 
-async function getLiveCashBasis(): Promise<number> {
-  const cal = await getLiveMarketCalibration();
-  return cal.cashBasis;
-}
-
-interface Tail1mBar {
-  ts: number;
-  o: number;
-  h: number;
-  l: number;
-  c: number;
-  isExact: boolean;
-}
-
-interface RealtimeTailData {
-  bars: Tail1mBar[];
-  liveMeta: { price: number; timeSec: number; source: 'NDX' | 'QQQ' } | null;
-}
-
-async function fetchRealtimeTailData(qqqRatio: number): Promise<RealtimeTailData> {
-  const [ndxRes, qqqRes] = await Promise.all([
-    fetch(
-      'https://query1.finance.yahoo.com/v8/finance/chart/%5ENDX?interval=1m&range=1d&includePrePost=true',
-      { headers: YAHOO_HEADERS, cache: 'no-store', signal: AbortSignal.timeout(4500) }
-    ).catch(() => null),
-    qqqRatio > 0
-      ? fetch(
-          'https://query1.finance.yahoo.com/v8/finance/chart/QQQ?interval=1m&range=1d&includePrePost=true',
-          { headers: YAHOO_HEADERS, cache: 'no-store', signal: AbortSignal.timeout(4500) }
-        ).catch(() => null)
-      : Promise.resolve(null),
-  ]);
-
-  const [ndxJson, qqqJson] = await Promise.all([
-    ndxRes && ndxRes.ok ? ndxRes.json().catch(() => null) : null,
-    qqqRes && qqqRes.ok ? qqqRes.json().catch(() => null) : null,
-  ]);
-
-  const byTs = new Map<number, Tail1mBar>();
-
-  const qqqResult = qqqJson?.chart?.result?.[0];
-  if (qqqResult && qqqRatio > 0) {
-    const tsArr: number[] = qqqResult.timestamp || [];
-    const quote = qqqResult.indicators?.quote?.[0] || {};
-    const oArr: Array<number | null> = quote.open || [];
-    const hArr: Array<number | null> = quote.high || [];
-    const lArr: Array<number | null> = quote.low || [];
-    const cArr: Array<number | null> = quote.close || [];
-    for (let i = 0; i < tsArr.length; i++) {
-      const o = oArr[i];
-      const h = hArr[i];
-      const l = lArr[i];
-      const c = cArr[i];
-      if (o == null || h == null || l == null || c == null) continue;
-      byTs.set(tsArr[i], {
-        ts: tsArr[i],
-        o: Number(o) * qqqRatio,
-        h: Number(h) * qqqRatio,
-        l: Number(l) * qqqRatio,
-        c: Number(c) * qqqRatio,
-        isExact: false,
-      });
-    }
-  }
-
-  const ndxResult = ndxJson?.chart?.result?.[0];
-  if (ndxResult) {
-    const tsArr: number[] = ndxResult.timestamp || [];
-    const quote = ndxResult.indicators?.quote?.[0] || {};
-    const oArr: Array<number | null> = quote.open || [];
-    const hArr: Array<number | null> = quote.high || [];
-    const lArr: Array<number | null> = quote.low || [];
-    const cArr: Array<number | null> = quote.close || [];
-    for (let i = 0; i < tsArr.length; i++) {
-      const o = oArr[i];
-      const h = hArr[i];
-      const l = lArr[i];
-      const c = cArr[i];
-      if (o == null || h == null || l == null || c == null) continue;
-      byTs.set(tsArr[i], {
-        ts: tsArr[i],
-        o: Number(o),
-        h: Number(h),
-        l: Number(l),
-        c: Number(c),
-        isExact: true,
-      });
-    }
-  }
-
-  const nowSec = Math.floor(Date.now() / 1000);
-  const ndxMetaPrice = Number(ndxResult?.meta?.regularMarketPrice);
-  const ndxMetaTime = Math.floor(Number(ndxResult?.meta?.regularMarketTime) || 0);
-  const qqqMetaPrice = Number(qqqResult?.meta?.regularMarketPrice);
-  const qqqMetaTime = Math.floor(Number(qqqResult?.meta?.regularMarketTime) || 0);
-
-  const ndxMetaLive =
-    Number.isFinite(ndxMetaPrice) && ndxMetaPrice > 0 && nowSec - ndxMetaTime <= 180;
-  const qqqMetaLive =
-    qqqRatio > 0 &&
-    Number.isFinite(qqqMetaPrice) &&
-    qqqMetaPrice > 0 &&
-    nowSec - qqqMetaTime <= 180;
-
-  let liveMeta: { price: number; timeSec: number; source: 'NDX' | 'QQQ' } | null = null;
-  if (ndxMetaLive && (!qqqMetaLive || ndxMetaTime >= qqqMetaTime - 60)) {
-    liveMeta = { price: ndxMetaPrice, timeSec: ndxMetaTime, source: 'NDX' };
-  } else if (qqqMetaLive) {
-    liveMeta = { price: qqqMetaPrice * qqqRatio, timeSec: qqqMetaTime, source: 'QQQ' };
-  }
-
-  const bars = [...byTs.values()].sort((a, b) => a.ts - b.ts);
-  return { bars, liveMeta };
-}
-
-const YAHOO_AO_PARAMS: Record<
-  AoTimeframe,
-  { interval: string; range: string; maxAgeMinutes: number; cacheMs: number }
-> = {
-  M5: { interval: '5m', range: '5d', maxAgeMinutes: 20, cacheMs: 3000 },
-};
-
-async function fetchYahooAo(
-  symbol: TradingSymbol,
-  timeframe: AoTimeframe = 'M5'
-): Promise<MarketFeedResult> {
+async function fetchYahooM5(symbol: TradingSymbol): Promise<MarketFeedResult> {
   const mapping = YAHOO_SYMBOL_MAP[symbol];
-  const cfg = YAHOO_AO_PARAMS[timeframe];
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     mapping.ticker
-  )}?interval=${encodeURIComponent(cfg.interval)}&range=${encodeURIComponent(
-    cfg.range
-  )}&includePrePost=true`;
+  )}?interval=5m&range=5d`;
 
-  const [res, cashBasis] = await Promise.all([
-    fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-        Accept: 'application/json',
-      },
-      signal: AbortSignal.timeout(8000),
-    }),
-    getLiveCashBasis(),
-  ]);
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(8000),
+  });
 
   if (!res.ok) {
-    throw new Error(`Market feed ${timeframe} HTTP ${res.status}`);
+    throw new Error(`Market feed HTTP ${res.status}`);
   }
 
   const json = (await res.json()) as any;
   const result = json?.chart?.result?.[0];
-  const metaPrice = Number(result?.meta?.regularMarketPrice) - cashBasis;
+  const meta = result?.meta || {};
   const timestamps: number[] = result?.timestamp || [];
   const quote = result?.indicators?.quote?.[0] || {};
   const opens: Array<number | null> = quote.open || [];
@@ -1321,10 +1240,10 @@ async function fetchYahooAo(
     const c = closes[i];
     if (o == null || h == null || l == null || c == null) continue;
     const dt = new Date(timestamps[i] * 1000);
-    const open = roundTo(o - cashBasis, mapping.digits);
-    const high = roundTo(h - cashBasis, mapping.digits);
-    const low = roundTo(l - cashBasis, mapping.digits);
-    const close = roundTo(c - cashBasis, mapping.digits);
+    const open = roundTo(o, mapping.digits);
+    const high = roundTo(h, mapping.digits);
+    const low = roundTo(l, mapping.digits);
+    const close = roundTo(c, mapping.digits);
     cleaned.push({
       index: cleaned.length,
       timeLabel: formatTimeLabel(dt),
@@ -1337,694 +1256,91 @@ async function fetchYahooAo(
     });
   }
 
-  if (cleaned.length > 0 && Number.isFinite(metaPrice) && metaPrice > 0) {
-    const last = cleaned[cleaned.length - 1];
-    const ageMin = (Date.now() - new Date(last.timestampIso).getTime()) / 60000;
-    if (ageMin <= cfg.maxAgeMinutes) {
-      const liveClose = roundTo(metaPrice, mapping.digits);
-      last.close = liveClose;
-      last.high = Math.max(last.high, liveClose);
-      last.low = Math.min(last.low, liveClose);
-      last.median = (last.high + last.low) / 2;
+  // Merge latest regularMarketPrice tick onto the forming candle for sub-2s real-time responsiveness
+  const liveQuotePrice = Number(meta?.regularMarketPrice);
+  if (cleaned.length > 0 && Number.isFinite(liveQuotePrice) && liveQuotePrice > 0) {
+    const lastBar = cleaned[cleaned.length - 1];
+    const liveRounded = roundTo(liveQuotePrice, mapping.digits);
+    lastBar.close = liveRounded;
+    if (liveRounded > lastBar.high) lastBar.high = liveRounded;
+    if (liveRounded < lastBar.low) lastBar.low = liveRounded;
+    lastBar.median = (lastBar.high + lastBar.low) / 2;
+    const liveMarketTimeSec = Number(meta?.regularMarketTime);
+    if (Number.isFinite(liveMarketTimeSec) && liveMarketTimeSec > 0) {
+      const liveDt = new Date(liveMarketTimeSec * 1000);
+      if (liveDt.getTime() >= new Date(lastBar.timestampIso).getTime()) {
+        lastBar.timestampIso = liveDt.toISOString();
+        lastBar.timeLabel = formatTimeLabel(liveDt);
+      }
     }
   }
 
-  const warmupSlice = cleaned.slice(-180).map((b, idx) => ({ ...b, index: idx }));
+  const warmupSlice = cleaned.slice(-260).map((b, idx) => ({ ...b, index: idx }));
   if (warmupSlice.length < 36) {
-    throw new Error(`ข้อมูล ${timeframe} ไม่เพียงพอสำหรับคำนวณ AO`);
+    throw new Error('ข้อมูล M5 ไม่เพียงพอสำหรับคำนวณ AO');
   }
 
   const bars = computeAwesomeOscillator(warmupSlice)
-    .slice(-90)
+    .slice(-180)
     .map((b, idx) => ({ ...b, index: idx }));
 
   const latestBarTs = new Date(bars[bars.length - 1].timestampIso).getTime();
   const ageMinutes = (Date.now() - latestBarTs) / 60000;
-  const marketState = ageMinutes <= cfg.maxAgeMinutes ? 'LIVE' : 'MARKET CLOSED';
+  const marketState = ageMinutes <= 20 ? 'LIVE' : 'MARKET CLOSED';
 
   return {
     symbol,
-    source: `XM US100Cash# ${timeframe}`,
+    source: `Fallback (${mapping.ticker})`,
     marketState,
     fetchedAt: new Date().toISOString(),
     bars,
   };
-}
-
-async function getLiveAoFeed(
-  symbol: TradingSymbol,
-  timeframe: AoTimeframe = 'M5'
-): Promise<MarketFeedResult> {
-  const cacheKey = `${symbol}:${timeframe}`;
-  const cached = feedCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.data;
-  }
-
-  const data = await fetchYahooAo(symbol, timeframe);
-
-  feedCache.set(cacheKey, {
-    expiresAt: Date.now() + YAHOO_AO_PARAMS[timeframe].cacheMs,
-    data,
-  });
-  return data;
 }
 
 async function getLiveM5Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
-  return getLiveAoFeed(symbol, 'M5');
-}
-
-function detectCisdServer(
-  rawBars: Array<{
-    index: number;
-    timeLabel: string;
-    timestampIso: string;
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-  }>
-): {
-  bars: M15CisdCandle[];
-  segments: M15CisdSegment[];
-  latestBearCisdLevel: number | null;
-  latestBullCisdLevel: number | null;
-  currentTrend: 'BUY' | 'SELL' | null;
-  lastSignalInfo: LastCisdSignalInfo | null;
-} {
-  const n = rawBars.length;
-  if (n === 0) {
+  // Priority 1: Direct XM MT5 Bridge data pushed from user's MT5 terminal (within 15s)
+  if (xmMt5Bridge.bars.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000) {
+    const bars = computeAwesomeOscillator(xmMt5Bridge.bars.slice(-260))
+      .slice(-180)
+      .map((b, idx) => ({ ...b, index: idx }));
     return {
-      bars: [],
-      segments: [],
-      latestBearCisdLevel: null,
-      latestBullCisdLevel: null,
-      currentTrend: null,
-      lastSignalInfo: null,
+      symbol,
+      source: `XM MT5 Live (${xmMt5Bridge.symbolName})`,
+      marketState: 'LIVE',
+      fetchedAt: new Date().toISOString(),
+      lastTickAt: new Date(xmMt5Bridge.updatedAtMs).toISOString(),
+      bid: xmMt5Bridge.bid,
+      ask: xmMt5Bridge.ask,
+      bars,
     };
   }
 
-  const bodies = rawBars.map((b) => Math.abs(b.close - b.open));
-  const bars: M15CisdCandle[] = [];
-  const segments: M15CisdSegment[] = [];
-
-  let bullLeg: {
-    originIndex: number;
-    originTimeLabel: string;
-    open: number;
-    extremeHigh: number;
-    extremeLow: number;
-    candles: number;
-    bodySum: number;
-  } | null = null;
-  let bearLeg: {
-    originIndex: number;
-    originTimeLabel: string;
-    open: number;
-    extremeHigh: number;
-    extremeLow: number;
-    candles: number;
-    bodySum: number;
-  } | null = null;
-
-  let activeBearCisd: {
-    level: number;
-    triggered: boolean;
-    segmentIndex: number;
-  } | null = null;
-  let activeBullCisd: {
-    level: number;
-    triggered: boolean;
-    segmentIndex: number;
-  } | null = null;
-  let currentTrend: 'BUY' | 'SELL' | null = null;
-
-  const avgBodyAt = (idx: number): number => {
-    const start = Math.max(0, idx - 14);
-    let sum = 0;
-    let count = 0;
-    for (let k = start; k < idx; k++) {
-      sum += bodies[k];
-      count++;
-    }
-    return count > 0 ? sum / count : bodies[idx] || 1;
-  };
-
-  const recentHighBefore = (idx: number): number => {
-    const start = Math.max(0, idx - 4);
-    let maxH = -Infinity;
-    for (let k = start; k < idx; k++) {
-      if (rawBars[k].high > maxH) maxH = rawBars[k].high;
-    }
-    return maxH;
-  };
-
-  const recentLowBefore = (idx: number): number => {
-    const start = Math.max(0, idx - 4);
-    let minL = Infinity;
-    for (let k = start; k < idx; k++) {
-      if (rawBars[k].low < minL) minL = rawBars[k].low;
-    }
-    return minL;
-  };
-
-  for (let i = 0; i < n; i++) {
-    const bar = rawBars[i];
-    if (i === n - 1) {
-      bars.push({
-        ...bar,
-        index: i,
-        cisdSignal: null,
-        cisdLevel: null,
-        closedBelowCisd: false,
-        closedAboveCisd: false,
-        activeBearCisdLevel:
-          currentTrend !== 'SELL' && activeBearCisd && !activeBearCisd.triggered
-            ? activeBearCisd.level
-            : null,
-        activeBullCisdLevel:
-          currentTrend !== 'BUY' && activeBullCisd && !activeBullCisd.triggered
-            ? activeBullCisd.level
-            : null,
-      });
-      continue;
-    }
-
-    const isBull = bar.close > bar.open;
-    const isBear = bar.close < bar.open;
-    const body = Math.abs(bar.close - bar.open);
-    const avgBody = avgBodyAt(i);
-
-    if (isBear && bullLeg) {
-      const isValidLeg =
-        bullLeg.candles >= 2 ||
-        bullLeg.extremeHigh >= recentHighBefore(bullLeg.originIndex) ||
-        bullLeg.bodySum >= avgBody * 0.45;
-      if (isValidLeg) {
-        const segIdx = segments.length;
-        segments.push({
-          id: `bear-cisd-${bullLeg.originIndex}-${bar.index}`,
-          kind: 'bearish_break',
-          level: bullLeg.open,
-          originIndex: bullLeg.originIndex,
-          originTimeLabel: bullLeg.originTimeLabel,
-          endIndex: i,
-          triggeredIndex: null,
-          triggeredDirection: null,
-        });
-        activeBearCisd = { level: bullLeg.open, triggered: false, segmentIndex: segIdx };
-      }
-      bullLeg = null;
-    }
-
-    if (isBull && bearLeg) {
-      const isValidLeg =
-        bearLeg.candles >= 2 ||
-        bearLeg.extremeLow <= recentLowBefore(bearLeg.originIndex) ||
-        bearLeg.bodySum >= avgBody * 0.45;
-      if (isValidLeg) {
-        const segIdx = segments.length;
-        segments.push({
-          id: `bull-cisd-${bearLeg.originIndex}-${bar.index}`,
-          kind: 'bullish_break',
-          level: bearLeg.open,
-          originIndex: bearLeg.originIndex,
-          originTimeLabel: bearLeg.originTimeLabel,
-          endIndex: i,
-          triggeredIndex: null,
-          triggeredDirection: null,
-        });
-        activeBullCisd = { level: bearLeg.open, triggered: false, segmentIndex: segIdx };
-      }
-      bearLeg = null;
-    }
-
-    if (isBull) {
-      if (!bullLeg) {
-        bullLeg = {
-          originIndex: i,
-          originTimeLabel: bar.timeLabel,
-          open: bar.open,
-          extremeHigh: bar.high,
-          extremeLow: bar.low,
-          candles: 1,
-          bodySum: body,
-        };
-      } else {
-        bullLeg.candles += 1;
-        bullLeg.bodySum += body;
-        bullLeg.extremeHigh = Math.max(bullLeg.extremeHigh, bar.high);
-        bullLeg.extremeLow = Math.min(bullLeg.extremeLow, bar.low);
-      }
-    } else if (isBear) {
-      if (!bearLeg) {
-        bearLeg = {
-          originIndex: i,
-          originTimeLabel: bar.timeLabel,
-          open: bar.open,
-          extremeHigh: bar.high,
-          extremeLow: bar.low,
-          candles: 1,
-          bodySum: body,
-        };
-      } else {
-        bearLeg.candles += 1;
-        bearLeg.bodySum += body;
-        bearLeg.extremeHigh = Math.max(bearLeg.extremeHigh, bar.high);
-        bearLeg.extremeLow = Math.min(bearLeg.extremeLow, bar.low);
-      }
-    }
-
-    let cisdSignal: 'BUY' | 'SELL' | null = null;
-    let cisdLevel: number | null = null;
-    let closedBelowCisd = false;
-    let closedAboveCisd = false;
-
-    const bearBreached =
-      activeBearCisd && !activeBearCisd.triggered && bar.close < activeBearCisd.level;
-    const bullBreached =
-      activeBullCisd && !activeBullCisd.triggered && bar.close > activeBullCisd.level;
-
-    if (activeBearCisd && !activeBearCisd.triggered) {
-      segments[activeBearCisd.segmentIndex].endIndex = i;
-      if (bearBreached) {
-        activeBearCisd.triggered = true;
-        if (currentTrend !== 'SELL') {
-          currentTrend = 'SELL';
-          segments[activeBearCisd.segmentIndex].triggeredIndex = i;
-          segments[activeBearCisd.segmentIndex].triggeredDirection = 'SELL';
-          segments[activeBearCisd.segmentIndex].endIndex = i;
-          closedBelowCisd = true;
-          cisdSignal = 'SELL';
-          cisdLevel = activeBearCisd.level;
-        }
-      }
-    }
-
-    if (activeBullCisd && !activeBullCisd.triggered) {
-      segments[activeBullCisd.segmentIndex].endIndex = i;
-      if (bullBreached) {
-        activeBullCisd.triggered = true;
-        if (currentTrend !== 'BUY') {
-          currentTrend = 'BUY';
-          segments[activeBullCisd.segmentIndex].triggeredIndex = i;
-          segments[activeBullCisd.segmentIndex].triggeredDirection = 'BUY';
-          segments[activeBullCisd.segmentIndex].endIndex = i;
-          closedAboveCisd = true;
-          if (!cisdSignal || isBull) {
-            cisdSignal = 'BUY';
-            cisdLevel = activeBullCisd.level;
-          }
-        }
-      }
-    }
-
-    bars.push({
-      ...bar,
-      index: i,
-      cisdSignal,
-      cisdLevel,
-      closedBelowCisd,
-      closedAboveCisd,
-      activeBearCisdLevel:
-        currentTrend !== 'SELL' && activeBearCisd && !activeBearCisd.triggered
-          ? activeBearCisd.level
-          : null,
-      activeBullCisdLevel:
-        currentTrend !== 'BUY' && activeBullCisd && !activeBullCisd.triggered
-          ? activeBullCisd.level
-          : null,
-    });
-  }
-
-  let lastSignalInfo: LastCisdSignalInfo | null = null;
-  for (let k = bars.length - 1; k >= 0; k--) {
-    const b = bars[k];
-    if (b.cisdSignal && b.cisdLevel !== null) {
-      lastSignalInfo = {
-        signal: b.cisdSignal,
-        level: b.cisdLevel,
-        price: b.close,
-        timeLabel: b.timeLabel,
-        timestampIso: b.timestampIso,
-      };
-      break;
+  // Priority 2: Wait briefly up to 1.8s on cold start for real-time CFD stream handshake
+  if (cfdStreamState.barsMap.size < 36) {
+    const deadline = Date.now() + 1800;
+    while (cfdStreamState.barsMap.size < 36 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 120));
     }
   }
 
-  const latestBar = bars[bars.length - 1];
-  return {
-    bars,
-    segments,
-    latestBearCisdLevel: latestBar?.activeBearCisdLevel ?? null,
-    latestBullCisdLevel: latestBar?.activeBullCisdLevel ?? null,
-    currentTrend,
-    lastSignalInfo,
-  };
-}
-
-const YAHOO_CISD_PARAMS: Record<
-  CisdTimeframe,
-  {
-    interval: string;
-    range: string;
-    bucketMinutes: number;
-    xmBucketHours?: number;
-    maxAgeMinutes: number;
-    cacheMs: number;
-  }
-> = {
-  M30: { interval: '30m', range: '1mo', bucketMinutes: 30, maxAgeMinutes: 90, cacheMs: 4000 },
-  M15: { interval: '15m', range: '15d', bucketMinutes: 15, maxAgeMinutes: 45, cacheMs: 3000 },
-};
-
-function formatCisdTimeLabel(date: Date, _timeframe: CisdTimeframe): string {
-  return formatTimeLabel(date);
-}
-
-async function fetchYahooCisd(
-  symbol: TradingSymbol,
-  timeframe: CisdTimeframe = 'M15'
-): Promise<M15MarketFeedResult> {
-  const mapping = YAHOO_SYMBOL_MAP[symbol];
-  const tfCfg = YAHOO_CISD_PARAMS[timeframe];
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-    mapping.ticker
-  )}?interval=${encodeURIComponent(tfCfg.interval)}&range=${encodeURIComponent(
-    tfCfg.range
-  )}&includePrePost=true`;
-
-  const calibration = await getLiveMarketCalibration();
-  const { cashBasis, qqqRatio } = calibration;
-
-  const [res, tailData] = await Promise.all([
-    fetch(url, {
-      headers: YAHOO_HEADERS,
-      cache: 'no-store',
-      signal: AbortSignal.timeout(8000),
-    }),
-    symbol === 'US100'
-      ? fetchRealtimeTailData(qqqRatio)
-      : Promise.resolve<RealtimeTailData>({ bars: [], liveMeta: null }),
-  ]);
-
-  if (!res.ok) {
-    throw new Error(`Market feed ${timeframe} HTTP ${res.status}`);
+  const cfdFeed = buildCfdMarketFeed(symbol);
+  if (cfdFeed) {
+    return cfdFeed;
   }
 
-  const json = (await res.json()) as any;
-  const result = json?.chart?.result?.[0];
-  const rawNqMetaPrice = Number(result?.meta?.regularMarketPrice);
-  const rawNqMetaTime = Number(result?.meta?.regularMarketTime);
-  const nqMetaPrice =
-    Number.isFinite(rawNqMetaPrice) && rawNqMetaPrice > 0 ? rawNqMetaPrice - cashBasis : NaN;
-  const nqMetaTimeSec =
-    Number.isFinite(rawNqMetaTime) && rawNqMetaTime > 0 ? Math.floor(rawNqMetaTime) : 0;
-  const timestamps: number[] = result?.timestamp || [];
-  const quote = result?.indicators?.quote?.[0] || {};
-  const opens: Array<number | null> = quote.open || [];
-  const highs: Array<number | null> = quote.high || [];
-  const lows: Array<number | null> = quote.low || [];
-  const closes: Array<number | null> = quote.close || [];
-
-  // Bucket ALL M30 (1800s) & M15 (900s) timestamps cleanly onto XM MT5 server grid so Yahoo's
-  // unaligned trailing regularMarketTime point folds into the currently forming bar instead of
-  // shifting the forming bar to bars[n-2] and dropping newly closed candles to bars[n-3].
-  const bucketSec = tfCfg.xmBucketHours
-    ? tfCfg.xmBucketHours * 3600
-    : tfCfg.bucketMinutes * 60;
-  const buckets = new Map<
-    number,
-    {
-      utcTs: number;
-      xmTs: number;
-      open: number;
-      high: number;
-      low: number;
-      close: number;
-    }
-  >();
-
-  let lastNqBucketXmTs = 0;
-  let lastNqBucketUtcTs = 0;
-  let lastNqRawTs = 0;
-
-  for (let i = 0; i < timestamps.length; i++) {
-    const o = opens[i];
-    const h = highs[i];
-    const l = lows[i];
-    const c = closes[i];
-    if (o == null || h == null || l == null || c == null) continue;
-    const xmOffsetSec = getXmServerOffsetSeconds(timestamps[i]);
-    const xmTs = timestamps[i] + xmOffsetSec;
-    const bucketXmTs = Math.floor(xmTs / bucketSec) * bucketSec;
-    const bucketUtcTs = bucketXmTs - xmOffsetSec;
-    if (bucketXmTs > lastNqBucketXmTs) {
-      lastNqBucketXmTs = bucketXmTs;
-      lastNqBucketUtcTs = bucketUtcTs;
-    }
-    if (timestamps[i] > lastNqRawTs) {
-      lastNqRawTs = timestamps[i];
-    }
-    const existing = buckets.get(bucketXmTs);
-    if (!existing) {
-      buckets.set(bucketXmTs, {
-        utcTs: bucketUtcTs,
-        xmTs: bucketXmTs,
-        open: o - cashBasis,
-        high: h - cashBasis,
-        low: l - cashBasis,
-        close: c - cashBasis,
-      });
-    } else {
-      existing.high = Math.max(existing.high, h - cashBasis);
-      existing.low = Math.min(existing.low, l - cashBasis);
-      existing.close = c - cashBasis;
-    }
-  }
-
-  // Stitch zero-delay 1m ^NDX (1:1 exact cash) and QQQ * ratio bars to eliminate Yahoo's
-  // ~10-minute exchange delay on NQ=F CME futures so candle closes match MT5 immediately.
-  if (tailData.bars.length > 0 && lastNqBucketXmTs > 0) {
-    const nqLatestEffectiveTs = Math.max(lastNqRawTs, nqMetaTimeSec);
-    const nqTailCutoffTs =
-      nqLatestEffectiveTs >= lastNqBucketUtcTs && nqLatestEffectiveTs < lastNqBucketUtcTs + bucketSec
-        ? nqLatestEffectiveTs
-        : lastNqBucketUtcTs;
-
-    for (const bar of tailData.bars) {
-      const xmOffsetSec = getXmServerOffsetSeconds(bar.ts);
-      const xmTs = bar.ts + xmOffsetSec;
-      const bucketXmTs = Math.floor(xmTs / bucketSec) * bucketSec;
-      if (bucketXmTs < lastNqBucketXmTs) continue;
-      const bucketUtcTs = bucketXmTs - xmOffsetSec;
-      const existing = buckets.get(bucketXmTs);
-      if (!existing) {
-        buckets.set(bucketXmTs, {
-          utcTs: bucketUtcTs,
-          xmTs: bucketXmTs,
-          open: bar.o,
-          high: bar.h,
-          low: bar.l,
-          close: bar.c,
-        });
-      } else {
-        existing.high = Math.max(existing.high, bar.h);
-        existing.low = Math.min(existing.low, bar.l);
-        if (bucketXmTs > lastNqBucketXmTs || bar.ts + 60 >= nqTailCutoffTs || bar.isExact) {
-          existing.close = bar.c;
-        }
-      }
-    }
-  }
-
-  const sortedBuckets = [...buckets.values()].sort((a, b) => a.xmTs - b.xmTs);
-
-  const chosenMetaPrice = tailData.liveMeta ? tailData.liveMeta.price : nqMetaPrice;
-  const chosenMetaTimeSec = tailData.liveMeta ? tailData.liveMeta.timeSec : nqMetaTimeSec;
-
-  if (sortedBuckets.length > 0 && Number.isFinite(chosenMetaPrice) && chosenMetaPrice > 0) {
-    const lastBucket = sortedBuckets[sortedBuckets.length - 1];
-    const nowSec = Math.floor(Date.now() / 1000);
-    if (chosenMetaTimeSec > 0) {
-      const metaXmOffsetSec = getXmServerOffsetSeconds(chosenMetaTimeSec);
-      const metaXmTs = chosenMetaTimeSec + metaXmOffsetSec;
-      const metaBucketXmTs = Math.floor(metaXmTs / bucketSec) * bucketSec;
-      const metaBucketUtcTs = metaBucketXmTs - metaXmOffsetSec;
-      const isLiveMeta = nowSec - chosenMetaTimeSec <= 180;
-
-      if (metaBucketXmTs === lastBucket.xmTs && isLiveMeta) {
-        lastBucket.close = chosenMetaPrice;
-        lastBucket.high = Math.max(lastBucket.high, chosenMetaPrice);
-        lastBucket.low = Math.min(lastBucket.low, chosenMetaPrice);
-      } else if (metaBucketXmTs === lastBucket.xmTs + bucketSec && isLiveMeta) {
-        // Candle boundary just rolled over; open the new forming bar cleanly so the
-        // just-closed bar immediately sits at bars[n-2] for zero-delay CISD detection.
-        sortedBuckets.push({
-          utcTs: metaBucketUtcTs,
-          xmTs: metaBucketXmTs,
-          open: lastBucket.close,
-          high: Math.max(lastBucket.close, chosenMetaPrice),
-          low: Math.min(lastBucket.close, chosenMetaPrice),
-          close: chosenMetaPrice,
-        });
-      }
-    } else {
-      const ageMin = (Date.now() - lastBucket.utcTs * 1000) / 60000;
-      if (ageMin <= tfCfg.maxAgeMinutes) {
-        lastBucket.close = chosenMetaPrice;
-        lastBucket.high = Math.max(lastBucket.high, chosenMetaPrice);
-        lastBucket.low = Math.min(lastBucket.low, chosenMetaPrice);
-      }
-    }
-  }
-
-  const cleaned = sortedBuckets.map((b, idx) => {
-    const dt = new Date(b.utcTs * 1000);
-    return {
-      index: idx,
-      timeLabel: formatCisdTimeLabel(dt, timeframe),
-      timestampIso: dt.toISOString(),
-      open: roundTo(b.open, mapping.digits),
-      high: roundTo(b.high, mapping.digits),
-      low: roundTo(b.low, mapping.digits),
-      close: roundTo(b.close, mapping.digits),
-    };
-  });
-
-  const recentSlice = cleaned.slice(-110).map((b, idx) => ({ ...b, index: idx }));
-  if (recentSlice.length < 15) {
-    throw new Error(`ข้อมูล ${timeframe} ไม่เพียงพอสำหรับตรวจจับระดับ CISD`);
-  }
-
-  const detected = detectCisdServer(recentSlice);
-  const latestBarTs = new Date(
-    detected.bars[detected.bars.length - 1].timestampIso
-  ).getTime();
-  const ageMinutes = (Date.now() - latestBarTs) / 60000;
-  const marketState = ageMinutes <= tfCfg.maxAgeMinutes ? 'LIVE' : 'MARKET CLOSED';
-
-  return {
-    symbol,
-    timeframe,
-    source: `XM US100Cash# ${timeframe}`,
-    marketState,
-    fetchedAt: new Date().toISOString(),
-    bars: detected.bars,
-    segments: detected.segments,
-    latestBearCisdLevel: detected.latestBearCisdLevel,
-    latestBullCisdLevel: detected.latestBullCisdLevel,
-    currentTrend: detected.currentTrend,
-    lastSignalInfo: detected.lastSignalInfo,
-  };
-}
-
-async function getLiveCisdFeed(
-  symbol: TradingSymbol,
-  timeframe: CisdTimeframe = 'M15',
-  forceFresh = false
-): Promise<M15MarketFeedResult> {
-  const cacheKey = `${symbol}:${timeframe}`;
-  const bucketMs = YAHOO_CISD_PARAMS[timeframe].bucketMinutes * 60 * 1000;
-  const nowMs = Date.now();
-  const cached = cisdFeedCache.get(cacheKey);
-  if (
-    !forceFresh &&
-    cached &&
-    cached.expiresAt > nowMs &&
-    Math.floor(cached.fetchedAtMs / bucketMs) === Math.floor(nowMs / bucketMs)
-  ) {
-    return cached.data;
-  }
-
-  const data = await fetchYahooCisd(symbol, timeframe);
-  const fetchedAtMs = Date.now();
-  cisdFeedCache.set(cacheKey, {
-    expiresAt: fetchedAtMs + YAHOO_CISD_PARAMS[timeframe].cacheMs,
-    fetchedAtMs,
-    data,
-  });
-  return data;
-}
-
-async function getLiveM15Feed(symbol: TradingSymbol): Promise<M15MarketFeedResult> {
-  return getLiveCisdFeed(symbol, 'M15');
-}
-
-async function getLiveTick(symbol: TradingSymbol): Promise<MarketTickResult> {
-  const cached = tickCache.get(symbol);
+  // Priority 3: Fallback to Yahoo feed (1.5s cache)
+  const cached = feedCache.get(symbol);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.data;
   }
 
-  const mapping = YAHOO_SYMBOL_MAP[symbol];
-  const { cashBasis, qqqRatio } = await getLiveMarketCalibration();
+  const data = await fetchYahooM5(symbol);
 
-  if (symbol === 'US100') {
-    const tailData = await fetchRealtimeTailData(qqqRatio);
-    if (tailData.liveMeta) {
-      const tickData: MarketTickResult = {
-        symbol,
-        price: roundTo(tailData.liveMeta.price, mapping.digits),
-        marketState: 'LIVE',
-        fetchedAt: new Date().toISOString(),
-      };
-      tickCache.set(symbol, {
-        expiresAt: Date.now() + 2000,
-        data: tickData,
-      });
-      return tickData;
-    }
-  }
-
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-    mapping.ticker
-  )}?interval=1m&range=1d&includePrePost=true`;
-
-  const res = await fetch(url, {
-    headers: YAHOO_HEADERS,
-    signal: AbortSignal.timeout(5000),
+  feedCache.set(symbol, {
+    expiresAt: Date.now() + 1500,
+    data,
   });
-
-  if (!res.ok) {
-    throw new Error(`Tick feed HTTP ${res.status}`);
-  }
-
-  const json = (await res.json()) as any;
-  const result = json?.chart?.result?.[0];
-  const meta = result?.meta || {};
-  const timestamps: number[] = result?.timestamp || [];
-  const closes: Array<number | null> = result?.indicators?.quote?.[0]?.close || [];
-
-  let lastBarClose: number | null = null;
-  for (let i = closes.length - 1; i >= 0; i--) {
-    if (closes[i] != null) {
-      lastBarClose = Number(closes[i]);
-      break;
-    }
-  }
-
-  const rawPrice = Number(meta.regularMarketPrice ?? lastBarClose ?? 0) - cashBasis;
-  if (!Number.isFinite(rawPrice) || rawPrice <= 0) {
-    throw new Error('ไม่มีราคาล่าสุดจากตลาดจริง');
-  }
-
-  const latestTs = timestamps.length > 0 ? timestamps[timestamps.length - 1] * 1000 : Date.now();
-  const ageMin = (Date.now() - latestTs) / 60000;
-  const marketState = ageMin <= 20 ? 'LIVE' : 'MARKET CLOSED';
-
-  const tickData: MarketTickResult = {
-    symbol,
-    price: roundTo(rawPrice, mapping.digits),
-    marketState,
-    fetchedAt: new Date().toISOString(),
-  };
-
-  tickCache.set(symbol, {
-    expiresAt: Date.now() + 2000,
-    data: tickData,
-  });
-  return tickData;
+  return data;
 }
 
 async function sendNtfyPush(topicOrUrl: string, title: string, body: string): Promise<boolean> {
@@ -2067,16 +1383,15 @@ function escapeTelegramHtml(text: string): string {
 function formatTelegramSignalMessage(params: {
   symbol: string;
   timeframe: string;
-  strategy?: 'AO' | 'CISD';
   signal: 'BUY' | 'SELL';
   aoPrev: number;
   aoCurr: number;
-  price?: number;
-  cisdLevel?: number | null;
   mode: 'live' | 'sim';
   timestampIso?: string;
 }): string {
   const badge = params.signal === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+  const condition =
+    params.signal === 'BUY' ? 'AO ตัดเส้น 0 ขึ้น 🟢⬆️' : 'AO ตัดเส้น 0 ลง 🔴⬇️';
   const modeLabel = params.mode === 'live' ? 'กราฟจริง' : 'แบบจำลอง';
   const timeDate = params.timestampIso ? new Date(params.timestampIso) : new Date();
   const timeText = timeDate.toLocaleTimeString('th-TH', {
@@ -2086,46 +1401,11 @@ function formatTelegramSignalMessage(params: {
     timeZone: 'Asia/Bangkok',
   });
 
-  if (params.strategy === 'CISD') {
-    const condition =
-      params.signal === 'SELL'
-        ? 'ราคาปิดต่ำกว่าระดับ CISD 🔴⬇️'
-        : 'ราคาปิดเหนือระดับ CISD 🟢⬆️';
-    const priceText =
-      typeof params.price === 'number' && Number.isFinite(params.price)
-        ? params.price.toFixed(2)
-        : '-';
-    const cisdText =
-      typeof params.cisdLevel === 'number' && Number.isFinite(params.cisdLevel)
-        ? params.cisdLevel.toFixed(2)
-        : '-';
-
-    return [
-      `<b>${badge} · CISD  |  ${escapeTelegramHtml(params.symbol)} (${escapeTelegramHtml(params.timeframe)})</b>`,
-      '──────────────',
-      `เงื่อนไข: ${condition}`,
-      `ราคาปิดแท่ง: ${priceText}`,
-      `ระดับ CISD: ${cisdText}`,
-      `โหมด: ${modeLabel}`,
-      `เวลาปิดแท่ง: ${timeText} น.`,
-    ].join('\n');
-  }
-
-  const condition =
-    params.signal === 'BUY'
-      ? '⚡ AO ตัดเส้น 0 ขึ้น ทันที 🟢⬆️'
-      : '⚡ AO ตัดเส้น 0 ลง ทันที 🔴⬇️';
-  const priceLine =
-    typeof params.price === 'number' && Number.isFinite(params.price) && params.price > 0
-      ? `ราคาปัจจุบัน: ${params.price.toFixed(2)}`
-      : null;
-
   return [
     `<b>${badge}  ·  ${escapeTelegramHtml(params.symbol)} (${escapeTelegramHtml(params.timeframe)})</b>`,
     '──────────────',
     `เงื่อนไข: ${condition}`,
     `ค่า AO: ${formatSignedAo(params.aoPrev)} → ${formatSignedAo(params.aoCurr)}`,
-    ...(priceLine ? [priceLine] : []),
     `โหมด: ${modeLabel}`,
     `เวลา: ${timeText} น.`,
   ].join('\n');
@@ -2178,7 +1458,7 @@ async function sendTelegramPush(
   parseMode?: 'HTML'
 ): Promise<{ ok: boolean; error?: string; botUrl?: string; botUsername?: string }> {
   const token = sanitizeTelegramToken(botToken);
-  const chat = chatId.trim();
+  const chat = normalizeTelegramChatId(chatId);
   if (!token || !chat) {
     return { ok: false, error: 'กรุณากรอก Bot Token และ Chat ID ของ Telegram' };
   }
@@ -2285,235 +1565,115 @@ async function broadcastWebPush(payload: {
 }
 
 async function runBackgroundMonitorCycle() {
-  if ((!persisted.enabled && !persisted.m15Enabled) || monitorRuntime.isRunningCycle) return;
+  if (!persisted.enabled || monitorRuntime.isRunningCycle) return;
   monitorRuntime.isRunningCycle = true;
   monitorRuntime.lastCheckedMs = Date.now();
   monitorRuntime.lastCheckedAt = new Date().toISOString();
 
   try {
     for (const sym of persisted.symbols) {
-      if (persisted.enabled) {
-        const aoTargets: AoTimeframe[] = ['M5'];
+      try {
+        const feed = await getLiveM5Feed(sym);
+        const bars = feed.bars;
+        if (bars.length < 4) continue;
 
-        for (const aoTf of aoTargets) {
-          try {
-            const feed = await getLiveAoFeed(sym, aoTf);
-            const bars = feed.bars;
-            if (bars.length >= 3) {
-              const maxAge = YAHOO_AO_PARAMS[aoTf].maxAgeMinutes;
-              // Check running forming bar [0] immediately if aoImmediateCross is true, plus closed bar [1] fallback
-              const candidatePairs: Array<{ curr: M5Candle; prev: M5Candle }> = [];
-              if (persisted.aoImmediateCross) {
-                candidatePairs.push({
-                  curr: bars[bars.length - 1],
-                  prev: bars[bars.length - 2],
-                });
-              }
-              candidatePairs.push({
-                curr: bars[bars.length - 2],
-                prev: bars[bars.length - 3],
-              });
+        // Confirmed closed M5 bar [1] vs previous closed bar [2] (AO[2] <= 0 -> AO[1] > 0 or AO[2] >= 0 -> AO[1] < 0)
+        const closedBar = bars[bars.length - 2];
+        const prevClosedBar = bars[bars.length - 3];
+        if (!closedBar || !prevClosedBar) continue;
 
-              for (const { curr, prev } of candidatePairs) {
-                if (!curr || !prev || !curr.signal) continue;
-                const barAgeMinutes =
-                  (Date.now() - new Date(curr.timestampIso).getTime()) / 60000;
-                const dirMatch =
-                  persisted.direction === 'both' ||
-                  (persisted.direction === 'buy_only' && curr.signal === 'BUY') ||
-                  (persisted.direction === 'sell_only' && curr.signal === 'SELL');
+        const closedBarOpenMs = Date.parse(closedBar.timestampIso);
+        if (!Number.isFinite(closedBarOpenMs)) continue;
+        const closedBucketMs = Math.floor(closedBarOpenMs / 300000) * 300000;
 
-                if (barAgeMinutes > maxAge || !dirMatch) continue;
-
-                const dedupeKey = `live-${aoTf}-AO-${sym}-${curr.timestampIso}-${curr.signal}`;
-                if (monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)) continue;
-                markLiveSignalDispatched(dedupeKey);
-
-                const title = `AO ${aoTf} ${curr.signal}: ${sym}`;
-                const body = `${sym} ${aoTf} ${curr.signal} | AO ${prev.ao.toFixed(
-                  3
-                )} → ${curr.ao.toFixed(3)} | ราคา ${curr.close}`;
-
-                const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
-                  broadcastWebPush({
-                    title,
-                    body,
-                    tag: `ao-${aoTf}-${sym}-${curr.timestampIso}-${curr.signal}`,
-                    url: '/',
-                  }),
-                  persisted.ntfyTopic
-                    ? sendNtfyPush(persisted.ntfyTopic, title, body)
-                    : Promise.resolve(false),
-                ]);
-
-                const shouldSendTelegram =
-                  Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
-                  (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
-
-                const tgRes = shouldSendTelegram
-                  ? await sendTelegramPush(
-                      persisted.telegramBotToken,
-                      persisted.telegramChatId,
-                      formatTelegramSignalMessage({
-                        symbol: sym,
-                        timeframe: aoTf,
-                        strategy: 'AO',
-                        signal: curr.signal,
-                        aoPrev: prev.ao,
-                        aoCurr: curr.ao,
-                        price: curr.close,
-                        mode: 'live',
-                        timestampIso: curr.timestampIso,
-                      }),
-                      'HTML'
-                    )
-                  : { ok: false };
-
-                persisted.events.unshift({
-                  id: `${aoTf}-${sym}-${curr.timestampIso}-${curr.signal}`,
-                  timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
-                  symbol: sym,
-                  timeframe: aoTf,
-                  strategy: 'AO',
-                  signal: curr.signal,
-                  aoPrev: prev.ao,
-                  aoCurr: curr.ao,
-                  price: curr.close,
-                  deliveredToNtfy,
-                  deliveredToTelegram: tgRes.ok,
-                  deliveredWebPushCount,
-                });
-                persisted.events = persisted.events.slice(0, 30);
-                syncPersistence();
-                scheduleGithubAutoSync('signal-event', 1000);
-              }
-            }
-          } catch {
-            // Keep polling remaining AO timeframes
-          }
+        // First observation after server startup: record baseline silently so past candles never fire retroactively
+        const prevBaselineMs = monitorRuntime.lastClosedBarBucketMsBySymbol[sym];
+        if (prevBaselineMs === undefined) {
+          monitorRuntime.lastClosedBarBucketMsBySymbol[sym] = closedBucketMs;
+          continue;
         }
-      }
 
-      if (persisted.m15Enabled) {
-        const cisdTargets =
-          persisted.cisdTimeframes.length > 0
-            ? persisted.cisdTimeframes
-            : CISD_TIMEFRAME_ORDER;
-
-        for (const cisdTf of cisdTargets) {
-          try {
-            const cisdFeed = await getLiveCisdFeed(sym, cisdTf);
-            const cisdBars = cisdFeed.bars;
-            if (cisdBars.length >= 4) {
-              const latestBarMs = new Date(
-                cisdBars[cisdBars.length - 1].timestampIso
-              ).getTime();
-              const maxAge = YAHOO_CISD_PARAMS[cisdTf].maxAgeMinutes;
-              // Check both the newly closed bar [n-2] and immediate prior closed bar [n-3]
-              // so brief polls/wake-ups never miss a freshly closed CISD candle break.
-              const candidateClosedBars = [
-                cisdBars[cisdBars.length - 2],
-                cisdBars[cisdBars.length - 3],
-              ];
-
-              for (const closedBar of candidateClosedBars) {
-                if (!closedBar || !closedBar.cisdSignal) continue;
-                const barMs = new Date(closedBar.timestampIso).getTime();
-                const feedRelMinutes = (latestBarMs - barMs) / 60000;
-                const wallAgeMinutes = (Date.now() - barMs) / 60000;
-                const dirMatch =
-                  persisted.m15Direction === 'both' ||
-                  (persisted.m15Direction === 'buy_only' && closedBar.cisdSignal === 'BUY') ||
-                  (persisted.m15Direction === 'sell_only' && closedBar.cisdSignal === 'SELL');
-
-                const eventId = `${cisdTf}-CISD-${sym}-${closedBar.timestampIso}-${closedBar.cisdSignal}`;
-                const legacyEventId = `${cisdTf}-${sym}-${closedBar.timestampIso}-${closedBar.cisdSignal}`;
-                const dedupeKey = `live-${eventId}`;
-                const alreadyRecorded = persisted.events.some(
-                  (e) => e.id === eventId || e.id === legacyEventId
-                );
-
-                if (
-                  feedRelMinutes <= maxAge &&
-                  wallAgeMinutes <= 360 &&
-                  dirMatch &&
-                  !alreadyRecorded &&
-                  !monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)
-                ) {
-                  markLiveSignalDispatched(dedupeKey);
-                  const condLabel =
-                    closedBar.cisdSignal === 'SELL'
-                      ? 'ปิดต่ำกว่าระดับ CISD'
-                      : 'ปิดเหนือระดับ CISD';
-                  const cisdTxt =
-                    closedBar.cisdLevel !== null ? closedBar.cisdLevel.toFixed(2) : '-';
-                  const title = `CISD ${cisdTf} ${closedBar.cisdSignal}: ${sym}`;
-                  const body = `${sym} ${cisdTf} ${condLabel} | ปิด ${closedBar.close.toFixed(
-                    2
-                  )} (CISD ${cisdTxt})`;
-
-                  const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
-                    broadcastWebPush({
-                      title,
-                      body,
-                      tag: `cisd-${cisdTf}-${sym}-${closedBar.timestampIso}-${closedBar.cisdSignal}`,
-                      url: `/?tf=${cisdTf}`,
-                    }),
-                    persisted.ntfyTopic
-                      ? sendNtfyPush(persisted.ntfyTopic, title, body)
-                      : Promise.resolve(false),
-                  ]);
-
-                  const shouldSendTelegram =
-                    Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
-                    (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
-
-                  const tgRes = shouldSendTelegram
-                    ? await sendTelegramPush(
-                        persisted.telegramBotToken,
-                        persisted.telegramChatId,
-                        formatTelegramSignalMessage({
-                          symbol: sym,
-                          timeframe: cisdTf,
-                          strategy: 'CISD',
-                          signal: closedBar.cisdSignal,
-                          aoPrev: 0,
-                          aoCurr: 0,
-                          price: closedBar.close,
-                          cisdLevel: closedBar.cisdLevel,
-                          mode: 'live',
-                          timestampIso: closedBar.timestampIso,
-                        }),
-                        'HTML'
-                      )
-                    : { ok: false, error: undefined };
-
-                  persisted.events.unshift({
-                    id: eventId,
-                    timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
-                    symbol: sym,
-                    timeframe: cisdTf,
-                    strategy: 'CISD',
-                    signal: closedBar.cisdSignal,
-                    aoPrev: 0,
-                    aoCurr: 0,
-                    cisdLevel: closedBar.cisdLevel,
-                    price: closedBar.close,
-                    deliveredToNtfy,
-                    deliveredToTelegram: tgRes.ok,
-                    deliveredWebPushCount,
-                    ...(tgRes.error ? { telegramError: tgRes.error } : {}),
-                  });
-                  persisted.events = persisted.events.slice(0, 30);
-                  syncPersistence();
-                  scheduleGithubAutoSync('signal-event', 1000);
-                }
-              }
-            }
-          } catch {
-            // Keep polling remaining CISD timeframes
-          }
+        // Only process when a brand-new M5 candle closes moving forward in time
+        if (closedBucketMs <= prevBaselineMs) {
+          continue;
         }
+        monitorRuntime.lastClosedBarBucketMsBySymbol[sym] = closedBucketMs;
+
+        // Must be freshly closed (within 90 seconds of the exact candle close boundary)
+        const closedBarCloseMs = closedBucketMs + 300000;
+        const secondsSinceClose = (Date.now() - closedBarCloseMs) / 1000;
+        if (secondsSinceClose < -5 || secondsSinceClose > 90) {
+          continue;
+        }
+
+        if (!closedBar.signal) continue;
+
+        const signal = closedBar.signal;
+        if (persisted.direction === 'buy_only' && signal !== 'BUY') continue;
+        if (persisted.direction === 'sell_only' && signal !== 'SELL') continue;
+
+        if (hasClosedBarBeenAlerted(sym, closedBar.timestampIso, signal)) {
+          continue;
+        }
+        // Lock synchronously before awaiting network calls so overlapping ticks can never duplicate
+        recordClosedBarAlerted(sym, closedBar.timestampIso, signal);
+        monitorRuntime.lastBarBySymbol[sym] = `${closedBar.timestampIso}:${signal}`;
+
+        const title = `AO M5 ${signal}: ${sym}`;
+        const body = `${sym} M5 ${signal} | AO ${prevClosedBar.ao.toFixed(
+          3
+        )} → ${closedBar.ao.toFixed(3)} | ราคา ${closedBar.close}`;
+
+        const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
+          broadcastWebPush({
+            title,
+            body,
+            tag: `ao-${sym}-${signal}-${Date.now()}`,
+            url: '/',
+          }),
+          persisted.ntfyTopic
+            ? sendNtfyPush(persisted.ntfyTopic, title, body)
+            : Promise.resolve(false),
+        ]);
+
+        const shouldSendTelegram =
+          Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
+          (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
+
+        const tgRes = shouldSendTelegram
+          ? await sendTelegramPush(
+              persisted.telegramBotToken,
+              persisted.telegramChatId,
+              formatTelegramSignalMessage({
+                symbol: sym,
+                timeframe: 'M5',
+                signal,
+                aoPrev: prevClosedBar.ao,
+                aoCurr: closedBar.ao,
+                mode: 'live',
+                timestampIso: closedBar.timestampIso,
+              }),
+              'HTML'
+            )
+          : { ok: false };
+
+        persisted.events.unshift({
+          id: `${sym}-${closedBar.timestampIso}-${signal}-${Date.now()}`,
+          timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+          symbol: sym,
+          signal,
+          aoPrev: prevClosedBar.ao,
+          aoCurr: closedBar.ao,
+          price: closedBar.close,
+          deliveredToNtfy,
+          deliveredToTelegram: tgRes.ok,
+          deliveredWebPushCount,
+        });
+        persisted.events = persisted.events.slice(0, 30);
+        syncPersistence();
+        scheduleGithubAutoSync('signal-event', 1000);
+      } catch {
+        // Keep polling remaining symbols
       }
     }
   } finally {
@@ -2523,7 +1683,7 @@ async function runBackgroundMonitorCycle() {
 
 setInterval(() => {
   void runBackgroundMonitorCycle();
-}, 5000);
+}, 2000);
 
 setTimeout(() => {
   void runBackgroundMonitorCycle();
@@ -2531,189 +1691,227 @@ setTimeout(() => {
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', async (_req, res) => {
-    if (
-      (persisted.enabled || persisted.m15Enabled) &&
-      Date.now() - monitorRuntime.lastCheckedMs > 20000
-    ) {
+    if (persisted.enabled && Date.now() - monitorRuntime.lastCheckedMs > 2000) {
       void runBackgroundMonitorCycle();
     }
     res.json({
       ok: true,
       monitorEnabled: persisted.enabled,
-      m15Enabled: persisted.m15Enabled,
       symbols: persisted.symbols,
       subscribersCount: persisted.subscriptions.length,
       lastCheckedAt: monitorRuntime.lastCheckedAt,
+      cfdStreamConnected: cfdStreamState.connected,
+      xmBridgeConnected:
+        xmMt5Bridge.bars.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000,
     });
   });
 
-  app.get('/api/market/tick', async (req, res) => {
-    const rawSymbol = String(req.query.symbol || 'US100').toUpperCase();
-    if (!(rawSymbol in YAHOO_SYMBOL_MAP)) {
-      res.status(400).json({ error: 'ไม่รองรับสินทรัพย์นี้' });
+  app.get('/api/mt5/status', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    const xmConnected =
+      xmMt5Bridge.bars.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000;
+    res.json({
+      xmBridgeConnected: xmConnected,
+      xmSymbol: xmMt5Bridge.symbolName,
+      xmBroker: xmMt5Bridge.broker,
+      xmBid: xmMt5Bridge.bid,
+      xmAsk: xmMt5Bridge.ask,
+      xmUpdatedAt: xmMt5Bridge.updatedAtMs
+        ? new Date(xmMt5Bridge.updatedAtMs).toISOString()
+        : null,
+      cfdStreamConnected: cfdStreamState.connected,
+      cfdTicker: CFD_TICKERS[cfdStreamState.tickerIndex % CFD_TICKERS.length],
+      cfdBarsCount: cfdStreamState.barsMap.size,
+      cfdLastTickAt: cfdStreamState.lastTickAtMs
+        ? new Date(cfdStreamState.lastTickAtMs).toISOString()
+        : null,
+    });
+  });
+
+  app.post('/api/mt5/tick', (req, res) => {
+    const body = req.body || {};
+    const rawBars = Array.isArray(body.bars) ? body.bars : [];
+    if (rawBars.length < 36) {
+      res.status(400).json({ error: 'ต้องการแท่งเทียน M5 อย่างน้อย 36 แท่ง' });
       return;
     }
-    try {
-      const data = await getLiveTick(rawSymbol as TradingSymbol);
-      res.json(data);
-    } catch (err: any) {
-      res.status(502).json({
-        error: err?.message || 'ไม่สามารถดึงราคาเรียลไทม์ได้ในขณะนี้',
+
+    const cleaned: Array<Omit<M5Candle, 'ao' | 'aoRising' | 'signal'>> = [];
+    for (const item of rawBars.slice(-260)) {
+      const tVal = Number(item?.t ?? item?.time ?? 0);
+      const o = Number(item?.o ?? item?.open);
+      const h = Number(item?.h ?? item?.high);
+      const l = Number(item?.l ?? item?.low);
+      const c = Number(item?.c ?? item?.close);
+      if (
+        !Number.isFinite(tVal) ||
+        tVal <= 0 ||
+        !Number.isFinite(o) ||
+        !Number.isFinite(h) ||
+        !Number.isFinite(l) ||
+        !Number.isFinite(c)
+      ) {
+        continue;
+      }
+      const ms = tVal > 1e11 ? tVal : tVal * 1000;
+      const dt = new Date(ms);
+      cleaned.push({
+        index: cleaned.length,
+        timeLabel: formatTimeLabel(dt),
+        timestampIso: dt.toISOString(),
+        open: roundTo(o, 2),
+        high: roundTo(h, 2),
+        low: roundTo(l, 2),
+        close: roundTo(c, 2),
+        median: (roundTo(h, 2) + roundTo(l, 2)) / 2,
       });
     }
+
+    if (cleaned.length < 36) {
+      res.status(400).json({ error: 'ข้อมูลแท่งเทียนจาก MT5 ไม่สมบูรณ์' });
+      return;
+    }
+
+    cleaned.sort(
+      (a, b) => Date.parse(a.timestampIso) - Date.parse(b.timestampIso)
+    );
+    xmMt5Bridge.bars = cleaned.map((b, idx) => ({ ...b, index: idx }));
+    xmMt5Bridge.symbolName = String(body.symbol || 'US100Cash#').slice(0, 32);
+    xmMt5Bridge.broker = String(body.broker || 'XM Global MT5').slice(0, 48);
+    xmMt5Bridge.bid = Number(body.bid) || cleaned[cleaned.length - 1].close;
+    xmMt5Bridge.ask = Number(body.ask) || xmMt5Bridge.bid;
+    xmMt5Bridge.updatedAtMs = Date.now();
+    feedCache.delete('US100');
+
+    res.json({
+      ok: true,
+      barsCount: xmMt5Bridge.bars.length,
+      receivedAt: new Date(xmMt5Bridge.updatedAtMs).toISOString(),
+    });
+  });
+
+  app.get('/api/mt5/bridge-ea.mq5', (req, res) => {
+    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+    const host = String(req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000').split(',')[0].trim();
+    const serverBase = `${proto}://${host}`;
+    const tickUrl = `${serverBase}/api/mt5/tick`;
+    const mq5Source = `//+------------------------------------------------------------------+
+//|                                       XM_MT5_LiveBridge_EA.mq5   |
+//|         Real-Time XM MT5 M5 Candlestick Bridge (Every 2 Seconds) |
+//+------------------------------------------------------------------+
+#property copyright "AO Signal Studio"
+#property version   "1.00"
+#property strict
+
+input string InpBridgeUrl     = "${tickUrl}"; // URL รับข้อมูลกราฟจริง (เพิ่ม ${serverBase} ใน MT5 Allow WebRequest)
+input int    InpPushIntervalS = 2;     // ความถี่ในการส่งกราฟ M5 (วินาที)
+input int    InpBarsToSend    = 200;   // จำนวนแท่งเทียน M5 ล่าสุดที่ส่ง
+
+uint lastSentTickMs = 0;
+
+void PushLiveM5ToServer()
+{
+   MqlRates rates[];
+   ArraySetAsSeries(rates, false);
+   int copied = CopyRates(_Symbol, PERIOD_M5, 0, InpBarsToSend, rates);
+   if(copied < 36)
+      return;
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   string broker = AccountInfoString(ACCOUNT_COMPANY);
+   // Convert XM MT5 server time (e.g. GMT+2/+3) into true UTC Unix epoch seconds
+   long serverOffsetSec = (long)MathRound((double)(TimeCurrent() - TimeGMT()) / 900.0) * 900;
+
+   string barsJson = "[";
+   for(int i = 0; i < copied; i++)
+   {
+      if(i > 0) barsJson += ",";
+      long utcSec = (long)rates[i].time - serverOffsetSec;
+      barsJson += StringFormat(
+         "{\\"t\\":%I64d,\\"o\\":%.2f,\\"h\\":%.2f,\\"l\\":%.2f,\\"c\\":%.2f}",
+         utcSec, rates[i].open, rates[i].high, rates[i].low, rates[i].close
+      );
+   }
+   barsJson += "]";
+
+   string payload = StringFormat(
+      "{\\"symbol\\":\\"%s\\",\\"broker\\":\\"%s\\",\\"bid\\":%.2f,\\"ask\\":%.2f,\\"bars\\":%s}",
+      _Symbol, broker, bid, ask, barsJson
+   );
+
+   char postData[];
+   int len = StringToCharArray(payload, postData, 0, WHOLE_ARRAY, CP_UTF8);
+   if(len > 0) ArrayResize(postData, len - 1);
+
+   string headers = "Content-Type: application/json\\r\\n";
+   char result[];
+   string resHeaders = "";
+   ResetLastError();
+   int code = WebRequest("POST", InpBridgeUrl, headers, 3000, postData, result, resHeaders);
+   if(code == -1)
+   {
+      PrintFormat("XM Bridge WebRequest Error=%d. Add %s to Tools->Options->Expert Advisors->Allow WebRequest", GetLastError(), InpBridgeUrl);
+   }
+   lastSentTickMs = GetTickCount();
+}
+
+int OnInit()
+{
+   EventSetTimer(MathMax(1, InpPushIntervalS));
+   PushLiveM5ToServer();
+   return(INIT_SUCCEEDED);
+}
+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+}
+
+void OnTimer()
+{
+   PushLiveM5ToServer();
+}
+
+void OnTick()
+{
+   if(GetTickCount() - lastSentTickMs >= 1000)
+      PushLiveM5ToServer();
+}
+//+------------------------------------------------------------------+
+`;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="XM_MT5_LiveBridge_EA.mq5"');
+    res.send(mq5Source);
   });
 
   app.get('/api/market/m5', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
     const rawSymbol = String(req.query.symbol || 'US100').toUpperCase();
     if (!(rawSymbol in YAHOO_SYMBOL_MAP)) {
       res.status(400).json({ error: 'ไม่รองรับสินทรัพย์นี้' });
       return;
     }
     try {
-      const data = await getLiveAoFeed(rawSymbol as TradingSymbol, 'M5');
-      res.json(data);
+      const sym = rawSymbol as TradingSymbol;
+      const data = await getLiveM5Feed(sym);
+      res.json({
+        ...data,
+        xmBridgeConnected:
+          xmMt5Bridge.bars.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000,
+        cfdStreamConnected: cfdStreamState.connected,
+        alertedBarKeys: persisted.alertedBarKeys,
+        lastLiveDirection: persisted.lastLiveDirectionBySymbol[sym] || null,
+      });
     } catch (err: any) {
       res.status(502).json({
         error: err?.message || 'ไม่สามารถดึงข้อมูลกราฟจริงได้ในขณะนี้',
       });
     }
-  });
-
-  app.get('/api/market/ao', async (req, res) => {
-    const rawSymbol = String(req.query.symbol || 'US100').toUpperCase();
-    const rawTf = String(req.query.tf || 'M5').toUpperCase() as AoTimeframe;
-    if (!(rawSymbol in YAHOO_SYMBOL_MAP)) {
-      res.status(400).json({ error: 'ไม่รองรับสินทรัพย์นี้' });
-      return;
-    }
-    if (!AO_TIMEFRAME_ORDER.includes(rawTf)) {
-      res.status(400).json({ error: 'AO รองรับเฉพาะ Timeframe M5 เท่านั้น' });
-      return;
-    }
-    try {
-      const data = await getLiveAoFeed(rawSymbol as TradingSymbol, rawTf);
-      res.json(data);
-    } catch (err: any) {
-      res.status(502).json({
-        error: err?.message || `ไม่สามารถดึงข้อมูลกราฟ AO ${rawTf} ได้ในขณะนี้`,
-      });
-    }
-  });
-
-  app.get('/api/market/m15', async (req, res) => {
-    const rawSymbol = String(req.query.symbol || 'US100').toUpperCase();
-    if (!(rawSymbol in YAHOO_SYMBOL_MAP)) {
-      res.status(400).json({ error: 'ไม่รองรับสินทรัพย์นี้' });
-      return;
-    }
-    try {
-      const data = await getLiveCisdFeed(rawSymbol as TradingSymbol, 'M15');
-      res.json(data);
-    } catch (err: any) {
-      res.status(502).json({
-        error: err?.message || 'ไม่สามารถดึงข้อมูลกราฟ M15 ได้ในขณะนี้',
-      });
-    }
-  });
-
-  app.get('/api/market/cisd', async (req, res) => {
-    const rawSymbol = String(req.query.symbol || 'US100').toUpperCase();
-    const rawTf = String(req.query.tf || 'M15').toUpperCase() as CisdTimeframe;
-    const forceFresh = req.query.fresh === '1';
-    if (!(rawSymbol in YAHOO_SYMBOL_MAP)) {
-      res.status(400).json({ error: 'ไม่รองรับสินทรัพย์นี้' });
-      return;
-    }
-    if (!CISD_TIMEFRAME_ORDER.includes(rawTf)) {
-      res.status(400).json({ error: 'ไม่รองรับ Timeframe นี้ (รองรับ M30, M15)' });
-      return;
-    }
-    try {
-      const data = await getLiveCisdFeed(rawSymbol as TradingSymbol, rawTf, forceFresh);
-      res.json(data);
-    } catch (err: any) {
-      res.status(502).json({
-        error: err?.message || `ไม่สามารถดึงข้อมูลกราฟ ${rawTf} ได้ในขณะนี้`,
-      });
-    }
-  });
-
-  app.get('/api/market/cisd-status', async (req, res) => {
-    const rawSymbol = String(req.query.symbol || 'US100').toUpperCase();
-    if (!(rawSymbol in YAHOO_SYMBOL_MAP)) {
-      res.status(400).json({ error: 'ไม่รองรับสินทรัพย์นี้' });
-      return;
-    }
-    const sym = rawSymbol as TradingSymbol;
-    const statuses = await Promise.all(
-      CISD_TIMEFRAME_ORDER.map(async (tf) => {
-        try {
-          const feed = await getLiveCisdFeed(sym, tf);
-          const latestBar = feed.bars[feed.bars.length - 1];
-          const closedBar = feed.bars[feed.bars.length - 2];
-          const prevClosed = feed.bars[feed.bars.length - 3];
-          const currentPrice = latestBar?.close ?? closedBar?.close ?? 0;
-          const prevPrice = prevClosed?.close ?? latestBar?.open ?? currentPrice;
-          const changePercent =
-            prevPrice > 0 ? ((currentPrice - prevPrice) / prevPrice) * 100 : 0;
-
-          const effectiveTrend =
-            feed.currentTrend ??
-            (latestBar && latestBar.close > latestBar.open
-              ? 'BUY'
-              : latestBar && latestBar.close < latestBar.open
-              ? 'SELL'
-              : null);
-
-          return {
-            timeframe: tf,
-            ok: true,
-            status: effectiveTrend === 'BUY' ? 'UP' : effectiveTrend === 'SELL' ? 'DOWN' : 'NEUTRAL',
-            trendSource: feed.currentTrend ? 'CISD' : 'CANDLE',
-            cisdSignal: feed.currentTrend,
-            lastSignalInfo: feed.lastSignalInfo,
-            lastClosedBarSignal: closedBar?.cisdSignal ?? null,
-            currentPrice,
-            candleOpen: latestBar?.open ?? currentPrice,
-            candleBullish: latestBar ? latestBar.close >= latestBar.open : true,
-            changePercent: Number(changePercent.toFixed(3)),
-            latestBearCisdLevel: feed.latestBearCisdLevel,
-            latestBullCisdLevel: feed.latestBullCisdLevel,
-            marketState: feed.marketState,
-            fetchedAt: feed.fetchedAt,
-          };
-        } catch (err: any) {
-          return {
-            timeframe: tf,
-            ok: false,
-            status: 'NEUTRAL' as const,
-            trendSource: 'NONE' as const,
-            cisdSignal: null,
-            lastSignalInfo: null,
-            lastClosedBarSignal: null,
-            currentPrice: 0,
-            candleOpen: 0,
-            candleBullish: true,
-            changePercent: 0,
-            latestBearCisdLevel: null,
-            latestBullCisdLevel: null,
-            marketState: 'UNAVAILABLE',
-            fetchedAt: new Date().toISOString(),
-            error: err?.message || `โหลด ${tf} ไม่สำเร็จ`,
-          };
-        }
-      })
-    );
-
-    res.json({
-      symbol: sym,
-      order: CISD_TIMEFRAME_ORDER,
-      fetchedAt: new Date().toISOString(),
-      timeframes: statuses,
-    });
   });
 
   app.get('/api/push/vapid-public-key', (_req, res) => {
@@ -2763,9 +1961,9 @@ async function startServer() {
 
     let okCount = 0;
     const payload = JSON.stringify({
-      title: 'เชื่อมต่อแจ้งเตือนเข้ามือถือสำเร็จ',
-      body: 'เซิร์ฟเวอร์เชื่อมต่อมือถือเครื่องนี้แล้ว พร้อมรับสัญญาณ CISD (M30 · M15) ทั้งโหมดจริงและจำลอง',
-      tag: `mobile-test-${Date.now()}`,
+      title: 'AO M5 ทดสอบระบบสำเร็จ',
+      body: 'เซิร์ฟเวอร์เชื่อมต่อมือถือเครื่องนี้แล้ว พร้อมส่งสัญญาณอัตโนมัติ',
+      tag: `ao-test-${Date.now()}`,
       url: '/',
     });
 
@@ -2789,13 +1987,12 @@ async function startServer() {
   });
 
   app.get('/api/monitor/status', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.json({
       enabled: persisted.enabled,
-      m15Enabled: persisted.m15Enabled,
       symbols: persisted.symbols,
       ntfyTopic: persisted.ntfyTopic,
       telegramHasToken: Boolean(persisted.telegramBotToken),
-      telegramBotTokenMasked: maskTelegramToken(persisted.telegramBotToken),
       telegramConfigured: Boolean(
         persisted.telegramBotToken &&
           persisted.telegramChatId &&
@@ -2804,26 +2001,35 @@ async function startServer() {
       telegramChatId: persisted.telegramChatId,
       telegramMode: persisted.telegramMode,
       direction: persisted.direction,
-      m15Direction: persisted.m15Direction,
-      aoImmediateCross: persisted.aoImmediateCross,
-      aoTimeframes: persisted.aoTimeframes,
-      cisdTimeframes: persisted.cisdTimeframes,
       subscribersCount: persisted.subscriptions.length,
       lastCheckedAt: monitorRuntime.lastCheckedAt,
       events: persisted.events,
+      alertedBarKeys: persisted.alertedBarKeys,
+      lastLiveDirectionBySymbol: persisted.lastLiveDirectionBySymbol,
     });
   });
 
-  app.post('/api/monitor/check-now', async (_req, res) => {
-    cisdFeedCache.clear();
-    const beforeLen = persisted.events.length;
-    await runBackgroundMonitorCycle();
+  app.post('/api/monitor/reset', (_req, res) => {
+    persisted.events = [];
+    persisted.alertedBarKeys = [];
+    persisted.lastLiveDirectionBySymbol = {};
+    persisted.subscriptions = [];
+    persisted.ntfyTopic = '';
+    persisted.symbols = [...ALL_SYMBOLS];
+    persisted.direction = 'both';
+    persisted.enabled = true;
+    persisted.telegramMode = 'always';
+    monitorRuntime.lastBarBySymbol = {};
+    monitorRuntime.lastClosedBarBucketMsBySymbol = {};
+    monitorRuntime.dispatchedLiveSignalKeys.clear();
+    syncPersistence();
     res.json({
       ok: true,
-      lastCheckedAt: monitorRuntime.lastCheckedAt,
-      eventsCount: persisted.events.length,
-      newEventsCount: Math.max(0, persisted.events.length - beforeLen),
+      symbols: persisted.symbols,
       events: persisted.events,
+      alertedBarKeys: persisted.alertedBarKeys,
+      telegramChatId: persisted.telegramChatId,
+      telegramMode: persisted.telegramMode,
     });
   });
 
@@ -2831,21 +2037,6 @@ async function startServer() {
     const body = req.body || {};
     if (typeof body.enabled === 'boolean') {
       persisted.enabled = body.enabled;
-    }
-    if (typeof body.m15Enabled === 'boolean') {
-      persisted.m15Enabled = body.m15Enabled;
-    }
-    if (typeof body.aoImmediateCross === 'boolean') {
-      persisted.aoImmediateCross = body.aoImmediateCross;
-    }
-    persisted.aoTimeframes = ['M5'];
-    if (Array.isArray(body.cisdTimeframes)) {
-      const validCisd = body.cisdTimeframes
-        .map((t: unknown) => String(t).toUpperCase())
-        .filter((t: string): t is CisdTimeframe =>
-          CISD_TIMEFRAME_ORDER.includes(t as CisdTimeframe)
-        );
-      persisted.cisdTimeframes = validCisd;
     }
     if (Array.isArray(body.symbols)) {
       const valid = body.symbols
@@ -2860,12 +2051,14 @@ async function startServer() {
     }
     if (body.clearTelegram === true) {
       persisted.telegramBotToken = '';
-      persisted.telegramChatId = FIXED_TELEGRAM_CHAT_ID;
+      persisted.telegramChatId = '';
     } else {
       if (typeof body.telegramBotToken === 'string' && body.telegramBotToken.trim() !== '') {
         persisted.telegramBotToken = body.telegramBotToken.trim();
       }
-      persisted.telegramChatId = FIXED_TELEGRAM_CHAT_ID;
+      if (typeof body.telegramChatId === 'string') {
+        persisted.telegramChatId = normalizeTelegramChatId(body.telegramChatId);
+      }
     }
     if (body.telegramMode === 'fallback' || body.telegramMode === 'always') {
       persisted.telegramMode = body.telegramMode;
@@ -2877,27 +2070,18 @@ async function startServer() {
     ) {
       persisted.direction = body.direction;
     }
-    if (
-      body.m15Direction === 'both' ||
-      body.m15Direction === 'buy_only' ||
-      body.m15Direction === 'sell_only'
-    ) {
-      persisted.m15Direction = body.m15Direction;
-    }
 
     syncPersistence();
 
-    if (persisted.enabled || persisted.m15Enabled) {
+    if (persisted.enabled) {
       void runBackgroundMonitorCycle();
     }
 
     res.json({
       enabled: persisted.enabled,
-      m15Enabled: persisted.m15Enabled,
       symbols: persisted.symbols,
       ntfyTopic: persisted.ntfyTopic,
       telegramHasToken: Boolean(persisted.telegramBotToken),
-      telegramBotTokenMasked: maskTelegramToken(persisted.telegramBotToken),
       telegramConfigured: Boolean(
         persisted.telegramBotToken &&
           persisted.telegramChatId &&
@@ -2906,10 +2090,6 @@ async function startServer() {
       telegramChatId: persisted.telegramChatId,
       telegramMode: persisted.telegramMode,
       direction: persisted.direction,
-      m15Direction: persisted.m15Direction,
-      aoImmediateCross: persisted.aoImmediateCross,
-      aoTimeframes: persisted.aoTimeframes,
-      cisdTimeframes: persisted.cisdTimeframes,
       subscribersCount: persisted.subscriptions.length,
       lastCheckedAt: monitorRuntime.lastCheckedAt,
       events: persisted.events,
@@ -2932,48 +2112,64 @@ async function startServer() {
     }
 
     persisted.telegramBotToken = token;
-    persisted.telegramChatId = FIXED_TELEGRAM_CHAT_ID;
     syncPersistence();
 
     try {
-      const chatRes = await fetch(
-        `https://api.telegram.org/bot${token}/getChat?chat_id=${encodeURIComponent(
-          FIXED_TELEGRAM_CHAT_ID
-        )}`,
+      const updRes = await fetch(
+        `https://api.telegram.org/bot${token}/getUpdates?limit=20`,
         { signal: AbortSignal.timeout(6000) }
       );
-      const chatJson = (await chatRes.json().catch(() => ({}))) as {
+      type TgChat = { id?: number; username?: string; first_name?: string; title?: string };
+      const updJson = (await updRes.json().catch(() => ({}))) as {
         ok?: boolean;
-        description?: string;
-        result?: { id?: number; title?: string; username?: string };
+        result?: Array<{
+          message?: { chat?: TgChat };
+          my_chat_member?: { chat?: TgChat };
+          channel_post?: { chat?: TgChat };
+        }>;
       };
 
-      if (!chatRes.ok || !chatJson.ok) {
-        res.status(400).json({
+      const chats: Array<{ id: string; label: string }> = [];
+      for (const item of updJson.result || []) {
+        const chat =
+          item.message?.chat || item.my_chat_member?.chat || item.channel_post?.chat;
+        if (chat?.id !== undefined) {
+          const idStr = String(chat.id);
+          const label =
+            chat.title ||
+            chat.first_name ||
+            (chat.username ? `@${chat.username}` : idStr);
+          if (!chats.some((c) => c.id === idStr)) {
+            chats.push({ id: idStr, label });
+          }
+        }
+      }
+
+      if (chats.length === 0) {
+        res.json({
           ok: false,
+          needsStart: true,
           botUsername: botInfo.username,
           botUrl: botInfo.botUrl,
-          error:
-            chatJson.description ||
-            `บอท @${botInfo.username} ยังไม่สามารถเข้าถึงแชท ${FIXED_TELEGRAM_CHAT_ID} ได้`,
+          message: `ยังไม่พบข้อความในบอท @${botInfo.username} — กรุณากดเปิดแชทบอทแล้วกดปุ่ม Start จากนั้นกดดึง Chat ID อีกครั้ง`,
         });
         return;
       }
 
-      const label =
-        chatJson.result?.title ||
-        (chatJson.result?.username ? `@${chatJson.result.username}` : FIXED_TELEGRAM_CHAT_ID);
+      const latest = chats[chats.length - 1];
+      persisted.telegramChatId = latest.id;
+      syncPersistence();
 
       res.json({
         ok: true,
         botUsername: botInfo.username,
         botUrl: botInfo.botUrl,
-        detectedChatId: FIXED_TELEGRAM_CHAT_ID,
-        detectedChatLabel: label,
+        detectedChatId: latest.id,
+        detectedChatLabel: latest.label,
       });
     } catch (err: any) {
       res.status(502).json({
-        error: err?.message || 'ตรวจสอบข้อมูล Chat ID จาก Telegram ไม่สำเร็จ',
+        error: err?.message || 'ดึงข้อมูล Chat ID จาก Telegram ไม่สำเร็จ',
       });
     }
   });
@@ -2986,7 +2182,7 @@ async function startServer() {
     }
     const ok = await sendNtfyPush(
       topic,
-      'CISD Test Alert',
+      'AO M5 Test Alert',
       'เชื่อมต่อการแจ้งเตือนอัตโนมัติเข้ามือถือ Android สำเร็จ'
     );
     if (!ok) {
@@ -3000,10 +2196,12 @@ async function startServer() {
     const token = sanitizeTelegramToken(
       String(req.body?.telegramBotToken || persisted.telegramBotToken || '')
     );
-    const chatId = FIXED_TELEGRAM_CHAT_ID;
+    const chatId = normalizeTelegramChatId(
+      String(req.body?.telegramChatId || persisted.telegramChatId || '')
+    );
 
-    if (!token) {
-      res.status(400).json({ error: 'กรุณากรอก Bot Token ของ Telegram' });
+    if (!token || !chatId) {
+      res.status(400).json({ error: 'กรุณากรอก Bot Token และ Chat ID ของ Telegram' });
       return;
     }
 
@@ -3015,7 +2213,7 @@ async function startServer() {
       token,
       chatId,
       [
-        '✅ ทดสอบระบบแจ้งเตือน CISD (M30 · M15)',
+        '✅ ทดสอบระบบแจ้งเตือน AO (M5)',
         '──────────────',
         'สถานะ: เชื่อมต่อ Telegram สำเร็จ',
         'สินทรัพย์: US100 (US 100 Index Cash)',
@@ -3035,124 +2233,100 @@ async function startServer() {
   app.post('/api/monitor/notify-signal', async (req, res) => {
     const body = req.body || {};
     const symbol = String(body.symbol || 'US100').toUpperCase();
-    const timeframe = String(body.timeframe || 'M5').toUpperCase();
-    const strategy = body.strategy === 'CISD' ? 'CISD' : 'AO';
+    const timeframe = String(body.timeframe || 'M5');
     const signal = body.signal === 'SELL' ? 'SELL' : 'BUY';
     const aoPrev = Number(body.aoPrev ?? 0);
     const aoCurr = Number(body.aoCurr ?? 0);
     const price = Number(body.price ?? 0);
-    const cisdLevel =
-      body.cisdLevel !== undefined && body.cisdLevel !== null ? Number(body.cisdLevel) : null;
     const mode = body.mode === 'live' ? 'live' : 'sim';
     const timestampIso = String(body.timestampIso || new Date().toISOString());
 
-    if (mode === 'live') {
-      if (strategy === 'AO' && (!persisted.enabled || timeframe !== 'M5')) {
-        res.json({ ok: false, skipped: true, reason: 'ao_disabled_or_non_m5' });
-        return;
-      }
-      if (
-        strategy === 'CISD' &&
-        (!persisted.m15Enabled || !persisted.cisdTimeframes.includes(timeframe as CisdTimeframe))
-      ) {
-        res.json({ ok: false, skipped: true, reason: 'cisd_timeframe_disabled' });
-        return;
-      }
-      const dedupeKey = `live-${timeframe}-${strategy}-${symbol}-${timestampIso}-${signal}`;
-      if (monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)) {
-        res.json({ ok: true, deduplicated: true });
-        return;
-      }
-      markLiveSignalDispatched(dedupeKey);
+    const hasTelegram = Boolean(persisted.telegramBotToken && persisted.telegramChatId);
+    const hasWebPush = persisted.subscriptions.length > 0;
+    const hasNtfy = Boolean(persisted.ntfyTopic);
+
+    if (!hasTelegram && !hasWebPush && !hasNtfy) {
+      res.json({ ok: false, skipped: true, reason: 'not_configured' });
+      return;
     }
 
-    const modePrefix = mode === 'sim' ? '[จำลอง] ' : '';
-    let pushTitle = '';
-    let pushBody = '';
-    if (strategy === 'CISD') {
-      const condLabel =
-        signal === 'SELL' ? 'ปิดต่ำกว่าระดับ CISD' : 'ปิดเหนือระดับ CISD';
-      const cisdTxt =
-        cisdLevel !== null && Number.isFinite(cisdLevel) ? cisdLevel.toFixed(2) : '-';
-      const priceTxt = Number.isFinite(price) && price > 0 ? price.toFixed(2) : '-';
-      pushTitle = `${modePrefix}CISD ${timeframe} ${signal}: ${symbol}`;
-      pushBody = `${symbol} ${timeframe} ${condLabel} | ปิด ${priceTxt} (CISD ${cisdTxt})`;
-    } else {
-      const condLabel = signal === 'BUY' ? 'AO ตัด 0 ขึ้น' : 'AO ตัด 0 ลง';
-      const priceTxt = Number.isFinite(price) && price > 0 ? ` | ราคา ${price.toFixed(2)}` : '';
-      pushTitle = `${modePrefix}AO ${timeframe} ${signal}: ${symbol}`;
-      pushBody = `${symbol} ${timeframe} ${condLabel} | AO ${aoPrev.toFixed(3)} → ${aoCurr.toFixed(
-        3
-      )}${priceTxt}`;
+    // Live M5 alerts are dispatched exclusively by runBackgroundMonitorCycle() once per closed candle
+    if (mode === 'live') {
+      res.json({ ok: true, deduplicated: true, managedByServer: true });
+      return;
     }
+
+    const modeBadge = mode === 'sim' ? '[จำลอง] ' : '';
+    const title = `${modeBadge}AO ${timeframe} ${signal}: ${symbol}`;
+    const pushBody = `${symbol} ${timeframe} ${signal} | AO ${aoPrev.toFixed(
+      3
+    )} → ${aoCurr.toFixed(3)} | ราคา ${price}`;
 
     const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
-      broadcastWebPush({
-        title: pushTitle,
-        body: pushBody,
-        tag: `${mode}-${strategy.toLowerCase()}-${timeframe}-${symbol}-${Date.now()}`,
-        url: strategy === 'CISD' ? `/?tf=${timeframe}` : '/',
-      }),
-      persisted.ntfyTopic
-        ? sendNtfyPush(persisted.ntfyTopic, pushTitle, pushBody)
-        : Promise.resolve(false),
+      hasWebPush
+        ? broadcastWebPush({
+            title,
+            body: pushBody,
+            tag: `ao-${mode}-${symbol}-${Date.now()}`,
+            url: '/',
+          })
+        : Promise.resolve(0),
+      hasNtfy ? sendNtfyPush(persisted.ntfyTopic, title, pushBody) : Promise.resolve(false),
     ]);
 
-    const hasTelegram = Boolean(persisted.telegramBotToken && persisted.telegramChatId);
-    const shouldSendTelegram =
-      hasTelegram &&
-      (mode === 'sim' || persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
+    let deliveredToTelegram = false;
+    let tgError: string | undefined;
 
-    const text = shouldSendTelegram
-      ? formatTelegramSignalMessage({
-          symbol,
-          timeframe,
-          strategy,
-          signal,
-          aoPrev,
-          aoCurr,
-          price,
-          cisdLevel,
-          mode,
-          timestampIso,
-        })
-      : '';
+    if (hasTelegram) {
+      const text = formatTelegramSignalMessage({
+        symbol,
+        timeframe,
+        signal,
+        aoPrev,
+        aoCurr,
+        mode,
+        timestampIso,
+      });
 
-    const tgRes = shouldSendTelegram
-      ? await sendTelegramPush(
-          persisted.telegramBotToken,
-          persisted.telegramChatId,
-          text,
-          'HTML'
-        )
-      : { ok: false, error: undefined };
+      const tgRes = await sendTelegramPush(
+        persisted.telegramBotToken,
+        persisted.telegramChatId,
+        text,
+        'HTML'
+      );
+      deliveredToTelegram = tgRes.ok;
+      tgError = tgRes.error;
+    }
+
+    if (!deliveredToTelegram && deliveredWebPushCount === 0 && !deliveredToNtfy) {
+      res.status(502).json({
+        ok: false,
+        error: tgError || 'ส่งสัญญาณแจ้งเตือนไม่สำเร็จ',
+      });
+      return;
+    }
 
     persisted.events.unshift({
-      id: `${mode}-${timeframe}-${symbol}-${Date.now()}`,
+      id: `${mode}-${symbol}-${Date.now()}`,
       timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
       symbol: (symbol in YAHOO_SYMBOL_MAP ? symbol : 'US100') as TradingSymbol,
-      timeframe: timeframe || 'M5',
-      strategy,
       signal,
       aoPrev,
       aoCurr,
-      cisdLevel,
       price,
       deliveredToNtfy,
-      deliveredToTelegram: tgRes.ok,
+      deliveredToTelegram,
       deliveredWebPushCount,
-      ...(tgRes.error ? { telegramError: tgRes.error } : {}),
     });
     persisted.events = persisted.events.slice(0, 30);
     syncPersistence();
     scheduleGithubAutoSync('signal-event', 1000);
 
     res.json({
-      ok: deliveredWebPushCount > 0 || deliveredToNtfy || tgRes.ok || !hasTelegram,
+      ok: true,
+      deliveredToTelegram,
       deliveredWebPushCount,
       deliveredToNtfy,
-      deliveredToTelegram: tgRes.ok,
-      telegramError: tgRes.error,
     });
   });
 
@@ -3166,7 +2340,6 @@ async function startServer() {
     if (body.clearGithub === true) {
       persisted.githubToken = '';
       persisted.githubOwner = '';
-      persisted.githubUploadAllowed = false;
       persisted.githubLastSyncedHash = '';
       persisted.githubLastSyncAt = null;
       persisted.githubLastCommitUrl = null;
@@ -3209,9 +2382,6 @@ async function startServer() {
     if (typeof body.githubPrivate === 'boolean') {
       persisted.githubPrivate = body.githubPrivate;
     }
-    if (typeof body.githubUploadAllowed === 'boolean') {
-      persisted.githubUploadAllowed = body.githubUploadAllowed;
-    }
     if (typeof body.githubAutoSyncCode === 'boolean') {
       persisted.githubAutoSyncCode = body.githubAutoSyncCode;
     }
@@ -3221,8 +2391,7 @@ async function startServer() {
     persisted.githubLastError = null;
     syncPersistence();
 
-    const shouldSyncImmediately =
-      body.syncImmediately === true && persisted.githubUploadAllowed;
+    const shouldSyncImmediately = body.syncImmediately !== false;
     let syncResult: Awaited<ReturnType<typeof syncWorkspaceToGithub>> | null = null;
     if (shouldSyncImmediately) {
       syncResult = await syncWorkspaceToGithub({
@@ -3237,7 +2406,7 @@ async function startServer() {
         });
         return;
       }
-    } else if (persisted.githubUploadAllowed && persisted.githubAutoSyncCode) {
+    } else if (persisted.githubAutoSyncCode) {
       scheduleGithubAutoSync('restore-check', 1200);
     }
 
@@ -3248,27 +2417,13 @@ async function startServer() {
     });
   });
 
-  app.post('/api/github/sync-now', async (req, res) => {
+  app.post('/api/github/sync-now', async (_req, res) => {
     if (!persisted.githubToken || !persisted.githubRepo) {
       res.status(400).json({ error: 'กรุณาเชื่อมต่อ GitHub.com ก่อนซิงค์' });
       return;
     }
 
-    const explicitApproved = Boolean(req.body?.approved);
-    if (!persisted.githubUploadAllowed && !explicitApproved) {
-      res.status(403).json({
-        ok: false,
-        error: 'ยังไม่อนุญาตให้อัปโหลดขึ้น GitHub กรุณากดปุ่มอนุญาตอัปโหลดก่อน',
-        status: buildGithubStatusResponse(),
-      });
-      return;
-    }
-
-    const result = await syncWorkspaceToGithub({
-      force: true,
-      reason: 'manual',
-      approved: explicitApproved,
-    });
+    const result = await syncWorkspaceToGithub({ force: true, reason: 'manual' });
     if (!result.ok) {
       res.status(502).json({
         ok: false,
