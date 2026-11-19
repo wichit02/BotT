@@ -2194,13 +2194,10 @@ void OnTick()
       return;
     }
 
+    // Live M5 alerts are dispatched exclusively by runBackgroundMonitorCycle() once per closed candle
     if (mode === 'live') {
-      const symTyped = (symbol in YAHOO_SYMBOL_MAP ? symbol : 'US100') as TradingSymbol;
-      if (hasClosedBarBeenAlerted(symTyped, timestampIso, signal)) {
-        res.json({ ok: true, deduplicated: true });
-        return;
-      }
-      recordClosedBarAlerted(symTyped, timestampIso, signal);
+      res.json({ ok: true, deduplicated: true, managedByServer: true });
+      return;
     }
 
     const modeBadge = mode === 'sim' ? '[จำลอง] ' : '';
