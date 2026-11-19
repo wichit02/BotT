@@ -53,6 +53,8 @@ interface LiveFeedResponse {
   marketState: string;
   fetchedAt: string;
   bars: M5Bar[];
+  xmBridgeConnected?: boolean;
+  cfdStreamConnected?: boolean;
   alertedBarKeys?: string[];
   lastLiveDirection?: 'BUY' | 'SELL' | null;
 }
@@ -154,6 +156,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
   const [pushSupported] = useState(() => isWebPushSupported());
   const [ntfyTopic, setNtfyTopic] = useState('');
   const [telegramConfigured, setTelegramConfigured] = useState(false);
+  const [xmBridgeConnected, setXmBridgeConnected] = useState(false);
   const [monitorBusy, setMonitorBusy] = useState(false);
   const [monitorNote, setMonitorNote] = useState<string | null>(null);
 
@@ -442,6 +445,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         setBars(data.bars);
         setMarketState(data.marketState);
         setFeedSource(data.source);
+        setXmBridgeConnected(Boolean(data.xmBridgeConnected));
 
         if (Array.isArray(data.alertedBarKeys)) {
           for (const k of data.alertedBarKeys) {
@@ -489,13 +493,13 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
     [alertDirection, emitAlert]
   );
 
-  // Real-time 5-second polling in Live mode
+  // Real-time 2-second polling in Live mode
   useEffect(() => {
     if (feedMode !== 'live') return;
     void fetchLiveBars(symbol, false);
     const id = window.setInterval(() => {
       void fetchLiveBars(symbol, true);
-    }, 5000);
+    }, 2000);
     return () => window.clearInterval(id);
   }, [feedMode, symbol, fetchLiveBars]);
 
@@ -977,10 +981,12 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                 <span className="inline-flex items-center gap-1.5 text-neutral-400">
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${
-                      marketState === 'MARKET CLOSED' ? 'bg-neutral-500' : 'bg-emerald-400'
+                      marketState === 'MARKET CLOSED' ? 'bg-neutral-500' : 'bg-emerald-400 animate-pulse'
                     }`}
                   />
-                  {marketState === 'MARKET CLOSED' ? 'ตลาดปิด (ล่าสุด)' : marketState}
+                  {marketState === 'MARKET CLOSED'
+                    ? 'ตลาดปิด (ล่าสุด)'
+                    : `${marketState} · อัปเดตทุก 2 วิ`}
                 </span>
               )}
               {feedMode === 'sim' && (
@@ -1495,6 +1501,24 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
                   ตั้งค่า Telegram
                 </button>
               </div>
+
+              <details className="text-xs text-slate-500">
+                <summary className="cursor-pointer select-none py-1 hover:text-slate-800">
+                  เชื่อมกราฟตรงจาก XM MT5 ({xmBridgeConnected ? 'เชื่อมต่อแล้ว' : 'ใช้ฟีด Forex CFD อัตโนมัติ'})
+                </summary>
+                <div className="mt-2 space-y-2 rounded-lg border border-slate-100 bg-slate-50 p-2.5 text-[11px] text-slate-600">
+                  <p>
+                    ระบบกำลังดึงฟีด <strong>MT5 Forex CFD (NAS100 Cash)</strong> แบบเรียลไทม์ทุก 2 วินาที หากต้องการดึงราคาตรงจากบัญชี <strong>XM MT5</strong> ของคุณ 100% ให้ดาวน์โหลด EA ตัวนี้ไปวางบนชาร์ต <span className="font-mono">US100Cash#</span>
+                  </p>
+                  <a
+                    href="/api/mt5/bridge-ea.mq5"
+                    download="XM_MT5_LiveBridge_EA.mq5"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md bg-slate-900 px-3 text-[11px] font-medium text-white hover:bg-slate-800"
+                  >
+                    ดาวน์โหลด XM_MT5_LiveBridge_EA.mq5
+                  </a>
+                </div>
+              </details>
 
               <details className="text-xs text-slate-500">
                 <summary className="cursor-pointer select-none py-1 hover:text-slate-800">

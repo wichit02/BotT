@@ -944,6 +944,217 @@ function computeAwesomeOscillator(
   return out;
 }
 
+interface RawM5Bar {
+  tSec: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+const CFD_TICKERS = ['PEPPERSTONE:NAS100', 'VANTAGE:NAS100', 'ICMARKETS:USTEC'] as const;
+
+const cfdStreamState = {
+  tickerIndex: 0,
+  barsMap: new Map<number, RawM5Bar>(),
+  connected: false,
+  lastTickAtMs: 0,
+  lastError: null as string | null,
+  ws: null as WebSocket | null,
+  reconnectTimer: null as NodeJS.Timeout | null,
+};
+
+const xmMt5Bridge = {
+  symbolName: 'US100Cash#',
+  broker: 'XM Global MT5',
+  bid: 0,
+  ask: 0,
+  updatedAtMs: 0,
+  bars: [] as Array<Omit<M5Candle, 'ao' | 'aoRising' | 'signal'>>,
+};
+
+function tvFrame(method: string, params: unknown[]): string {
+  const payload = JSON.stringify({ m: method, p: params });
+  return `~m~${payload.length}~m~${payload}`;
+}
+
+function connectRealtimeCfdStream() {
+  if (cfdStreamState.reconnectTimer) {
+    clearTimeout(cfdStreamState.reconnectTimer);
+    cfdStreamState.reconnectTimer = null;
+  }
+  if (cfdStreamState.ws) {
+    try {
+      cfdStreamState.ws.close();
+    } catch {
+      // Ignore close error
+    }
+    cfdStreamState.ws = null;
+  }
+
+  const ticker = CFD_TICKERS[cfdStreamState.tickerIndex % CFD_TICKERS.length];
+  const sessionId = `cs_${Math.random().toString(36).slice(2, 10)}`;
+
+  try {
+    const WsCtor = WebSocket as unknown as new (
+      url: string,
+      opts?: { headers?: Record<string, string> }
+    ) => WebSocket;
+    const ws = new WsCtor(
+      'wss://data.tradingview.com/socket.io/websocket?from=chart%2F',
+      { headers: { Origin: 'https://www.tradingview.com' } }
+    );
+    cfdStreamState.ws = ws;
+
+    ws.onopen = () => {
+      cfdStreamState.connected = true;
+      cfdStreamState.lastError = null;
+      ws.send(tvFrame('set_auth_token', ['unauthorized_user_token']));
+      ws.send(tvFrame('chart_create_session', [sessionId, '']));
+      ws.send(
+        tvFrame('resolve_symbol', [
+          sessionId,
+          'sds_sym_1',
+          '=' + JSON.stringify({ symbol: ticker, adjustment: 'splits' }),
+        ])
+      );
+      ws.send(tvFrame('create_series', [sessionId, 'sds_1', 's1', 'sds_sym_1', '5', 260]));
+    };
+
+    ws.onmessage = (evt: MessageEvent) => {
+      const raw = typeof evt.data === 'string' ? evt.data : String(evt.data || '');
+      const parts = raw.split(/~m~\d+~m~/).filter(Boolean);
+      for (const part of parts) {
+        if (part.startsWith('~h~')) {
+          try {
+            ws.send(`~m~${part.length}~m~${part}`);
+          } catch {
+            // Ignore send error on closed socket
+          }
+          continue;
+        }
+        try {
+          const msg = JSON.parse(part) as { m?: string; p?: any[] };
+          if (msg.m === 'symbol_error') {
+            cfdStreamState.lastError = `Symbol error: ${ticker}`;
+            cfdStreamState.tickerIndex = (cfdStreamState.tickerIndex + 1) % CFD_TICKERS.length;
+            ws.close();
+            return;
+          }
+          if (msg.m === 'timescale_update' || msg.m === 'du') {
+            const rows: Array<{ v?: number[] }> = msg.p?.[1]?.sds_1?.s || [];
+            if (rows.length > 0) {
+              for (const row of rows) {
+                const v = row?.v;
+                if (!Array.isArray(v) || v.length < 5) continue;
+                const tSec = Math.floor(Number(v[0]));
+                const open = roundTo(Number(v[1]), 2);
+                const high = roundTo(Number(v[2]), 2);
+                const low = roundTo(Number(v[3]), 2);
+                const close = roundTo(Number(v[4]), 2);
+                if (
+                  !Number.isFinite(tSec) ||
+                  !Number.isFinite(open) ||
+                  !Number.isFinite(high) ||
+                  !Number.isFinite(low) ||
+                  !Number.isFinite(close)
+                ) {
+                  continue;
+                }
+                cfdStreamState.barsMap.set(tSec, { tSec, open, high, low, close });
+              }
+              if (cfdStreamState.barsMap.size > 320) {
+                const sortedKeys = Array.from(cfdStreamState.barsMap.keys()).sort((a, b) => a - b);
+                const toDelete = sortedKeys.length - 300;
+                for (let i = 0; i < toDelete; i++) {
+                  cfdStreamState.barsMap.delete(sortedKeys[i]);
+                }
+              }
+              cfdStreamState.lastTickAtMs = Date.now();
+            }
+          }
+        } catch {
+          // Ignore non-JSON control frames
+        }
+      }
+    };
+
+    ws.onerror = () => {
+      cfdStreamState.connected = false;
+    };
+
+    ws.onclose = () => {
+      cfdStreamState.connected = false;
+      if (cfdStreamState.ws === ws) {
+        cfdStreamState.ws = null;
+        if (!cfdStreamState.reconnectTimer) {
+          cfdStreamState.reconnectTimer = setTimeout(() => {
+            connectRealtimeCfdStream();
+          }, 2500);
+        }
+      }
+    };
+  } catch (err: any) {
+    cfdStreamState.connected = false;
+    cfdStreamState.lastError = err?.message || 'WebSocket init error';
+    cfdStreamState.reconnectTimer = setTimeout(() => {
+      connectRealtimeCfdStream();
+    }, 3000);
+  }
+}
+
+connectRealtimeCfdStream();
+
+// Watchdog: reconnect CFD stream if silent for >90s
+setInterval(() => {
+  if (
+    cfdStreamState.connected &&
+    cfdStreamState.lastTickAtMs > 0 &&
+    Date.now() - cfdStreamState.lastTickAtMs > 90000
+  ) {
+    connectRealtimeCfdStream();
+  }
+}, 30000);
+
+function buildCfdMarketFeed(symbol: TradingSymbol): MarketFeedResult | null {
+  if (cfdStreamState.barsMap.size < 36) return null;
+  const sorted = Array.from(cfdStreamState.barsMap.values())
+    .sort((a, b) => a.tSec - b.tSec)
+    .slice(-260);
+
+  const warmupSlice: Array<Omit<M5Candle, 'ao' | 'aoRising' | 'signal'>> = sorted.map((b, idx) => {
+    const dt = new Date(b.tSec * 1000);
+    return {
+      index: idx,
+      timeLabel: formatTimeLabel(dt),
+      timestampIso: dt.toISOString(),
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+      median: (b.high + b.low) / 2,
+    };
+  });
+
+  const bars = computeAwesomeOscillator(warmupSlice)
+    .slice(-180)
+    .map((b, idx) => ({ ...b, index: idx }));
+
+  const latestBarTs = new Date(bars[bars.length - 1].timestampIso).getTime();
+  const ageMinutes = (Date.now() - latestBarTs) / 60000;
+  const isStreamFresh = Date.now() - cfdStreamState.lastTickAtMs <= 20000;
+  const marketState = isStreamFresh || ageMinutes <= 8 ? 'LIVE' : 'MARKET CLOSED';
+  const activeTicker = CFD_TICKERS[cfdStreamState.tickerIndex % CFD_TICKERS.length];
+
+  return {
+    symbol,
+    source: `MT5 Forex CFD (${activeTicker})`,
+    marketState,
+    fetchedAt: new Date().toISOString(),
+    bars,
+  };
+}
+
 async function fetchYahooM5(symbol: TradingSymbol): Promise<MarketFeedResult> {
   const mapping = YAHOO_SYMBOL_MAP[symbol];
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
@@ -1030,7 +1241,7 @@ async function fetchYahooM5(symbol: TradingSymbol): Promise<MarketFeedResult> {
 
   return {
     symbol,
-    source: `Live M5 (${mapping.ticker})`,
+    source: `Fallback (${mapping.ticker})`,
     marketState,
     fetchedAt: new Date().toISOString(),
     bars,
@@ -1038,6 +1249,34 @@ async function fetchYahooM5(symbol: TradingSymbol): Promise<MarketFeedResult> {
 }
 
 async function getLiveM5Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
+  // Priority 1: Direct XM MT5 Bridge data pushed from user's MT5 terminal (within 15s)
+  if (xmMt5Bridge.bars.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000) {
+    const bars = computeAwesomeOscillator(xmMt5Bridge.bars.slice(-260))
+      .slice(-180)
+      .map((b, idx) => ({ ...b, index: idx }));
+    return {
+      symbol,
+      source: `XM MT5 Live (${xmMt5Bridge.symbolName})`,
+      marketState: 'LIVE',
+      fetchedAt: new Date().toISOString(),
+      bars,
+    };
+  }
+
+  // Priority 2: Wait briefly up to 1.8s on cold start for real-time CFD stream handshake
+  if (cfdStreamState.barsMap.size < 36) {
+    const deadline = Date.now() + 1800;
+    while (cfdStreamState.barsMap.size < 36 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  }
+
+  const cfdFeed = buildCfdMarketFeed(symbol);
+  if (cfdFeed) {
+    return cfdFeed;
+  }
+
+  // Priority 3: Fallback to Yahoo feed (1.5s cache)
   const cached = feedCache.get(symbol);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.data;
@@ -1046,7 +1285,7 @@ async function getLiveM5Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
   const data = await fetchYahooM5(symbol);
 
   feedCache.set(symbol, {
-    expiresAt: Date.now() + 5000,
+    expiresAt: Date.now() + 1500,
     data,
   });
   return data;
@@ -1369,18 +1608,18 @@ async function runBackgroundMonitorCycle() {
 
 setInterval(() => {
   void runBackgroundMonitorCycle();
-}, 10000);
+}, 2000);
 
 setTimeout(() => {
   void runBackgroundMonitorCycle();
-}, 2000);
+}, 1500);
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', async (_req, res) => {
-    if (persisted.enabled && Date.now() - monitorRuntime.lastCheckedMs > 3000) {
+    if (persisted.enabled && Date.now() - monitorRuntime.lastCheckedMs > 2000) {
       void runBackgroundMonitorCycle();
     }
     res.json({
@@ -1389,7 +1628,185 @@ async function startServer() {
       symbols: persisted.symbols,
       subscribersCount: persisted.subscriptions.length,
       lastCheckedAt: monitorRuntime.lastCheckedAt,
+      cfdStreamConnected: cfdStreamState.connected,
+      xmBridgeConnected:
+        xmMt5Bridge.bars.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000,
     });
+  });
+
+  app.get('/api/mt5/status', (_req, res) => {
+    const xmConnected =
+      xmMt5Bridge.bars.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000;
+    res.json({
+      xmBridgeConnected: xmConnected,
+      xmSymbol: xmMt5Bridge.symbolName,
+      xmBroker: xmMt5Bridge.broker,
+      xmBid: xmMt5Bridge.bid,
+      xmAsk: xmMt5Bridge.ask,
+      xmUpdatedAt: xmMt5Bridge.updatedAtMs
+        ? new Date(xmMt5Bridge.updatedAtMs).toISOString()
+        : null,
+      cfdStreamConnected: cfdStreamState.connected,
+      cfdTicker: CFD_TICKERS[cfdStreamState.tickerIndex % CFD_TICKERS.length],
+      cfdBarsCount: cfdStreamState.barsMap.size,
+      cfdLastTickAt: cfdStreamState.lastTickAtMs
+        ? new Date(cfdStreamState.lastTickAtMs).toISOString()
+        : null,
+    });
+  });
+
+  app.post('/api/mt5/tick', (req, res) => {
+    const body = req.body || {};
+    const rawBars = Array.isArray(body.bars) ? body.bars : [];
+    if (rawBars.length < 36) {
+      res.status(400).json({ error: 'ต้องการแท่งเทียน M5 อย่างน้อย 36 แท่ง' });
+      return;
+    }
+
+    const cleaned: Array<Omit<M5Candle, 'ao' | 'aoRising' | 'signal'>> = [];
+    for (const item of rawBars.slice(-260)) {
+      const tVal = Number(item?.t ?? item?.time ?? 0);
+      const o = Number(item?.o ?? item?.open);
+      const h = Number(item?.h ?? item?.high);
+      const l = Number(item?.l ?? item?.low);
+      const c = Number(item?.c ?? item?.close);
+      if (
+        !Number.isFinite(tVal) ||
+        tVal <= 0 ||
+        !Number.isFinite(o) ||
+        !Number.isFinite(h) ||
+        !Number.isFinite(l) ||
+        !Number.isFinite(c)
+      ) {
+        continue;
+      }
+      const ms = tVal > 1e11 ? tVal : tVal * 1000;
+      const dt = new Date(ms);
+      cleaned.push({
+        index: cleaned.length,
+        timeLabel: formatTimeLabel(dt),
+        timestampIso: dt.toISOString(),
+        open: roundTo(o, 2),
+        high: roundTo(h, 2),
+        low: roundTo(l, 2),
+        close: roundTo(c, 2),
+        median: (roundTo(h, 2) + roundTo(l, 2)) / 2,
+      });
+    }
+
+    if (cleaned.length < 36) {
+      res.status(400).json({ error: 'ข้อมูลแท่งเทียนจาก MT5 ไม่สมบูรณ์' });
+      return;
+    }
+
+    cleaned.sort(
+      (a, b) => Date.parse(a.timestampIso) - Date.parse(b.timestampIso)
+    );
+    xmMt5Bridge.bars = cleaned.map((b, idx) => ({ ...b, index: idx }));
+    xmMt5Bridge.symbolName = String(body.symbol || 'US100Cash#').slice(0, 32);
+    xmMt5Bridge.broker = String(body.broker || 'XM Global MT5').slice(0, 48);
+    xmMt5Bridge.bid = Number(body.bid) || cleaned[cleaned.length - 1].close;
+    xmMt5Bridge.ask = Number(body.ask) || xmMt5Bridge.bid;
+    xmMt5Bridge.updatedAtMs = Date.now();
+    feedCache.delete('US100');
+
+    res.json({
+      ok: true,
+      barsCount: xmMt5Bridge.bars.length,
+      receivedAt: new Date(xmMt5Bridge.updatedAtMs).toISOString(),
+    });
+  });
+
+  app.get('/api/mt5/bridge-ea.mq5', (req, res) => {
+    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+    const host = String(req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000').split(',')[0].trim();
+    const serverBase = `${proto}://${host}`;
+    const tickUrl = `${serverBase}/api/mt5/tick`;
+    const mq5Source = `//+------------------------------------------------------------------+
+//|                                       XM_MT5_LiveBridge_EA.mq5   |
+//|         Real-Time XM MT5 M5 Candlestick Bridge (Every 2 Seconds) |
+//+------------------------------------------------------------------+
+#property copyright "AO Signal Studio"
+#property version   "1.00"
+#property strict
+
+input string InpBridgeUrl     = "${tickUrl}"; // URL รับข้อมูลกราฟจริง (เพิ่ม ${serverBase} ใน MT5 Allow WebRequest)
+input int    InpPushIntervalS = 2;     // ความถี่ในการส่งกราฟ M5 (วินาที)
+input int    InpBarsToSend    = 200;   // จำนวนแท่งเทียน M5 ล่าสุดที่ส่ง
+
+uint lastSentTickMs = 0;
+
+void PushLiveM5ToServer()
+{
+   MqlRates rates[];
+   ArraySetAsSeries(rates, false);
+   int copied = CopyRates(_Symbol, PERIOD_M5, 0, InpBarsToSend, rates);
+   if(copied < 36)
+      return;
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   string broker = AccountInfoString(ACCOUNT_COMPANY);
+
+   string barsJson = "[";
+   for(int i = 0; i < copied; i++)
+   {
+      if(i > 0) barsJson += ",";
+      barsJson += StringFormat(
+         "{\\"t\\":%I64d,\\"o\\":%.2f,\\"h\\":%.2f,\\"l\\":%.2f,\\"c\\":%.2f}",
+         (long)rates[i].time, rates[i].open, rates[i].high, rates[i].low, rates[i].close
+      );
+   }
+   barsJson += "]";
+
+   string payload = StringFormat(
+      "{\\"symbol\\":\\"%s\\",\\"broker\\":\\"%s\\",\\"bid\\":%.2f,\\"ask\\":%.2f,\\"bars\\":%s}",
+      _Symbol, broker, bid, ask, barsJson
+   );
+
+   char postData[];
+   int len = StringToCharArray(payload, postData, 0, WHOLE_ARRAY, CP_UTF8);
+   if(len > 0) ArrayResize(postData, len - 1);
+
+   string headers = "Content-Type: application/json\\r\\n";
+   char result[];
+   string resHeaders = "";
+   ResetLastError();
+   int code = WebRequest("POST", InpBridgeUrl, headers, 3000, postData, result, resHeaders);
+   if(code == -1)
+   {
+      PrintFormat("XM Bridge WebRequest Error=%d. Add %s to Tools->Options->Expert Advisors->Allow WebRequest", GetLastError(), InpBridgeUrl);
+   }
+   lastSentTickMs = GetTickCount();
+}
+
+int OnInit()
+{
+   EventSetTimer(MathMax(1, InpPushIntervalS));
+   PushLiveM5ToServer();
+   return(INIT_SUCCEEDED);
+}
+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+}
+
+void OnTimer()
+{
+   PushLiveM5ToServer();
+}
+
+void OnTick()
+{
+   if(GetTickCount() - lastSentTickMs >= 1000)
+      PushLiveM5ToServer();
+}
+//+------------------------------------------------------------------+
+`;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="XM_MT5_LiveBridge_EA.mq5"');
+    res.send(mq5Source);
   });
 
   app.get('/api/market/m5', async (req, res) => {
@@ -1403,6 +1820,9 @@ async function startServer() {
       const data = await getLiveM5Feed(sym);
       res.json({
         ...data,
+        xmBridgeConnected:
+          xmMt5Bridge.bars.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000,
+        cfdStreamConnected: cfdStreamState.connected,
         alertedBarKeys: persisted.alertedBarKeys,
         lastLiveDirection: persisted.lastLiveDirectionBySymbol[sym] || null,
       });
