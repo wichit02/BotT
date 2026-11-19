@@ -162,6 +162,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
 
   const countdownRef = useRef<number | null>(null);
   const alertedLiveBarsRef = useRef<Set<string>>(new Set<string>());
+  const lastObservedClosedBucketRef = useRef<number | null>(null);
   const barsRef = useRef<M5Bar[]>(bars);
   barsRef.current = bars;
   const spec = SYMBOL_SPECS[symbol];
@@ -267,7 +268,8 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
       timeLabel: string,
       timestampIso: string,
       sourceTag: string,
-      mode: 'live' | 'sim'
+      mode: 'live' | 'sim',
+      sendServerNotify = true
     ) => {
       const symSpec = SYMBOL_SPECS[sym];
       const timeframe = lockM5 ? 'M5' : 'Current';
@@ -292,6 +294,7 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
       trigger10sSound(signal);
 
       if (
+        mode === 'sim' &&
         typeof Notification !== 'undefined' &&
         Notification.permission === 'granted'
       ) {
@@ -321,55 +324,57 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         }
       }
 
-      void fetch('/api/monitor/notify-signal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbol: sym,
-          timeframe,
-          signal,
-          aoPrev,
-          aoCurr,
-          price,
-          mode,
-          timestampIso,
-          prefix: customPrefix,
-        }),
-      })
-        .then(async (r) => {
-          const resData = await r.json().catch(() => null);
-          if (!r.ok) {
-            setMonitorNote(resData?.error || 'ส่งสัญญาณแจ้งเตือนไม่สำเร็จ');
-            return;
-          }
-          if (resData?.skipped && resData?.reason === 'not_configured') {
-            setTelegramConfigured(false);
-            setMonitorNote(
-              mode === 'sim'
-                ? `จำลอง ${sym} ${signal} แล้ว (ยังไม่ได้เชื่อมต่อ Telegram/มือถือ)`
-                : 'ยังไม่ได้เชื่อมต่อ Telegram (กรุณากรอก Bot Token ในแท็บ Telegram)'
-            );
-            return;
-          }
-          if (resData?.ok && !resData?.deduplicated) {
-            if (resData.deliveredToTelegram) {
-              setTelegramConfigured(true);
-            }
-            const channels: string[] = [];
-            if (resData.deliveredToTelegram) channels.push('Telegram');
-            if (resData.deliveredWebPushCount > 0) channels.push('มือถือ');
-            if (resData.deliveredToNtfy) channels.push('ntfy');
-            const channelText = channels.length > 0 ? channels.join(' + ') : 'แจ้งเตือน';
-            setMonitorNote(
-              mode === 'sim'
-                ? `จำลอง ${sym} ${signal} → ส่งเข้า ${channelText} แล้ว`
-                : `ส่งสัญญาณ ${sym} ${signal} เข้า ${channelText} แล้ว`
-            );
-          }
+      if (sendServerNotify) {
+        void fetch('/api/monitor/notify-signal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            symbol: sym,
+            timeframe,
+            signal,
+            aoPrev,
+            aoCurr,
+            price,
+            mode,
+            timestampIso,
+            prefix: customPrefix,
+          }),
         })
-        .catch(() => {
-          setMonitorNote('เชื่อมต่อเซิร์ฟเวอร์สำหรับส่งแจ้งเตือนไม่สำเร็จ');
-        });
+          .then(async (r) => {
+            const resData = await r.json().catch(() => null);
+            if (!r.ok) {
+              setMonitorNote(resData?.error || 'ส่งสัญญาณแจ้งเตือนไม่สำเร็จ');
+              return;
+            }
+            if (resData?.skipped && resData?.reason === 'not_configured') {
+              setTelegramConfigured(false);
+              setMonitorNote(
+                mode === 'sim'
+                  ? `จำลอง ${sym} ${signal} แล้ว (ยังไม่ได้เชื่อมต่อ Telegram/มือถือ)`
+                  : 'ยังไม่ได้เชื่อมต่อ Telegram (กรุณากรอก Bot Token ในแท็บ Telegram)'
+              );
+              return;
+            }
+            if (resData?.ok && !resData?.deduplicated) {
+              if (resData.deliveredToTelegram) {
+                setTelegramConfigured(true);
+              }
+              const channels: string[] = [];
+              if (resData.deliveredToTelegram) channels.push('Telegram');
+              if (resData.deliveredWebPushCount > 0) channels.push('มือถือ');
+              if (resData.deliveredToNtfy) channels.push('ntfy');
+              const channelText = channels.length > 0 ? channels.join(' + ') : 'แจ้งเตือน';
+              setMonitorNote(
+                mode === 'sim'
+                  ? `จำลอง ${sym} ${signal} → ส่งเข้า ${channelText} แล้ว`
+                  : `ส่งสัญญาณ ${sym} ${signal} เข้า ${channelText} แล้ว`
+              );
+            }
+          })
+          .catch(() => {
+            setMonitorNote('เชื่อมต่อเซิร์ฟเวอร์สำหรับส่งแจ้งเตือนไม่สำเร็จ');
+          });
+      }
 
       onSignalDetected({
         id: `${sym}-${timestampIso}-${Math.random().toString(36).slice(2, 7)}`,
@@ -454,34 +459,50 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
         }
 
         // Confirmed closed M5 bar [1] vs previous closed bar [2]: AO[2] <= 0 -> AO[1] > 0 or AO[2] >= 0 -> AO[1] < 0
+        // Server background monitor is the single source of truth for Telegram/WebPush alerts;
+        // frontend only updates local UI/sound on brand-new freshly closed bars.
         const closedBar = data.bars[data.bars.length - 2];
         const prevClosedBar = data.bars[data.bars.length - 3];
-        if (closedBar && prevClosedBar && closedBar.signal) {
-          const signal = closedBar.signal;
-          const barAgeMinutes =
-            (Date.now() - new Date(closedBar.timestampIso).getTime()) / 60000;
-          const barKey = `${normalizeM5BarKey(targetSymbol, closedBar.timestampIso)}-${signal}`;
-          const alreadyAlerted = alertedLiveBarsRef.current.has(barKey);
-          const shouldNotify =
-            barAgeMinutes <= 20 &&
-            !alreadyAlerted &&
-            (alertDirection === 'both' ||
-              (alertDirection === 'buy_only' && signal === 'BUY') ||
-              (alertDirection === 'sell_only' && signal === 'SELL'));
+        if (closedBar && prevClosedBar) {
+          const closedOpenMs = Date.parse(closedBar.timestampIso);
+          if (Number.isFinite(closedOpenMs)) {
+            const closedBucketMs = Math.floor(closedOpenMs / 300000) * 300000;
+            const prevObserved = lastObservedClosedBucketRef.current;
 
-          if (shouldNotify) {
-            alertedLiveBarsRef.current.add(barKey);
-            emitAlert(
-              targetSymbol,
-              signal,
-              prevClosedBar.ao,
-              closedBar.ao,
-              closedBar.close,
-              closedBar.timeLabel,
-              closedBar.timestampIso,
-              'Live M5 Alert',
-              'live'
-            );
+            if (prevObserved === null) {
+              // First poll on page open: record baseline silently without triggering retroactive alert
+              lastObservedClosedBucketRef.current = closedBucketMs;
+            } else if (closedBucketMs > prevObserved) {
+              lastObservedClosedBucketRef.current = closedBucketMs;
+              const secSinceClose = (Date.now() - (closedBucketMs + 300000)) / 1000;
+
+              if (closedBar.signal && secSinceClose >= -5 && secSinceClose <= 90) {
+                const signal = closedBar.signal;
+                const bucketKey = normalizeM5BarKey(targetSymbol, closedBar.timestampIso);
+                const alreadyAlerted = alertedLiveBarsRef.current.has(bucketKey);
+                const shouldNotify =
+                  !alreadyAlerted &&
+                  (alertDirection === 'both' ||
+                    (alertDirection === 'buy_only' && signal === 'BUY') ||
+                    (alertDirection === 'sell_only' && signal === 'SELL'));
+
+                if (shouldNotify) {
+                  alertedLiveBarsRef.current.add(bucketKey);
+                  emitAlert(
+                    targetSymbol,
+                    signal,
+                    prevClosedBar.ao,
+                    closedBar.ao,
+                    closedBar.close,
+                    closedBar.timeLabel,
+                    closedBar.timestampIso,
+                    'Live M5 Alert',
+                    'live',
+                    false
+                  );
+                }
+              }
+            }
           }
         }
       } catch (err: any) {
@@ -543,7 +564,8 @@ export const AoChartSimulator: React.FC<AoChartSimulatorProps> = ({
           latestClosed.timeLabel,
           latestClosed.timestampIso,
           'Sim Push Sent (10s)',
-          'sim'
+          'sim',
+          Boolean(forceCross)
         );
       }
     }

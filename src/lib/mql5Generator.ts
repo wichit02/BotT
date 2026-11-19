@@ -256,6 +256,11 @@ int OnCalculate(const int rates_total,
 
    if(InpConfirmClose)
    {
+      if(lastSignalBarTime == 0)
+      {
+         lastSignalBarTime = currentBarTime;
+         return(rates_total);
+      }
       if(currentBarTime == lastSignalBarTime)
          return(rates_total);
 
@@ -605,6 +610,11 @@ void CheckAllWatchers()
 
       if(InpConfirmClose)
       {
+         if(watchers[i].lastBarTime == 0)
+         {
+            watchers[i].lastBarTime = currentBarTime;
+            continue;
+         }
          if(currentBarTime == watchers[i].lastBarTime)
             continue;
 

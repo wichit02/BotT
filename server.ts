@@ -256,6 +256,7 @@ const monitorRuntime = {
   lastCheckedMs: 0,
   isRunningCycle: false,
   lastBarBySymbol: {} as Partial<Record<TradingSymbol, string>>,
+  lastClosedBarBucketMsBySymbol: {} as Partial<Record<TradingSymbol, number>>,
   dispatchedLiveSignalKeys: new Set<string>(),
 };
 
@@ -279,12 +280,14 @@ function normalizeM5BarKey(sym: TradingSymbol, barTimestampIso: string): string 
 function hasClosedBarBeenAlerted(
   sym: TradingSymbol,
   barTimestampIso: string,
-  signal: 'BUY' | 'SELL'
+  _signal?: 'BUY' | 'SELL'
 ): boolean {
-  const barKey = `${normalizeM5BarKey(sym, barTimestampIso)}-${signal}`;
+  const bucketKey = normalizeM5BarKey(sym, barTimestampIso);
   return (
-    monitorRuntime.dispatchedLiveSignalKeys.has(barKey) ||
-    persisted.alertedBarKeys.includes(barKey)
+    monitorRuntime.dispatchedLiveSignalKeys.has(bucketKey) ||
+    persisted.alertedBarKeys.includes(bucketKey) ||
+    persisted.alertedBarKeys.includes(`${bucketKey}-BUY`) ||
+    persisted.alertedBarKeys.includes(`${bucketKey}-SELL`)
   );
 }
 
@@ -293,10 +296,10 @@ function recordClosedBarAlerted(
   barTimestampIso: string,
   signal: 'BUY' | 'SELL'
 ): void {
-  const barKey = `${normalizeM5BarKey(sym, barTimestampIso)}-${signal}`;
-  markLiveSignalDispatched(barKey);
-  if (!persisted.alertedBarKeys.includes(barKey)) {
-    persisted.alertedBarKeys = [barKey, ...persisted.alertedBarKeys].slice(0, 60);
+  const bucketKey = normalizeM5BarKey(sym, barTimestampIso);
+  markLiveSignalDispatched(bucketKey);
+  if (!persisted.alertedBarKeys.includes(bucketKey)) {
+    persisted.alertedBarKeys = [bucketKey, ...persisted.alertedBarKeys].slice(0, 60);
   }
   persisted.lastLiveDirectionBySymbol[sym] = signal;
   syncPersistence();
@@ -1528,11 +1531,33 @@ async function runBackgroundMonitorCycle() {
         // Confirmed closed M5 bar [1] vs previous closed bar [2] (AO[2] <= 0 -> AO[1] > 0 or AO[2] >= 0 -> AO[1] < 0)
         const closedBar = bars[bars.length - 2];
         const prevClosedBar = bars[bars.length - 3];
-        if (!closedBar || !prevClosedBar || !closedBar.signal) continue;
+        if (!closedBar || !prevClosedBar) continue;
 
-        const barAgeMinutes =
-          (Date.now() - new Date(closedBar.timestampIso).getTime()) / 60000;
-        if (barAgeMinutes > 20) continue;
+        const closedBarOpenMs = Date.parse(closedBar.timestampIso);
+        if (!Number.isFinite(closedBarOpenMs)) continue;
+        const closedBucketMs = Math.floor(closedBarOpenMs / 300000) * 300000;
+
+        // First observation after server startup: record baseline silently so past candles never fire retroactively
+        const prevBaselineMs = monitorRuntime.lastClosedBarBucketMsBySymbol[sym];
+        if (prevBaselineMs === undefined) {
+          monitorRuntime.lastClosedBarBucketMsBySymbol[sym] = closedBucketMs;
+          continue;
+        }
+
+        // Only process when a brand-new M5 candle closes moving forward in time
+        if (closedBucketMs <= prevBaselineMs) {
+          continue;
+        }
+        monitorRuntime.lastClosedBarBucketMsBySymbol[sym] = closedBucketMs;
+
+        // Must be freshly closed (within 90 seconds of the exact candle close boundary)
+        const closedBarCloseMs = closedBucketMs + 300000;
+        const secondsSinceClose = (Date.now() - closedBarCloseMs) / 1000;
+        if (secondsSinceClose < -5 || secondsSinceClose > 90) {
+          continue;
+        }
+
+        if (!closedBar.signal) continue;
 
         const signal = closedBar.signal;
         if (persisted.direction === 'buy_only' && signal !== 'BUY') continue;
@@ -1541,6 +1566,7 @@ async function runBackgroundMonitorCycle() {
         if (hasClosedBarBeenAlerted(sym, closedBar.timestampIso, signal)) {
           continue;
         }
+        // Lock synchronously before awaiting network calls so overlapping ticks can never duplicate
         recordClosedBarAlerted(sym, closedBar.timestampIso, signal);
         monitorRuntime.lastBarBySymbol[sym] = `${closedBar.timestampIso}:${signal}`;
 
@@ -1938,6 +1964,7 @@ void OnTick()
     persisted.enabled = true;
     persisted.telegramMode = 'always';
     monitorRuntime.lastBarBySymbol = {};
+    monitorRuntime.lastClosedBarBucketMsBySymbol = {};
     monitorRuntime.dispatchedLiveSignalKeys.clear();
     syncPersistence();
     res.json({
