@@ -4,68 +4,7 @@
     "US100"
   ],
   "direction": "both",
-  "totalCapturedSignals": 5,
-  "latestSignalAt": "19/11/2569 22:15:04",
-  "events": [
-    {
-      "id": "US100-2026-11-19T15:10:00.000Z-SELL-1795101304476",
-      "timestamp": "19/11/2569 22:15:04",
-      "symbol": "US100",
-      "signal": "SELL",
-      "aoPrev": 0.7850000000034925,
-      "aoCurr": -23.16029411763884,
-      "price": 27482.7,
-      "deliveredToTelegram": true,
-      "deliveredToNtfy": false,
-      "deliveredWebPushCount": 0
-    },
-    {
-      "id": "live-US100-1795101003382",
-      "timestamp": "19/11/2569 22:10:03",
-      "symbol": "US100",
-      "signal": "BUY",
-      "aoPrev": -1.9326470588130178,
-      "aoCurr": 0.7850000000034925,
-      "price": 27609.7,
-      "deliveredToTelegram": true,
-      "deliveredToNtfy": false,
-      "deliveredWebPushCount": 0
-    },
-    {
-      "id": "US100-2026-11-19T15:00:00.000Z-SELL-1795100703859",
-      "timestamp": "19/11/2569 22:05:03",
-      "symbol": "US100",
-      "signal": "SELL",
-      "aoPrev": 6.477058823544212,
-      "aoCurr": -1.9326470588130178,
-      "price": 27667.1,
-      "deliveredToTelegram": true,
-      "deliveredToNtfy": false,
-      "deliveredWebPushCount": 0
-    },
-    {
-      "id": "live-US100-1795100111215",
-      "timestamp": "19/11/2569 21:55:11",
-      "symbol": "US100",
-      "signal": "BUY",
-      "aoPrev": -11.73602941176432,
-      "aoCurr": 3.4301470588252414,
-      "price": 27745,
-      "deliveredToTelegram": true,
-      "deliveredToNtfy": false,
-      "deliveredWebPushCount": 0
-    },
-    {
-      "id": "sim-US100-1795098464137",
-      "timestamp": "19/11/2569 21:27:44",
-      "symbol": "US100",
-      "signal": "SELL",
-      "aoPrev": 4.776382352945802,
-      "aoCurr": -16.6327647058788,
-      "price": 20956.65,
-      "deliveredToTelegram": true,
-      "deliveredToNtfy": false,
-      "deliveredWebPushCount": 0
-    }
-  ]
+  "totalCapturedSignals": 0,
+  "latestSignalAt": null,
+  "events": []
 }
