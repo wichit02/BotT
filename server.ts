@@ -1112,6 +1112,7 @@ function connectRealtimeCfdStream() {
 
   const ticker = CFD_TICKERS[cfdStreamState.tickerIndex % CFD_TICKERS.length];
   const sessionId = `cs_${Math.random().toString(36).slice(2, 10)}`;
+  const sessionIdM1 = `cs_${Math.random().toString(36).slice(2, 10)}`;
   const quoteSessionId = `qs_${Math.random().toString(36).slice(2, 10)}`;
 
   try {
@@ -1138,7 +1139,17 @@ function connectRealtimeCfdStream() {
         ])
       );
       ws.send(tvFrame('create_series', [sessionId, 'sds_1', 's1', 'sds_sym_1', '5', 260]));
-      ws.send(tvFrame('create_series', [sessionId, 'sds_2', 's2', 'sds_sym_1', '1', 260]));
+
+      ws.send(tvFrame('chart_create_session', [sessionIdM1, '']));
+      ws.send(
+        tvFrame('resolve_symbol', [
+          sessionIdM1,
+          'sds_sym_2',
+          '=' + JSON.stringify({ symbol: ticker, adjustment: 'splits' }),
+        ])
+      );
+      ws.send(tvFrame('create_series', [sessionIdM1, 'sds_2', 's2', 'sds_sym_2', '1', 260]));
+
       ws.send(tvFrame('quote_create_session', [quoteSessionId]));
       ws.send(tvFrame('quote_add_symbols', [quoteSessionId, ticker]));
     };
@@ -1345,7 +1356,7 @@ async function fetchYahooM5(
 ): Promise<MarketFeedResult> {
   const mapping = YAHOO_SYMBOL_MAP[symbol];
   const intervalParam = timeframe === 'M1' ? '1m' : '5m';
-  const rangeParam = timeframe === 'M1' ? '1d' : '5d';
+  const rangeParam = timeframe === 'M1' ? '2d' : '5d';
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     mapping.ticker
   )}?interval=${intervalParam}&range=${rangeParam}`;
