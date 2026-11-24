@@ -192,7 +192,7 @@ export default function App() {
             {/* Zone 2: concise single-line nav links */}
             <nav
               aria-label="เมนูหลัก"
-              className="hidden md:flex items-center gap-6 text-sm font-medium"
+              className="hidden md:flex items-center gap-4 lg:gap-5 text-sm font-medium"
             >
               {NAV_ITEMS.map((item) => {
                 const isActive = activeSection === item.id;
