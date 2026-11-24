@@ -308,7 +308,7 @@ export default function App() {
             </h1>
             <p className="mt-1 text-xs text-slate-500">
               {activeSection === 'stoch'
-                ? 'MetaTrader 5 · US100 M5 · Stoch(15,3,3) ระดับ 20 / 80'
+                ? 'MetaTrader 5 · US100 M5 · Stoch(15,3,3) เส้นสีฟ้าเส้นเดียว · แจ้งเตือนปิด > 80 / < 20'
                 : isWebMode
                 ? 'MetaTrader 5 · BUY / SELL'
                 : 'MetaTrader 5 · BUY / SELL · เสียงแจ้งเตือน 10 วินาที · Google Sheets'}
