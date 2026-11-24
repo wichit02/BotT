@@ -63,6 +63,22 @@ interface StoredPushSubscription {
   };
 }
 
+interface StochMonitorConfig {
+  kPeriod: number;
+  dPeriod: number;
+  slowing: number;
+  upperLevel: number;
+  lowerLevel: number;
+}
+
+const DEFAULT_STOCH_CONFIG: StochMonitorConfig = {
+  kPeriod: 15,
+  dPeriod: 3,
+  slowing: 3,
+  upperLevel: 80,
+  lowerLevel: 20,
+};
+
 interface PersistedServerState {
   vapidKeys: { publicKey: string; privateKey: string };
   enabled: boolean;
@@ -86,6 +102,8 @@ interface PersistedServerState {
   githubLastCommitUrl: string | null;
   githubLastError: string | null;
   alertedBarKeys: string[];
+  alertedStochBarKeys: string[];
+  stochConfig: StochMonitorConfig;
   lastLiveDirectionBySymbol: Partial<Record<TradingSymbol, 'BUY' | 'SELL'>>;
 }
 
@@ -193,6 +211,19 @@ function loadPersistedState(): PersistedServerState {
         alertedBarKeys: Array.isArray(parsed.alertedBarKeys)
           ? parsed.alertedBarKeys.filter((k): k is string => typeof k === 'string').slice(0, 60)
           : [],
+        alertedStochBarKeys: Array.isArray(parsed.alertedStochBarKeys)
+          ? parsed.alertedStochBarKeys.filter((k): k is string => typeof k === 'string').slice(0, 60)
+          : [],
+        stochConfig:
+          parsed.stochConfig && typeof parsed.stochConfig === 'object'
+            ? {
+                kPeriod: Math.max(1, Math.floor(Number(parsed.stochConfig.kPeriod) || 15)),
+                dPeriod: Math.max(1, Math.floor(Number(parsed.stochConfig.dPeriod) || 3)),
+                slowing: Math.max(1, Math.floor(Number(parsed.stochConfig.slowing) || 3)),
+                upperLevel: Math.min(99, Math.max(51, Number(parsed.stochConfig.upperLevel) || 80)),
+                lowerLevel: Math.max(1, Math.min(49, Number(parsed.stochConfig.lowerLevel) || 20)),
+              }
+            : { ...DEFAULT_STOCH_CONFIG },
         lastLiveDirectionBySymbol:
           parsed.lastLiveDirectionBySymbol && typeof parsed.lastLiveDirectionBySymbol === 'object'
             ? parsed.lastLiveDirectionBySymbol
@@ -231,6 +262,8 @@ function loadPersistedState(): PersistedServerState {
     githubLastCommitUrl: null,
     githubLastError: null,
     alertedBarKeys: [],
+    alertedStochBarKeys: [],
+    stochConfig: { ...DEFAULT_STOCH_CONFIG },
     lastLiveDirectionBySymbol: {},
   };
   savePersistedState(initial);
@@ -261,6 +294,7 @@ const monitorRuntime = {
   lastBarBySymbol: {} as Partial<Record<TradingSymbol, string>>,
   lastClosedBarBucketMsBySymbol: {} as Partial<Record<TradingSymbol, number>>,
   dispatchedLiveSignalKeys: new Set<string>(),
+  dispatchedStochSignalKeys: new Set<string>(),
 };
 
 function markLiveSignalDispatched(key: string) {
@@ -305,6 +339,27 @@ function recordClosedBarAlerted(
     persisted.alertedBarKeys = [bucketKey, ...persisted.alertedBarKeys].slice(0, 60);
   }
   persisted.lastLiveDirectionBySymbol[sym] = signal;
+  syncPersistence();
+}
+
+function hasClosedStochBarBeenAlerted(sym: TradingSymbol, barTimestampIso: string): boolean {
+  const bucketKey = `STOCH-${normalizeM5BarKey(sym, barTimestampIso)}`;
+  return (
+    monitorRuntime.dispatchedStochSignalKeys.has(bucketKey) ||
+    persisted.alertedStochBarKeys.includes(bucketKey)
+  );
+}
+
+function recordClosedStochBarAlerted(sym: TradingSymbol, barTimestampIso: string): void {
+  const bucketKey = `STOCH-${normalizeM5BarKey(sym, barTimestampIso)}`;
+  monitorRuntime.dispatchedStochSignalKeys.add(bucketKey);
+  if (monitorRuntime.dispatchedStochSignalKeys.size > 300) {
+    const first = monitorRuntime.dispatchedStochSignalKeys.values().next().value;
+    if (first) monitorRuntime.dispatchedStochSignalKeys.delete(first);
+  }
+  if (!persisted.alertedStochBarKeys.includes(bucketKey)) {
+    persisted.alertedStochBarKeys = [bucketKey, ...persisted.alertedStochBarKeys].slice(0, 60);
+  }
   syncPersistence();
 }
 
@@ -950,6 +1005,58 @@ function computeAwesomeOscillator(
   return out;
 }
 
+function computeStochMainSeries(
+  bars: M5Candle[],
+  cfg: StochMonitorConfig
+): Array<{ k: number; signal: 'BUY' | 'SELL' | null; triggerType: 'ABOVE_80' | 'BELOW_20' | null }> {
+  const kPeriod = Math.max(1, Math.floor(cfg.kPeriod));
+  const slowing = Math.max(1, Math.floor(cfg.slowing));
+  const numerators: number[] = new Array(bars.length).fill(0);
+  const denominators: number[] = new Array(bars.length).fill(0);
+  const kValues: number[] = new Array(bars.length).fill(50);
+
+  for (let i = 0; i < bars.length; i++) {
+    const startIdx = Math.max(0, i - kPeriod + 1);
+    let lowest = Infinity;
+    let highest = -Infinity;
+    for (let j = startIdx; j <= i; j++) {
+      if (bars[j].low < lowest) lowest = bars[j].low;
+      if (bars[j].high > highest) highest = bars[j].high;
+    }
+    numerators[i] = bars[i].close - lowest;
+    denominators[i] = highest - lowest;
+  }
+
+  for (let i = 0; i < bars.length; i++) {
+    const slowStart = Math.max(0, i - slowing + 1);
+    let sumNum = 0;
+    let sumDen = 0;
+    for (let j = slowStart; j <= i; j++) {
+      sumNum += numerators[j];
+      sumDen += denominators[j];
+    }
+    const rawK = sumDen > 1e-9 ? (sumNum / sumDen) * 100 : 50;
+    kValues[i] = Math.min(100, Math.max(0, rawK));
+  }
+
+  const warmup = kPeriod + slowing - 1;
+  return kValues.map((k, i) => {
+    const prevK = i > 0 ? kValues[i - 1] : k;
+    let signal: 'BUY' | 'SELL' | null = null;
+    let triggerType: 'ABOVE_80' | 'BELOW_20' | null = null;
+    if (i >= warmup) {
+      if (prevK <= cfg.upperLevel && k > cfg.upperLevel) {
+        signal = 'SELL';
+        triggerType = 'ABOVE_80';
+      } else if (prevK >= cfg.lowerLevel && k < cfg.lowerLevel) {
+        signal = 'BUY';
+        triggerType = 'BELOW_20';
+      }
+    }
+    return { k, signal, triggerType };
+  });
+}
+
 interface RawM5Bar {
   tSec: number;
   open: number;
@@ -1411,6 +1518,44 @@ function formatTelegramSignalMessage(params: {
   ].join('\n');
 }
 
+function formatTelegramStochMessage(params: {
+  symbol: string;
+  timeframe: string;
+  triggerType: 'ABOVE_80' | 'BELOW_20';
+  kPrev: number;
+  kCurr: number;
+  price: number;
+  stochConfig: StochMonitorConfig;
+  mode: 'live' | 'sim';
+  timestampIso?: string;
+}): string {
+  const isAbove = params.triggerType === 'ABOVE_80';
+  const badge = isAbove
+    ? `🔴 ปิดสูงกว่า ${params.stochConfig.upperLevel}`
+    : `🟢 ปิดต่ำกว่า ${params.stochConfig.lowerLevel}`;
+  const condition = isAbove
+    ? `Stoch(${params.stochConfig.kPeriod},${params.stochConfig.dPeriod},${params.stochConfig.slowing}) ปิดสูงกว่า ${params.stochConfig.upperLevel.toFixed(2)} 🔴⬆️`
+    : `Stoch(${params.stochConfig.kPeriod},${params.stochConfig.dPeriod},${params.stochConfig.slowing}) ปิดต่ำกว่า ${params.stochConfig.lowerLevel.toFixed(2)} 🟢⬇️`;
+  const modeLabel = params.mode === 'live' ? 'กราฟจริง' : 'แบบจำลอง';
+  const timeDate = params.timestampIso ? new Date(params.timestampIso) : new Date();
+  const timeText = timeDate.toLocaleTimeString('th-TH', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Bangkok',
+  });
+
+  return [
+    `<b>${badge}  ·  ${escapeTelegramHtml(params.symbol)} (${escapeTelegramHtml(params.timeframe)})</b>`,
+    '──────────────',
+    `เงื่อนไข: ${condition}`,
+    `ค่าเส้นฟ้า %K: ${params.kPrev.toFixed(2)} → ${params.kCurr.toFixed(2)}`,
+    `ราคาปิด: ${params.price.toFixed(2)}`,
+    `โหมด: ${modeLabel}`,
+    `เวลา: ${timeText} น.`,
+  ].join('\n');
+}
+
 function sanitizeTelegramToken(botToken: string): string {
   return botToken.trim().replace(/[^0-9A-Za-z:_-]/g, '');
 }
@@ -1606,72 +1751,148 @@ async function runBackgroundMonitorCycle() {
           continue;
         }
 
-        if (!closedBar.signal) continue;
+        // 1) Awesome Oscillator zero-cross alert (once per closed candle)
+        if (closedBar.signal) {
+          const signal = closedBar.signal;
+          const allowDir =
+            (persisted.direction !== 'buy_only' || signal === 'BUY') &&
+            (persisted.direction !== 'sell_only' || signal === 'SELL');
 
-        const signal = closedBar.signal;
-        if (persisted.direction === 'buy_only' && signal !== 'BUY') continue;
-        if (persisted.direction === 'sell_only' && signal !== 'SELL') continue;
+          if (allowDir && !hasClosedBarBeenAlerted(sym, closedBar.timestampIso, signal)) {
+            // Lock synchronously before awaiting network calls so overlapping ticks can never duplicate
+            recordClosedBarAlerted(sym, closedBar.timestampIso, signal);
+            monitorRuntime.lastBarBySymbol[sym] = `${closedBar.timestampIso}:${signal}`;
 
-        if (hasClosedBarBeenAlerted(sym, closedBar.timestampIso, signal)) {
-          continue;
-        }
-        // Lock synchronously before awaiting network calls so overlapping ticks can never duplicate
-        recordClosedBarAlerted(sym, closedBar.timestampIso, signal);
-        monitorRuntime.lastBarBySymbol[sym] = `${closedBar.timestampIso}:${signal}`;
+            const title = `AO M5 ${signal}: ${sym}`;
+            const body = `${sym} M5 ${signal} | AO ${prevClosedBar.ao.toFixed(
+              3
+            )} → ${closedBar.ao.toFixed(3)} | ราคา ${closedBar.close}`;
 
-        const title = `AO M5 ${signal}: ${sym}`;
-        const body = `${sym} M5 ${signal} | AO ${prevClosedBar.ao.toFixed(
-          3
-        )} → ${closedBar.ao.toFixed(3)} | ราคา ${closedBar.close}`;
-
-        const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
-          broadcastWebPush({
-            title,
-            body,
-            tag: `ao-${sym}-${signal}-${Date.now()}`,
-            url: '/',
-          }),
-          persisted.ntfyTopic
-            ? sendNtfyPush(persisted.ntfyTopic, title, body)
-            : Promise.resolve(false),
-        ]);
-
-        const shouldSendTelegram =
-          Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
-          (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
-
-        const tgRes = shouldSendTelegram
-          ? await sendTelegramPush(
-              persisted.telegramBotToken,
-              persisted.telegramChatId,
-              formatTelegramSignalMessage({
-                symbol: sym,
-                timeframe: 'M5',
-                signal,
-                aoPrev: prevClosedBar.ao,
-                aoCurr: closedBar.ao,
-                mode: 'live',
-                timestampIso: closedBar.timestampIso,
+            const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
+              broadcastWebPush({
+                title,
+                body,
+                tag: `ao-${sym}-${signal}-${Date.now()}`,
+                url: '/',
               }),
-              'HTML'
-            )
-          : { ok: false };
+              persisted.ntfyTopic
+                ? sendNtfyPush(persisted.ntfyTopic, title, body)
+                : Promise.resolve(false),
+            ]);
 
-        persisted.events.unshift({
-          id: `${sym}-${closedBar.timestampIso}-${signal}-${Date.now()}`,
-          timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
-          symbol: sym,
-          signal,
-          aoPrev: prevClosedBar.ao,
-          aoCurr: closedBar.ao,
-          price: closedBar.close,
-          deliveredToNtfy,
-          deliveredToTelegram: tgRes.ok,
-          deliveredWebPushCount,
-        });
-        persisted.events = persisted.events.slice(0, 30);
-        syncPersistence();
-        scheduleGithubAutoSync('signal-event', 1000);
+            const shouldSendTelegram =
+              Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
+              (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
+
+            const tgRes = shouldSendTelegram
+              ? await sendTelegramPush(
+                  persisted.telegramBotToken,
+                  persisted.telegramChatId,
+                  formatTelegramSignalMessage({
+                    symbol: sym,
+                    timeframe: 'M5',
+                    signal,
+                    aoPrev: prevClosedBar.ao,
+                    aoCurr: closedBar.ao,
+                    mode: 'live',
+                    timestampIso: closedBar.timestampIso,
+                  }),
+                  'HTML'
+                )
+              : { ok: false };
+
+            persisted.events.unshift({
+              id: `${sym}-${closedBar.timestampIso}-${signal}-${Date.now()}`,
+              timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+              symbol: sym,
+              signal,
+              aoPrev: prevClosedBar.ao,
+              aoCurr: closedBar.ao,
+              price: closedBar.close,
+              deliveredToNtfy,
+              deliveredToTelegram: tgRes.ok,
+              deliveredWebPushCount,
+            });
+            persisted.events = persisted.events.slice(0, 30);
+            syncPersistence();
+            scheduleGithubAutoSync('signal-event', 1000);
+          }
+        }
+
+        // 2) Stoch(15,3,3) single cyan %K line threshold alert (>80 or <20 on candle close, once per threshold cross)
+        const stochSeries = computeStochMainSeries(bars, persisted.stochConfig);
+        const closedStoch = stochSeries[stochSeries.length - 2];
+        const prevClosedStoch = stochSeries[stochSeries.length - 3];
+        if (
+          closedStoch &&
+          prevClosedStoch &&
+          closedStoch.signal &&
+          closedStoch.triggerType &&
+          !hasClosedStochBarBeenAlerted(sym, closedBar.timestampIso)
+        ) {
+          recordClosedStochBarAlerted(sym, closedBar.timestampIso);
+          const sSignal = closedStoch.signal;
+          const sTrigger = closedStoch.triggerType;
+          const isAbove = sTrigger === 'ABOVE_80';
+          const thresholdLabel = isAbove
+            ? `ปิดสูงกว่า ${persisted.stochConfig.upperLevel}`
+            : `ปิดต่ำกว่า ${persisted.stochConfig.lowerLevel}`;
+          const title = `Stoch(${persisted.stochConfig.kPeriod},${persisted.stochConfig.dPeriod},${persisted.stochConfig.slowing}) M5 ${thresholdLabel}: ${sym}`;
+          const body = `${sym} M5 %K ${prevClosedStoch.k.toFixed(2)} → ${closedStoch.k.toFixed(
+            2
+          )} | ราคา ${closedBar.close}`;
+
+          const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
+            broadcastWebPush({
+              title,
+              body,
+              tag: `stoch-${sym}-${sTrigger}-${Date.now()}`,
+              url: '/',
+            }),
+            persisted.ntfyTopic
+              ? sendNtfyPush(persisted.ntfyTopic, title, body)
+              : Promise.resolve(false),
+          ]);
+
+          const shouldSendTelegram =
+            Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
+            (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
+
+          const tgRes = shouldSendTelegram
+            ? await sendTelegramPush(
+                persisted.telegramBotToken,
+                persisted.telegramChatId,
+                formatTelegramStochMessage({
+                  symbol: sym,
+                  timeframe: 'M5',
+                  triggerType: sTrigger,
+                  kPrev: prevClosedStoch.k,
+                  kCurr: closedStoch.k,
+                  price: closedBar.close,
+                  stochConfig: persisted.stochConfig,
+                  mode: 'live',
+                  timestampIso: closedBar.timestampIso,
+                }),
+                'HTML'
+              )
+            : { ok: false };
+
+          persisted.events.unshift({
+            id: `stoch-${sym}-${closedBar.timestampIso}-${sTrigger}-${Date.now()}`,
+            timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+            symbol: sym,
+            signal: sSignal,
+            aoPrev: prevClosedStoch.k,
+            aoCurr: closedStoch.k,
+            price: closedBar.close,
+            deliveredToNtfy,
+            deliveredToTelegram: tgRes.ok,
+            deliveredWebPushCount,
+          });
+          persisted.events = persisted.events.slice(0, 30);
+          syncPersistence();
+          scheduleGithubAutoSync('stoch-signal-event', 1000);
+        }
       } catch {
         // Keep polling remaining symbols
       }
@@ -2005,6 +2226,8 @@ void OnTick()
       lastCheckedAt: monitorRuntime.lastCheckedAt,
       events: persisted.events,
       alertedBarKeys: persisted.alertedBarKeys,
+      alertedStochBarKeys: persisted.alertedStochBarKeys,
+      stochConfig: persisted.stochConfig,
       lastLiveDirectionBySymbol: persisted.lastLiveDirectionBySymbol,
     });
   });
@@ -2012,6 +2235,7 @@ void OnTick()
   app.post('/api/monitor/reset', (_req, res) => {
     persisted.events = [];
     persisted.alertedBarKeys = [];
+    persisted.alertedStochBarKeys = [];
     persisted.lastLiveDirectionBySymbol = {};
     persisted.subscriptions = [];
     persisted.ntfyTopic = '';
@@ -2022,12 +2246,14 @@ void OnTick()
     monitorRuntime.lastBarBySymbol = {};
     monitorRuntime.lastClosedBarBucketMsBySymbol = {};
     monitorRuntime.dispatchedLiveSignalKeys.clear();
+    monitorRuntime.dispatchedStochSignalKeys.clear();
     syncPersistence();
     res.json({
       ok: true,
       symbols: persisted.symbols,
       events: persisted.events,
       alertedBarKeys: persisted.alertedBarKeys,
+      alertedStochBarKeys: persisted.alertedStochBarKeys,
       telegramChatId: persisted.telegramChatId,
       telegramMode: persisted.telegramMode,
     });
@@ -2070,6 +2296,15 @@ void OnTick()
     ) {
       persisted.direction = body.direction;
     }
+    if (body.stochConfig && typeof body.stochConfig === 'object') {
+      persisted.stochConfig = {
+        kPeriod: Math.max(1, Math.min(100, Math.floor(Number(body.stochConfig.kPeriod) || 15))),
+        dPeriod: Math.max(1, Math.min(50, Math.floor(Number(body.stochConfig.dPeriod) || 3))),
+        slowing: Math.max(1, Math.min(50, Math.floor(Number(body.stochConfig.slowing) || 3))),
+        upperLevel: Math.min(99, Math.max(51, Number(body.stochConfig.upperLevel) || 80)),
+        lowerLevel: Math.max(1, Math.min(49, Number(body.stochConfig.lowerLevel) || 20)),
+      };
+    }
 
     syncPersistence();
 
@@ -2090,6 +2325,7 @@ void OnTick()
       telegramChatId: persisted.telegramChatId,
       telegramMode: persisted.telegramMode,
       direction: persisted.direction,
+      stochConfig: persisted.stochConfig,
       subscribersCount: persisted.subscriptions.length,
       lastCheckedAt: monitorRuntime.lastCheckedAt,
       events: persisted.events,
@@ -2232,6 +2468,7 @@ void OnTick()
 
   app.post('/api/monitor/notify-signal', async (req, res) => {
     const body = req.body || {};
+    const indicator = body.indicator === 'STOCH' ? 'STOCH' : 'AO';
     const symbol = String(body.symbol || 'US100').toUpperCase();
     const timeframe = String(body.timeframe || 'M5');
     const signal = body.signal === 'SELL' ? 'SELL' : 'BUY';
@@ -2257,17 +2494,27 @@ void OnTick()
     }
 
     const modeBadge = mode === 'sim' ? '[จำลอง] ' : '';
-    const title = `${modeBadge}AO ${timeframe} ${signal}: ${symbol}`;
-    const pushBody = `${symbol} ${timeframe} ${signal} | AO ${aoPrev.toFixed(
-      3
-    )} → ${aoCurr.toFixed(3)} | ราคา ${price}`;
+    const stochTrigger: 'ABOVE_80' | 'BELOW_20' =
+      body.triggerType === 'ABOVE_80' || signal === 'SELL' ? 'ABOVE_80' : 'BELOW_20';
+    const title =
+      indicator === 'STOCH'
+        ? `${modeBadge}Stoch(${persisted.stochConfig.kPeriod},${persisted.stochConfig.dPeriod},${persisted.stochConfig.slowing}) ${timeframe} ${
+            stochTrigger === 'ABOVE_80'
+              ? `ปิดสูงกว่า ${persisted.stochConfig.upperLevel}`
+              : `ปิดต่ำกว่า ${persisted.stochConfig.lowerLevel}`
+          }: ${symbol}`
+        : `${modeBadge}AO ${timeframe} ${signal}: ${symbol}`;
+    const pushBody =
+      indicator === 'STOCH'
+        ? `${symbol} ${timeframe} | %K ${aoPrev.toFixed(2)} → ${aoCurr.toFixed(2)} | ราคา ${price}`
+        : `${symbol} ${timeframe} ${signal} | AO ${aoPrev.toFixed(3)} → ${aoCurr.toFixed(3)} | ราคา ${price}`;
 
     const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
       hasWebPush
         ? broadcastWebPush({
             title,
             body: pushBody,
-            tag: `ao-${mode}-${symbol}-${Date.now()}`,
+            tag: `${indicator.toLowerCase()}-${mode}-${symbol}-${Date.now()}`,
             url: '/',
           })
         : Promise.resolve(0),
@@ -2278,15 +2525,28 @@ void OnTick()
     let tgError: string | undefined;
 
     if (hasTelegram) {
-      const text = formatTelegramSignalMessage({
-        symbol,
-        timeframe,
-        signal,
-        aoPrev,
-        aoCurr,
-        mode,
-        timestampIso,
-      });
+      const text =
+        indicator === 'STOCH'
+          ? formatTelegramStochMessage({
+              symbol,
+              timeframe,
+              triggerType: stochTrigger,
+              kPrev: aoPrev,
+              kCurr: aoCurr,
+              price,
+              stochConfig: persisted.stochConfig,
+              mode,
+              timestampIso,
+            })
+          : formatTelegramSignalMessage({
+              symbol,
+              timeframe,
+              signal,
+              aoPrev,
+              aoCurr,
+              mode,
+              timestampIso,
+            });
 
       const tgRes = await sendTelegramPush(
         persisted.telegramBotToken,
