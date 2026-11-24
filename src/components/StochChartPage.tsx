@@ -73,9 +73,12 @@ function formatMt5AxisDate(timestampIso: string): string {
   return `${day} ${month} ${hour}:${minute}`;
 }
 
-function formatBarCountdown(): string {
+type ChartTimeframe = 'M5' | 'M1';
+
+function formatBarCountdown(timeframe: ChartTimeframe): string {
+  const periodSec = timeframe === 'M1' ? 60 : 300;
   const nowSec = Math.floor(Date.now() / 1000);
-  const remaining = 300 - (nowSec % 300);
+  const remaining = periodSec - (nowSec % periodSec);
   const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
   const ss = String(remaining % 60).padStart(2, '0');
   return `${mm}:${ss}`;
@@ -90,8 +93,9 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
   const spec = SYMBOL_SPECS[symbol];
 
   const [feedMode, setFeedMode] = useState<'live' | 'sim'>('live');
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>('M5');
   const [stochParams, setStochParams] = useState<StochParams>(DEFAULT_STOCH_PARAMS);
-  const [bars, setBars] = useState<M5Bar[]>(() => generateInitialSeries('US100', 140));
+  const [bars, setBars] = useState<M5Bar[]>(() => generateInitialSeries('US100', 140, 5));
   const [marketState, setMarketState] = useState<string>('');
   const [feedSource, setFeedSource] = useState<string>('');
   const [liveBidAsk, setLiveBidAsk] = useState<{
@@ -102,7 +106,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
   const [xmBridgeConnected, setXmBridgeConnected] = useState(false);
   const [isLoadingLive, setIsLoadingLive] = useState(false);
   const [liveError, setLiveError] = useState<string | null>(null);
-  const [barCountdown, setBarCountdown] = useState<string>(() => formatBarCountdown());
+  const [barCountdown, setBarCountdown] = useState<string>(() => formatBarCountdown('M5'));
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -200,11 +204,12 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
   }, [stochSeries]);
 
   useEffect(() => {
+    setBarCountdown(formatBarCountdown(timeframe));
     const id = window.setInterval(() => {
-      setBarCountdown(formatBarCountdown());
+      setBarCountdown(formatBarCountdown(timeframe));
     }, 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [timeframe]);
 
   const stopAudioAndTimer = () => {
     stop10SecondSound();
@@ -497,14 +502,16 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
     async (silent = false) => {
       if (!silent) setIsLoadingLive(true);
       setLiveError(null);
+      const requestTf = timeframe;
+      const endpoint = requestTf === 'M1' ? '/api/market/m1' : '/api/market/m5';
       try {
         const res = await fetch(
-          `/api/market/m5?symbol=${encodeURIComponent(symbol)}&_t=${Date.now()}`,
+          `${endpoint}?symbol=${encodeURIComponent(symbol)}&_t=${Date.now()}`,
           { cache: 'no-store' }
         );
         if (!res.ok) {
           const errBody = await res.json().catch(() => ({}));
-          throw new Error(errBody.error || 'ดึงข้อมูลกราฟจริงไม่สำเร็จ');
+          throw new Error(errBody.error || `ดึงข้อมูลกราฟจริง ${requestTf} ไม่สำเร็จ`);
         }
         const data = (await res.json()) as LiveFeedResponse;
         setBars(data.bars);
@@ -517,39 +524,42 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
         });
         setXmBridgeConnected(Boolean(data.xmBridgeConnected));
 
-        const computed = computeStochasticSeries(data.bars, stochParams);
-        const closedBar = computed[computed.length - 2];
-        const prevClosedBar = computed[computed.length - 3];
-        if (closedBar && prevClosedBar) {
-          const closedOpenMs = Date.parse(closedBar.timestampIso);
-          if (Number.isFinite(closedOpenMs)) {
-            const closedBucketMs = Math.floor(closedOpenMs / 300000) * 300000;
-            const prevObserved = lastObservedClosedBucketRef.current;
-            if (prevObserved === null) {
-              // Silent baseline on page open: never trigger retroactive signals
-              lastObservedClosedBucketRef.current = closedBucketMs;
-            } else if (closedBucketMs > prevObserved) {
-              lastObservedClosedBucketRef.current = closedBucketMs;
-              const secSinceClose = (Date.now() - (closedBucketMs + 300000)) / 1000;
-              const bucketKey = `STOCH-${new Date(closedBucketMs).toISOString()}`;
-              if (
-                closedBar.signal &&
-                closedBar.triggerType &&
-                secSinceClose >= -5 &&
-                secSinceClose <= 90 &&
-                !alertedStochBucketsRef.current.has(bucketKey)
-              ) {
-                alertedStochBucketsRef.current.add(bucketKey);
-                recordStochSignal(
-                  closedBar.signal,
-                  closedBar.triggerType,
-                  prevClosedBar.k,
-                  closedBar.k,
-                  closedBar.close,
-                  closedBar.timeLabel,
-                  closedBar.timestampIso,
-                  'live'
-                );
+        // Alerts apply strictly to M5 only — M1 is view-only without any alert
+        if (requestTf === 'M5') {
+          const computed = computeStochasticSeries(data.bars, stochParams);
+          const closedBar = computed[computed.length - 2];
+          const prevClosedBar = computed[computed.length - 3];
+          if (closedBar && prevClosedBar) {
+            const closedOpenMs = Date.parse(closedBar.timestampIso);
+            if (Number.isFinite(closedOpenMs)) {
+              const closedBucketMs = Math.floor(closedOpenMs / 300000) * 300000;
+              const prevObserved = lastObservedClosedBucketRef.current;
+              if (prevObserved === null) {
+                // Silent baseline on page open: never trigger retroactive signals
+                lastObservedClosedBucketRef.current = closedBucketMs;
+              } else if (closedBucketMs > prevObserved) {
+                lastObservedClosedBucketRef.current = closedBucketMs;
+                const secSinceClose = (Date.now() - (closedBucketMs + 300000)) / 1000;
+                const bucketKey = `STOCH-${new Date(closedBucketMs).toISOString()}`;
+                if (
+                  closedBar.signal &&
+                  closedBar.triggerType &&
+                  secSinceClose >= -5 &&
+                  secSinceClose <= 90 &&
+                  !alertedStochBucketsRef.current.has(bucketKey)
+                ) {
+                  alertedStochBucketsRef.current.add(bucketKey);
+                  recordStochSignal(
+                    closedBar.signal,
+                    closedBar.triggerType,
+                    prevClosedBar.k,
+                    closedBar.k,
+                    closedBar.close,
+                    closedBar.timeLabel,
+                    closedBar.timestampIso,
+                    'live'
+                  );
+                }
               }
             }
           }
@@ -560,7 +570,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
         if (!silent) setIsLoadingLive(false);
       }
     },
-    [recordStochSignal, stochParams, symbol]
+    [recordStochSignal, stochParams, symbol, timeframe]
   );
 
   // Real-time 2-second polling in Live mode
@@ -583,7 +593,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
     if (nextMode === 'live') {
       lastObservedClosedBucketRef.current = null;
     } else {
-      const initBars = generateInitialSeries(symbol, 140);
+      const initBars = generateInitialSeries(symbol, 140, timeframe === 'M1' ? 1 : 5);
       barsRef.current = initBars;
       setBars(initBars);
       setMarketState('');
@@ -592,31 +602,55 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
     }
   };
 
+  const handleChangeTimeframe = (nextTf: ChartTimeframe) => {
+    if (nextTf === timeframe) return;
+    setIsPlaying(false);
+    setTimeframe(nextTf);
+    setHoveredIdx(null);
+    setPanOffset(0);
+    setLiveError(null);
+    if (feedMode === 'live') {
+      lastObservedClosedBucketRef.current = null;
+    } else {
+      const initBars = generateInitialSeries(symbol, 140, nextTf === 'M1' ? 1 : 5);
+      barsRef.current = initBars;
+      setBars(initBars);
+    }
+  };
+
   const advanceSimBar = (forceCross?: 'BUY' | 'SELL') => {
     const prevSeries = computeStochasticSeries(barsRef.current, stochParams);
     const prevK = prevSeries[prevSeries.length - 1]?.k ?? 50;
 
-    const nextBars = appendStochSimBars(barsRef.current, forceCross, stochParams);
+    const nextBars = appendStochSimBars(
+      barsRef.current,
+      forceCross,
+      stochParams,
+      timeframe === 'M1' ? 1 : 5
+    );
     barsRef.current = nextBars;
     setBars(nextBars);
 
-    const computed = computeStochasticSeries(nextBars, stochParams);
-    const latest = computed[computed.length - 1];
-    const beforeLatest = computed[computed.length - 2];
-    if (latest && (latest.signal || forceCross)) {
-      const sig = latest.signal || forceCross!;
-      const trig: Exclude<StochTriggerType, null> =
-        latest.triggerType || (sig === 'SELL' ? 'ABOVE_80' : 'BELOW_20');
-      recordStochSignal(
-        sig,
-        trig,
-        beforeLatest?.k ?? prevK,
-        latest.k,
-        latest.close,
-        latest.timeLabel,
-        latest.timestampIso,
-        'sim'
-      );
+    // Only M5 triggers alerts; M1 stays completely silent
+    if (timeframe === 'M5') {
+      const computed = computeStochasticSeries(nextBars, stochParams);
+      const latest = computed[computed.length - 1];
+      const beforeLatest = computed[computed.length - 2];
+      if (latest && (latest.signal || forceCross)) {
+        const sig = latest.signal || forceCross!;
+        const trig: Exclude<StochTriggerType, null> =
+          latest.triggerType || (sig === 'SELL' ? 'ABOVE_80' : 'BELOW_20');
+        recordStochSignal(
+          sig,
+          trig,
+          beforeLatest?.k ?? prevK,
+          latest.k,
+          latest.close,
+          latest.timeLabel,
+          latest.timestampIso,
+          'sim'
+        );
+      }
     }
   };
 
@@ -814,12 +848,33 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
             </button>
           </div>
 
+          {/* Timeframe Switch (M5 with alerts / M1 view-only) */}
+          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1">
+            {(['M5', 'M1'] as const).map((tf) => (
+              <button
+                key={tf}
+                type="button"
+                onClick={() => handleChangeTimeframe(tf)}
+                className={`h-8 rounded-md px-3 text-xs font-semibold whitespace-nowrap transition-colors ${
+                  timeframe === tf
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
+
           <div className="inline-flex h-10 items-center gap-2 text-xs text-slate-600 px-1">
             <span className="font-semibold text-blue-700">US100</span>
             <span className="text-slate-400">·</span>
             <span className="font-medium">
-              M5 · Stoch({stochParams.kPeriod},{stochParams.dPeriod},{stochParams.slowing})
+              {timeframe} · Stoch({stochParams.kPeriod},{stochParams.dPeriod},{stochParams.slowing})
             </span>
+            {timeframe === 'M1' && (
+              <span className="text-[11px] text-slate-400">(ไม่แจ้งเตือน)</span>
+            )}
           </div>
         </div>
 
@@ -836,30 +891,34 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
             </button>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={() => advanceSimBar('BUY')}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 text-xs font-medium text-white whitespace-nowrap transition-colors hover:bg-emerald-700"
-              >
-                <ArrowUpRight className="h-3.5 w-3.5" />
-                จำลอง ปิด &lt; {stochParams.lowerLevel}
-              </button>
+              {timeframe === 'M5' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => advanceSimBar('BUY')}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 text-xs font-medium text-white whitespace-nowrap transition-colors hover:bg-emerald-700"
+                  >
+                    <ArrowUpRight className="h-3.5 w-3.5" />
+                    จำลอง ปิด &lt; {stochParams.lowerLevel}
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => advanceSimBar('SELL')}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-rose-600 px-3.5 text-xs font-medium text-white whitespace-nowrap transition-colors hover:bg-rose-700"
-              >
-                <ArrowDownRight className="h-3.5 w-3.5" />
-                จำลอง ปิด &gt; {stochParams.upperLevel}
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => advanceSimBar('SELL')}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-rose-600 px-3.5 text-xs font-medium text-white whitespace-nowrap transition-colors hover:bg-rose-700"
+                  >
+                    <ArrowDownRight className="h-3.5 w-3.5" />
+                    จำลอง ปิด &gt; {stochParams.upperLevel}
+                  </button>
+                </>
+              )}
 
               <button
                 type="button"
                 onClick={() => {
                   const nextPlaying = !isPlaying;
                   if (nextPlaying) {
-                    if (soundEnabled) unlockAlertAudio();
+                    if (soundEnabled && timeframe === 'M5') unlockAlertAudio();
                     advanceSimBar();
                   }
                   setIsPlaying(nextPlaying);
@@ -877,7 +936,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
               <button
                 type="button"
                 onClick={() => advanceSimBar()}
-                aria-label="แท่งถัดไป M5"
+                aria-label={`แท่งถัดไป ${timeframe}`}
                 className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 whitespace-nowrap transition-colors hover:bg-slate-50"
               >
                 <SkipForward className="h-3.5 w-3.5" />
@@ -889,7 +948,11 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
                 onClick={() => {
                   setIsPlaying(false);
                   stopAudioAndTimer();
-                  const resetBars = generateInitialSeries(symbol, 140);
+                  const resetBars = generateInitialSeries(
+                    symbol,
+                    140,
+                    timeframe === 'M1' ? 1 : 5
+                  );
                   barsRef.current = resetBars;
                   setBars(resetBars);
                   setLastSignalBanner(null);
@@ -948,7 +1011,9 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
           {/* Top Readout Strip */}
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-neutral-900 px-1 pb-2 text-xs">
             <div className="flex items-center gap-2.5">
-              <span className="font-semibold text-[#1e90ff]">{symbol} · M5</span>
+              <span className="font-semibold text-[#1e90ff]">
+                {symbol} · {timeframe}
+              </span>
               {feedMode === 'live' && marketState && (
                 <span className="inline-flex items-center gap-1.5 text-neutral-400">
                   <span
@@ -1012,7 +1077,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
                 isDraggingChart ? 'cursor-grabbing' : 'cursor-grab'
               }`}
               role="img"
-              aria-label={`กราฟราคา M5 และ Stoch(${stochParams.kPeriod},${stochParams.dPeriod},${stochParams.slowing}) ของ ${symbol}`}
+              aria-label={`กราฟราคา ${timeframe} และ Stoch(${stochParams.kPeriod},${stochParams.dPeriod},${stochParams.slowing}) ของ ${symbol}`}
             >
               {/* Pure Black MT5 Canvas */}
               <rect x={0} y={0} width={svgW} height={totalH} fill="#000000" />
@@ -1238,21 +1303,22 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
                 />
               )}
 
-              {/* Threshold Close Markers (> 80 or < 20) */}
-              {visiblePoints.map((pt, idx) => {
-                if (!pt.signal) return null;
-                const xCenter = plotLeft + 6 + idx * slotW + slotW / 2;
-                const yK = stochToY(pt.k);
-                return (
-                  <circle
-                    key={`sig-${pt.timestampIso}-${idx}`}
-                    cx={xCenter}
-                    cy={yK}
-                    r="3"
-                    fill={pt.signal === 'BUY' ? '#22c55e' : '#ef4444'}
-                  />
-                );
-              })}
+              {/* Threshold Close Markers (> 80 or < 20 on M5 only) */}
+              {timeframe === 'M5' &&
+                visiblePoints.map((pt, idx) => {
+                  if (!pt.signal) return null;
+                  const xCenter = plotLeft + 6 + idx * slotW + slotW / 2;
+                  const yK = stochToY(pt.k);
+                  return (
+                    <circle
+                      key={`sig-${pt.timestampIso}-${idx}`}
+                      cx={xCenter}
+                      cy={yK}
+                      r="3"
+                      fill={pt.signal === 'BUY' ? '#22c55e' : '#ef4444'}
+                    />
+                  );
+                })}
 
               {/* Top-left XM MT5 Price Watermark */}
               <text
@@ -1266,7 +1332,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
                 {symbol}
                 <tspan fill="#9ca3af" fontWeight="400" fontSize="13.5">
                   {' '}
-                  ▾ M5
+                  ▾ {timeframe}
                 </tspan>
               </text>
               <text x={plotLeft + 8} y={40} fontSize="13" fill="#9ca3af" className="font-sans">
@@ -1363,15 +1429,25 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
               <span className="font-mono text-[11px] text-slate-400">
                 {isWebMode
                   ? feedMode === 'live'
-                    ? 'Live M5'
-                    : 'M5'
-                  : feedSource || 'M5'}
+                    ? `Live ${timeframe}`
+                    : timeframe
+                  : feedSource || timeframe}
               </span>
             </div>
 
             {/* Minimal Android Notification Card */}
             <div className="rounded-xl bg-slate-900 p-4 text-slate-100">
-              {lastSignalBanner ? (
+              {timeframe === 'M1' ? (
+                <div className="space-y-1.5 py-0.5">
+                  <p className="text-xs font-medium text-teal-300">
+                    กำลังดูกราฟ {symbol} M1 (ไม่แจ้งเตือน)
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    M1 ใช้ดูจังหวะกราฟเท่านั้น · ระบบหลังบ้านยังคงเฝ้าและแจ้งเตือน M5 (ปิด &gt;{' '}
+                    {stochParams.upperLevel} / &lt; {stochParams.lowerLevel}) ตามปกติ
+                  </p>
+                </div>
+              ) : lastSignalBanner ? (
                 <div>
                   <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
@@ -1653,7 +1729,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
           <div>
             <p className="text-xs text-slate-500">สินทรัพย์</p>
             <p className="mt-1 text-base font-semibold text-slate-900 tabular-nums">
-              {symbol} · M5
+              {symbol} · {timeframe}
             </p>
           </div>
           <div>
@@ -1667,12 +1743,16 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
           <div>
             <p className="text-xs text-slate-500">เงื่อนไขแจ้งเตือน</p>
             <p className="mt-1 text-base font-semibold text-slate-900 tabular-nums">
-              ปิด &gt; {stochParams.upperLevel} หรือ &lt; {stochParams.lowerLevel}
+              {timeframe === 'M5'
+                ? `ปิด > ${stochParams.upperLevel} หรือ < ${stochParams.lowerLevel}`
+                : 'ไม่แจ้งเตือน (ดูกราฟ M1)'}
             </p>
           </div>
           <div>
             <p className="text-xs text-slate-500">
-              สถานะปัจจุบัน · เกิด {triggerCountInView} ครั้งในหน้าจอ
+              {timeframe === 'M5'
+                ? `สถานะปัจจุบัน · เกิด ${triggerCountInView} ครั้งในหน้าจอ`
+                : 'สถานะปัจจุบัน (M1)'}
             </p>
             <p className={`mt-1 text-base font-semibold tabular-nums ${zoneColorClass}`}>
               {zoneText}

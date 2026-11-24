@@ -144,7 +144,8 @@ export function computeStochasticSeries(
 export function appendStochSimBars(
   existingBars: M5Bar[],
   forceCross?: 'BUY' | 'SELL',
-  params: StochParams = DEFAULT_STOCH_PARAMS
+  params: StochParams = DEFAULT_STOCH_PARAMS,
+  intervalMinutes: 1 | 5 = 5
 ): M5Bar[] {
   const baseBars = existingBars.slice();
   const digits = 2;
@@ -152,7 +153,7 @@ export function appendStochSimBars(
 
   const pushCandle = (open: number, close: number, high: number, low: number) => {
     const last = baseBars[baseBars.length - 1];
-    const nextDate = new Date(Date.parse(last.timestampIso) + 5 * 60 * 1000);
+    const nextDate = new Date(Date.parse(last.timestampIso) + intervalMinutes * 60 * 1000);
     const hh = String(nextDate.getHours()).padStart(2, '0');
     const mm = String(nextDate.getMinutes()).padStart(2, '0');
     const round = (v: number) => Math.round(v * Math.pow(10, digits)) / Math.pow(10, digits);

@@ -23,7 +23,7 @@ import { loadSavedGithubConfig } from './lib/githubStorage';
 type ActiveSection = 'stoch' | 'mql5' | 'android' | 'telegram' | 'sheets' | 'deploy';
 
 const NAV_ITEMS: Array<{ id: ActiveSection; label: string }> = [
-  { id: 'stoch', label: 'Stoch M5' },
+  { id: 'stoch', label: 'Stoch M5 / M1' },
   { id: 'mql5', label: 'โค้ด MQL5' },
   { id: 'android', label: 'ตั้งค่ามือถือ' },
   { id: 'telegram', label: 'Telegram' },
@@ -313,10 +313,10 @@ export default function App() {
             )}
             <div>
               <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
-                {isWebMode ? 'Stoch' : 'Stoch · กราฟ M5 (15,3,3)'}
+                {isWebMode ? 'Stoch' : 'Stoch · กราฟ M5 / M1 (15,3,3)'}
               </h1>
               <p className="mt-1 text-xs text-slate-500">
-                MetaTrader 5 · US100 M5 · Stoch(15,3,3) เส้นสีฟ้าเส้นเดียว · แจ้งเตือนปิด &gt; 80 / &lt; 20
+                MetaTrader 5 · US100 M5 / M1 · Stoch(15,3,3) เส้นสีฟ้าเส้นเดียว · แจ้งเตือนเฉพาะ M5 (ปิด &gt; 80 / &lt; 20)
               </p>
             </div>
           </div>
