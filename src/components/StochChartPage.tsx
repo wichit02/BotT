@@ -12,6 +12,8 @@ import {
   VolumeX,
   Square,
   Bell,
+  Smartphone,
+  Send,
 } from 'lucide-react';
 import {
   M5Bar,
@@ -27,9 +29,18 @@ import {
   computeStochasticSeries,
 } from '../lib/stochCalculator';
 import { play10SecondSound, stop10SecondSound, unlockAlertAudio } from '../lib/audioAlert';
+import {
+  getExistingPushSubscription,
+  isWebPushSupported,
+  sendTestWebPush,
+  subscribeDeviceToWebPush,
+  unsubscribeDeviceFromWebPush,
+} from '../lib/webPushClient';
 
 interface StochChartPageProps {
   isWebMode?: boolean;
+  onGoToTelegram?: () => void;
+  telegramSyncedReady?: boolean | null;
 }
 
 interface LiveFeedResponse {
@@ -70,7 +81,11 @@ function formatBarCountdown(): string {
   return `${mm}:${ss}`;
 }
 
-export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = false }) => {
+export const StochChartPage: React.FC<StochChartPageProps> = ({
+  isWebMode = false,
+  onGoToTelegram,
+  telegramSyncedReady,
+}) => {
   const symbol: TradingSymbol = 'US100';
   const spec = SYMBOL_SPECS[symbol];
 
@@ -107,6 +122,13 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
     time: string;
     label: string;
   } | null>(null);
+  const [monitorEnabled, setMonitorEnabled] = useState(true);
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [pushEndpoint, setPushEndpoint] = useState<string | undefined>(undefined);
+  const [pushSupported] = useState(() => isWebPushSupported());
+  const [ntfyTopic, setNtfyTopic] = useState('');
+  const [telegramConfigured, setTelegramConfigured] = useState(false);
+  const [monitorBusy, setMonitorBusy] = useState(false);
   const [monitorNote, setMonitorNote] = useState<string | null>(null);
 
   const [recentStochSignals, setRecentStochSignals] = useState<
@@ -228,25 +250,46 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
     [soundEnabled]
   );
 
-  // Load server Stoch monitor config on mount
+  // Load server Stoch monitor config & existing Web Push subscription on mount
   useEffect(() => {
     fetch('/api/monitor/status')
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (data?.stochConfig && typeof data.stochConfig === 'object') {
-          setStochParams({
-            kPeriod: Math.max(1, Number(data.stochConfig.kPeriod) || 15),
-            dPeriod: Math.max(1, Number(data.stochConfig.dPeriod) || 3),
-            slowing: Math.max(1, Number(data.stochConfig.slowing) || 3),
-            upperLevel: Math.min(99, Math.max(51, Number(data.stochConfig.upperLevel) || 80)),
-            lowerLevel: Math.max(1, Math.min(49, Number(data.stochConfig.lowerLevel) || 20)),
-          });
+        if (data) {
+          setMonitorEnabled(Boolean(data.enabled));
+          if (typeof data.ntfyTopic === 'string') {
+            setNtfyTopic(data.ntfyTopic);
+          }
+          setTelegramConfigured(Boolean(data.telegramConfigured));
+          if (data.stochConfig && typeof data.stochConfig === 'object') {
+            setStochParams({
+              kPeriod: Math.max(1, Number(data.stochConfig.kPeriod) || 15),
+              dPeriod: Math.max(1, Number(data.stochConfig.dPeriod) || 3),
+              slowing: Math.max(1, Number(data.stochConfig.slowing) || 3),
+              upperLevel: Math.min(99, Math.max(51, Number(data.stochConfig.upperLevel) || 80)),
+              lowerLevel: Math.max(1, Math.min(49, Number(data.stochConfig.lowerLevel) || 20)),
+            });
+          }
         }
         hasLoadedMonitorConfigRef.current = true;
       })
       .catch(() => {
         hasLoadedMonitorConfigRef.current = true;
       });
+
+    getExistingPushSubscription()
+      .then((sub) => {
+        if (sub) {
+          setPushSubscribed(true);
+          setPushEndpoint(sub.endpoint);
+          void fetch('/api/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subscription: sub.toJSON() }),
+          }).catch(() => {});
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Sync Stoch parameters with server 24/7 monitor when changed by user
@@ -261,6 +304,106 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
     }, 350);
     return () => window.clearTimeout(t);
   }, [stochParams]);
+
+  const handleEnableWebPush = async () => {
+    setMonitorBusy(true);
+    setMonitorNote(null);
+    try {
+      const sub = await subscribeDeviceToWebPush();
+      setPushSubscribed(true);
+      setPushEndpoint(sub.endpoint);
+      setMonitorNote('เชื่อมต่อมือถือเครื่องนี้แล้ว ปิดหน้าจอได้ทันที');
+    } catch (err: any) {
+      setMonitorNote(err?.message || 'เปิดรับแจ้งเตือนไม่สำเร็จ');
+    } finally {
+      setMonitorBusy(false);
+    }
+  };
+
+  const handleDisableWebPush = async () => {
+    setMonitorBusy(true);
+    setMonitorNote(null);
+    try {
+      await unsubscribeDeviceFromWebPush();
+      setPushSubscribed(false);
+      setPushEndpoint(undefined);
+      setMonitorNote('ยกเลิกการรับแจ้งเตือนบนเครื่องนี้แล้ว');
+    } finally {
+      setMonitorBusy(false);
+    }
+  };
+
+  const handleTestWebPush = async () => {
+    setMonitorBusy(true);
+    setMonitorNote(null);
+    try {
+      await sendTestWebPush(pushEndpoint);
+      setMonitorNote('ส่งแจ้งเตือนทดสอบเข้าเครื่องนี้แล้ว');
+    } catch (err: any) {
+      setMonitorNote(err?.message || 'ส่งทดสอบไม่สำเร็จ');
+    } finally {
+      setMonitorBusy(false);
+    }
+  };
+
+  const handleToggleServerMonitor = async () => {
+    setMonitorBusy(true);
+    setMonitorNote(null);
+    try {
+      const nextEnabled = !monitorEnabled;
+      const res = await fetch('/api/monitor/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: nextEnabled,
+          symbols: [symbol],
+          ntfyTopic,
+          stochConfig: stochParams,
+        }),
+      });
+      if (!res.ok) throw new Error('บันทึกไม่สำเร็จ');
+      const data = await res.json();
+      setMonitorEnabled(Boolean(data.enabled));
+      setMonitorNote(
+        data.enabled
+          ? 'เซิร์ฟเวอร์เฝ้ากราฟ US100 M5 อัตโนมัติแล้ว'
+          : 'หยุดพักการเฝ้ากราฟบนเซิร์ฟเวอร์'
+      );
+    } catch {
+      setMonitorNote('ตั้งค่าเฝ้ากราฟไม่สำเร็จ');
+    } finally {
+      setMonitorBusy(false);
+    }
+  };
+
+  const handleTestNtfy = async () => {
+    setMonitorBusy(true);
+    setMonitorNote(null);
+    try {
+      await fetch('/api/monitor/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: monitorEnabled,
+          symbols: [symbol],
+          ntfyTopic,
+          stochConfig: stochParams,
+        }),
+      });
+      const res = await fetch('/api/monitor/test-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ntfyTopic }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'ส่งทดสอบไม่สำเร็จ');
+      setMonitorNote('ส่งสัญญาณทดสอบเข้าแอป ntfy บนมือถือแล้ว');
+    } catch (err: any) {
+      setMonitorNote(err?.message || 'ส่งทดสอบไม่สำเร็จ');
+    } finally {
+      setMonitorBusy(false);
+    }
+  };
 
   const recordStochSignal = useCallback(
     (
@@ -1207,28 +1350,26 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
           </div>
         </div>
 
-        {/* Right Column: Live Single-Line Stoch(15,3,3) Alert Status & Parameters */}
+        {/* Right Column: Notification Preview + Autonomous Background Monitor (Matching AO Page) */}
         <div className="lg:col-span-4 flex flex-col justify-between gap-5 rounded-xl border border-slate-200 bg-white p-5">
-          <div className="space-y-5">
-            <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
-              <div>
+          <div>
+            <div className="flex items-center justify-between gap-2 pb-3">
+              <div className="flex items-center gap-2">
+                <Smartphone className="h-4 w-4 text-slate-600" />
                 <h3 className="text-sm font-semibold text-slate-900">
-                  Stoch({stochParams.kPeriod},{stochParams.dPeriod},{stochParams.slowing}) · เส้นสีฟ้าเส้นเดียว
+                  {isWebMode ? 'แจ้งเตือน' : 'แจ้งเตือนบน Android'}
                 </h3>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  {feedMode === 'live' ? feedSource || 'MT5 CFD Real-Time' : 'โหมดจำลอง'}
-                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setStochParams(DEFAULT_STOCH_PARAMS)}
-                className="text-xs font-medium text-blue-600 hover:underline whitespace-nowrap"
-              >
-                ค่าเริ่มต้น (15,3,3)
-              </button>
+              <span className="font-mono text-[11px] text-slate-400">
+                {isWebMode
+                  ? feedMode === 'live'
+                    ? 'Live M5'
+                    : 'M5'
+                  : feedSource || 'M5'}
+              </span>
             </div>
 
-            {/* Latest Alert Card */}
+            {/* Minimal Android Notification Card */}
             <div className="rounded-xl bg-slate-900 p-4 text-slate-100">
               {lastSignalBanner ? (
                 <div>
@@ -1250,124 +1391,234 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                     </span>
                   </div>
                   <p className="mt-2 font-mono text-xs text-slate-300 tabular-nums">
-                    เส้นฟ้า %K: {lastSignalBanner.kPrev.toFixed(2)} →{' '}
-                    {lastSignalBanner.k.toFixed(2)} · ราคา {lastSignalBanner.price.toFixed(spec.digits)}
+                    Stoch({stochParams.kPeriod},{stochParams.dPeriod},{stochParams.slowing}) | %K{' '}
+                    {lastSignalBanner.kPrev.toFixed(2)} → {lastSignalBanner.k.toFixed(2)} · ราคา{' '}
+                    {lastSignalBanner.price.toFixed(spec.digits)}
                   </p>
-                  {monitorNote && (
-                    <p className="mt-1.5 text-[11px] text-sky-300">{monitorNote}</p>
-                  )}
                 </div>
               ) : (
-                <div className="space-y-1 py-0.5">
-                  <p className="text-xs text-slate-300">
-                    {feedMode === 'live'
-                      ? `แจ้งเตือนอัตโนมัติเมื่อปิดแท่ง M5 สูงกว่า ${stochParams.upperLevel} หรือต่ำกว่า ${stochParams.lowerLevel}`
-                      : `กด “จำลอง ปิด < ${stochParams.lowerLevel}” หรือ “จำลอง ปิด > ${stochParams.upperLevel}”`}
-                  </p>
-                  <p className="text-[11px] text-slate-400">
-                    ตรวจกราฟจริงทุก 2 วินาที · ส่งแจ้งเตือนรอบเดียวต่อสัญญาณ (Telegram + มือถือ)
-                  </p>
-                </div>
+                <p className="py-1.5 text-xs text-slate-400">
+                  {feedMode === 'live'
+                    ? `กำลังติดตามกราฟจริง ${symbol} M5 อัตโนมัติ (ปิด > ${stochParams.upperLevel} / < ${stochParams.lowerLevel})`
+                    : `กด “จำลอง ปิด < ${stochParams.lowerLevel}” หรือ “จำลอง ปิด > ${stochParams.upperLevel}”`}
+                </p>
               )}
             </div>
 
-            {/* Parameters Editor (preloaded to 15,3,3 & 80/20) */}
-            <div className="space-y-3 border-t border-slate-100 pt-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-800">
-                  ตั้งค่าเส้น Stoch &amp; ระดับแจ้งเตือน
+            {/* Autonomous Server Monitor + Zero-Install Web Push */}
+            <div className="mt-5 border-t border-slate-100 pt-4 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      monitorEnabled ? 'bg-emerald-500' : 'bg-slate-300'
+                    }`}
+                  />
+                  <span className="text-xs font-semibold text-slate-800">
+                    เซิร์ฟเวอร์เฝ้ากราฟ US100 M5 อัตโนมัติ
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  disabled={monitorBusy}
+                  onClick={() => void handleToggleServerMonitor()}
+                  className="text-xs font-medium text-slate-500 hover:text-slate-900"
+                >
+                  {monitorEnabled ? 'พักชั่วคราว' : 'เปิดรัน'}
+                </button>
+              </div>
+
+              {pushSupported ? (
+                pushSubscribed ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={monitorBusy}
+                      onClick={() => void handleTestWebPush()}
+                      className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      <Bell className="h-3.5 w-3.5" />
+                      ทดสอบแจ้งเตือนเข้าเครื่องนี้
+                    </button>
+                    <button
+                      type="button"
+                      disabled={monitorBusy}
+                      onClick={() => void handleDisableWebPush()}
+                      className="h-9 rounded-lg border border-slate-200 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      ปิด
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={monitorBusy}
+                    onClick={() => void handleEnableWebPush()}
+                    className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    <Bell className="h-3.5 w-3.5" />
+                    รับแจ้งเตือนเข้ามือถือ (ไม่ต้องลงแอป)
+                  </button>
+                )
+              ) : (
+                <p className="text-[11px] text-slate-500">
+                  เปิดหน้านี้ใน Chrome บน Android เพื่อรับแจ้งเตือนโดยไม่ต้องลงแอป
+                </p>
+              )}
+
+              <div className="flex items-center justify-between pt-1 text-xs">
+                <span className="text-slate-500">
+                  Telegram:{' '}
+                  <span
+                    className={
+                      telegramSyncedReady ?? telegramConfigured
+                        ? 'font-medium text-emerald-700'
+                        : 'font-medium text-amber-600'
+                    }
+                  >
+                    {telegramSyncedReady ?? telegramConfigured
+                      ? 'เชื่อมต่อแล้ว (ส่งทุกสัญญาณ)'
+                      : 'ยังไม่ตั้งค่า'}
+                  </span>
                 </span>
-                <span className="text-[11px] text-slate-400">Low/High · SMA</span>
+                {onGoToTelegram && (
+                  <button
+                    type="button"
+                    onClick={onGoToTelegram}
+                    className="font-medium text-blue-600 hover:underline"
+                  >
+                    ตั้งค่า Telegram
+                  </button>
+                )}
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="space-y-1">
-                  <span className="block text-[11px] text-slate-500">%K period</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={stochParams.kPeriod}
-                    onChange={(e) =>
-                      setStochParams((p) => ({
-                        ...p,
-                        kPeriod: Math.max(1, Number(e.target.value) || 15),
-                      }))
-                    }
-                    className="h-9 w-full rounded-lg border border-slate-200 px-2.5 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="block text-[11px] text-slate-500">Slowing</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={stochParams.slowing}
-                    onChange={(e) =>
-                      setStochParams((p) => ({
-                        ...p,
-                        slowing: Math.max(1, Number(e.target.value) || 3),
-                      }))
-                    }
-                    className="h-9 w-full rounded-lg border border-slate-200 px-2.5 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
-                  />
-                </label>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="space-y-1">
-                  <span className="block text-[11px] text-slate-500">
-                    แจ้งเตือนเมื่อปิดสูงกว่า
+
+              {/* Stoch Settings (15,3,3 & >80 / <20) */}
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-800">
+                    ตั้งค่า Stoch({stochParams.kPeriod},{stochParams.dPeriod},{stochParams.slowing}) · เส้นเดียว
                   </span>
-                  <input
-                    type="number"
-                    min={51}
-                    max={99}
-                    value={stochParams.upperLevel}
-                    onChange={(e) =>
-                      setStochParams((p) => ({
-                        ...p,
-                        upperLevel: Math.min(99, Math.max(51, Number(e.target.value) || 80)),
-                      }))
-                    }
-                    className="h-9 w-full rounded-lg border border-slate-200 px-2.5 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="block text-[11px] text-slate-500">
-                    แจ้งเตือนเมื่อปิดต่ำกว่า
-                  </span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={49}
-                    value={stochParams.lowerLevel}
-                    onChange={(e) =>
-                      setStochParams((p) => ({
-                        ...p,
-                        lowerLevel: Math.max(1, Math.min(49, Number(e.target.value) || 20)),
-                      }))
-                    }
-                    className="h-9 w-full rounded-lg border border-slate-200 px-2.5 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
-                  />
-                </label>
+                  <button
+                    type="button"
+                    onClick={() => setStochParams(DEFAULT_STOCH_PARAMS)}
+                    className="text-[11px] font-medium text-blue-600 hover:underline whitespace-nowrap"
+                  >
+                    ค่าเริ่มต้น
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="space-y-1">
+                    <span className="block text-[11px] text-slate-500">%K period</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={stochParams.kPeriod}
+                      onChange={(e) =>
+                        setStochParams((p) => ({
+                          ...p,
+                          kPeriod: Math.max(1, Number(e.target.value) || 15),
+                        }))
+                      }
+                      className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="block text-[11px] text-slate-500">Slowing</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={stochParams.slowing}
+                      onChange={(e) =>
+                        setStochParams((p) => ({
+                          ...p,
+                          slowing: Math.max(1, Number(e.target.value) || 3),
+                        }))
+                      }
+                      className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="block text-[11px] text-slate-500">
+                      แจ้งเตือนเมื่อปิดสูงกว่า
+                    </span>
+                    <input
+                      type="number"
+                      min={51}
+                      max={99}
+                      value={stochParams.upperLevel}
+                      onChange={(e) =>
+                        setStochParams((p) => ({
+                          ...p,
+                          upperLevel: Math.min(99, Math.max(51, Number(e.target.value) || 80)),
+                        }))
+                      }
+                      className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="block text-[11px] text-slate-500">
+                      แจ้งเตือนเมื่อปิดต่ำกว่า
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={49}
+                      value={stochParams.lowerLevel}
+                      onChange={(e) =>
+                        setStochParams((p) => ({
+                          ...p,
+                          lowerLevel: Math.max(1, Math.min(49, Number(e.target.value) || 20)),
+                        }))
+                      }
+                      className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
+                    />
+                  </label>
+                </div>
               </div>
+
+              <details className="text-xs text-slate-500">
+                <summary className="cursor-pointer select-none py-1 hover:text-slate-800">
+                  ช่องทางเสริม: ntfy (เลือกเสียง 10 วิได้)
+                </summary>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    type="text"
+                    value={ntfyTopic}
+                    onChange={(e) => setNtfyTopic(e.target.value)}
+                    placeholder="ชื่อช่อง ntfy (เช่น ao-m5-alert)"
+                    className="h-8 flex-1 rounded-lg border border-slate-200 px-2.5 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    disabled={monitorBusy || !ntfyTopic.trim()}
+                    onClick={() => void handleTestNtfy()}
+                    className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    <Send className="h-3 w-3" />
+                    ทดสอบ
+                  </button>
+                </div>
+              </details>
+
+              {monitorNote && <p className="text-[11px] text-slate-600">{monitorNote}</p>}
             </div>
 
             {/* Recent Threshold Alerts */}
-            <div className="border-t border-slate-100 pt-4">
+            <div className="mt-4 border-t border-slate-100 pt-4">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-medium text-slate-500">
-                  ประวัติแจ้งเตือน (&gt;{stochParams.upperLevel} / &lt;{stochParams.lowerLevel}) (
-                  {recentStochSignals.length})
+                  สัญญาณ Stoch ล่าสุด ({recentStochSignals.length})
                 </h4>
                 <span className="font-mono text-[11px] text-teal-600">เส้นสีฟ้าเส้นเดียว</span>
               </div>
 
               {recentStochSignals.length === 0 ? (
-                <p className="mt-2 text-xs text-slate-400">ยังไม่มีสัญญาณปิดแท่งตั้งแต่เปิดหน้า</p>
+                <p className="mt-2 text-xs text-slate-400">ยังไม่มีรายการ</p>
               ) : (
                 <ul className="mt-2 divide-y divide-slate-100">
-                  {recentStochSignals.slice(0, 4).map((item) => (
+                  {recentStochSignals.slice(0, 3).map((item) => (
                     <li
                       key={item.id}
                       className="flex items-center justify-between py-1.5 text-xs"
