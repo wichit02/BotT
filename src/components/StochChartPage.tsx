@@ -150,6 +150,8 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
   const countdownRef = useRef<number | null>(null);
   const barsRef = useRef<M5Bar[]>(bars);
   barsRef.current = bars;
+  const timeframeRef = useRef<ChartTimeframe>(timeframe);
+  timeframeRef.current = timeframe;
 
   const lastObservedClosedBucketRef = useRef<number | null>(null);
   const alertedStochBucketsRef = useRef<Set<string>>(new Set<string>());
@@ -514,6 +516,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
           throw new Error(errBody.error || `ดึงข้อมูลกราฟจริง ${requestTf} ไม่สำเร็จ`);
         }
         const data = (await res.json()) as LiveFeedResponse;
+        if (requestTf !== timeframeRef.current) return;
         setBars(data.bars);
         setMarketState(data.marketState);
         setFeedSource(data.source);
