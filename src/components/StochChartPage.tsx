@@ -894,27 +894,23 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
             </button>
           ) : (
             <>
-              {timeframe === 'M5' && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => advanceSimBar('BUY')}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 text-xs font-medium text-white whitespace-nowrap transition-colors hover:bg-emerald-700"
-                  >
-                    <ArrowUpRight className="h-3.5 w-3.5" />
-                    จำลอง ปิด &lt; {stochParams.lowerLevel}
-                  </button>
+              <button
+                type="button"
+                onClick={() => advanceSimBar('BUY')}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 text-xs font-medium text-white whitespace-nowrap transition-colors hover:bg-emerald-700"
+              >
+                <ArrowUpRight className="h-3.5 w-3.5" />
+                จำลอง ปิด &lt; {stochParams.lowerLevel}
+              </button>
 
-                  <button
-                    type="button"
-                    onClick={() => advanceSimBar('SELL')}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-rose-600 px-3.5 text-xs font-medium text-white whitespace-nowrap transition-colors hover:bg-rose-700"
-                  >
-                    <ArrowDownRight className="h-3.5 w-3.5" />
-                    จำลอง ปิด &gt; {stochParams.upperLevel}
-                  </button>
-                </>
-              )}
+              <button
+                type="button"
+                onClick={() => advanceSimBar('SELL')}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-rose-600 px-3.5 text-xs font-medium text-white whitespace-nowrap transition-colors hover:bg-rose-700"
+              >
+                <ArrowDownRight className="h-3.5 w-3.5" />
+                จำลอง ปิด &gt; {stochParams.upperLevel}
+              </button>
 
               <button
                 type="button"
@@ -1306,22 +1302,27 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
                 />
               )}
 
-              {/* Threshold Close Markers (> 80 or < 20 on M5 only) */}
-              {timeframe === 'M5' &&
-                visiblePoints.map((pt, idx) => {
-                  if (!pt.signal) return null;
-                  const xCenter = plotLeft + 6 + idx * slotW + slotW / 2;
-                  const yK = stochToY(pt.k);
-                  return (
-                    <circle
-                      key={`sig-${pt.timestampIso}-${idx}`}
-                      cx={xCenter}
-                      cy={yK}
-                      r="3"
-                      fill={pt.signal === 'BUY' ? '#22c55e' : '#ef4444'}
-                    />
-                  );
-                })}
+              {/* Threshold Close Markers (> 80 or < 20 on closed candles for M5 & M1) */}
+              {visiblePoints.map((pt, idx) => {
+                if (!pt.signal) return null;
+                if (
+                  feedMode === 'live' &&
+                  pt.index === livePoints[livePoints.length - 1]?.index
+                ) {
+                  return null;
+                }
+                const xCenter = plotLeft + 6 + idx * slotW + slotW / 2;
+                const yK = stochToY(pt.k);
+                return (
+                  <circle
+                    key={`sig-${pt.timestampIso}-${idx}`}
+                    cx={xCenter}
+                    cy={yK}
+                    r="3.4"
+                    fill={pt.signal === 'BUY' ? '#22c55e' : '#ef4444'}
+                  />
+                );
+              })}
 
               {/* Top-left XM MT5 Price Watermark */}
               <text
