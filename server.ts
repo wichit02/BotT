@@ -2041,47 +2041,56 @@ async function startServer() {
     const tickUrl = `${serverBase}/api/mt5/tick`;
     const mq5Source = `//+------------------------------------------------------------------+
 //|                                       XM_MT5_LiveBridge_EA.mq5   |
-//|         Real-Time XM MT5 M5 Candlestick Bridge (Every 2 Seconds) |
+//|     Real-Time XM MT5 M5 & M1 Candlestick Bridge (Every 2 Seconds)|
 //+------------------------------------------------------------------+
-#property copyright "AO Signal Studio"
-#property version   "1.00"
+#property copyright "Stoch"
+#property version   "1.10"
 #property strict
 
 input string InpBridgeUrl     = "${tickUrl}"; // URL รับข้อมูลกราฟจริง (เพิ่ม ${serverBase} ใน MT5 Allow WebRequest)
-input int    InpPushIntervalS = 2;     // ความถี่ในการส่งกราฟ M5 (วินาที)
-input int    InpBarsToSend    = 200;   // จำนวนแท่งเทียน M5 ล่าสุดที่ส่ง
+input int    InpPushIntervalS = 2;     // ความถี่ในการส่งกราฟ M5/M1 (วินาที)
+input int    InpBarsToSend    = 200;   // จำนวนแท่งเทียนล่าสุดที่ส่ง
 
 uint lastSentTickMs = 0;
 
-void PushLiveM5ToServer()
+string SerializeRatesJson(ENUM_TIMEFRAMES tf, int count, long serverOffsetSec)
 {
    MqlRates rates[];
    ArraySetAsSeries(rates, false);
-   int copied = CopyRates(_Symbol, PERIOD_M5, 0, InpBarsToSend, rates);
+   int copied = CopyRates(_Symbol, tf, 0, count, rates);
    if(copied < 36)
-      return;
+      return "[]";
 
+   string json = "[";
+   for(int i = 0; i < copied; i++)
+   {
+      if(i > 0) json += ",";
+      long utcSec = (long)rates[i].time - serverOffsetSec;
+      json += StringFormat(
+         "{\\"t\\":%I64d,\\"o\\":%.2f,\\"h\\":%.2f,\\"l\\":%.2f,\\"c\\":%.2f}",
+         utcSec, rates[i].open, rates[i].high, rates[i].low, rates[i].close
+      );
+   }
+   json += "]";
+   return json;
+}
+
+void PushLiveM5ToServer()
+{
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    string broker = AccountInfoString(ACCOUNT_COMPANY);
    // Convert XM MT5 server time (e.g. GMT+2/+3) into true UTC Unix epoch seconds
    long serverOffsetSec = (long)MathRound((double)(TimeCurrent() - TimeGMT()) / 900.0) * 900;
 
-   string barsJson = "[";
-   for(int i = 0; i < copied; i++)
-   {
-      if(i > 0) barsJson += ",";
-      long utcSec = (long)rates[i].time - serverOffsetSec;
-      barsJson += StringFormat(
-         "{\\"t\\":%I64d,\\"o\\":%.2f,\\"h\\":%.2f,\\"l\\":%.2f,\\"c\\":%.2f}",
-         utcSec, rates[i].open, rates[i].high, rates[i].low, rates[i].close
-      );
-   }
-   barsJson += "]";
+   string barsJson = SerializeRatesJson(PERIOD_M5, InpBarsToSend, serverOffsetSec);
+   if(barsJson == "[]")
+      return;
+   string barsM1Json = SerializeRatesJson(PERIOD_M1, InpBarsToSend, serverOffsetSec);
 
    string payload = StringFormat(
-      "{\\"symbol\\":\\"%s\\",\\"broker\\":\\"%s\\",\\"bid\\":%.2f,\\"ask\\":%.2f,\\"bars\\":%s}",
-      _Symbol, broker, bid, ask, barsJson
+      "{\\"symbol\\":\\"%s\\",\\"broker\\":\\"%s\\",\\"bid\\":%.2f,\\"ask\\":%.2f,\\"bars\\":%s,\\"barsM1\\":%s}",
+      _Symbol, broker, bid, ask, barsJson, barsM1Json
    );
 
    char postData[];
