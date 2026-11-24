@@ -358,7 +358,13 @@ export default function App() {
           />
         )}
 
-        {activeSection === 'stoch' && <StochChartPage isWebMode={isWebMode} />}
+        {activeSection === 'stoch' && (
+          <StochChartPage
+            isWebMode={isWebMode}
+            onGoToTelegram={() => setActiveSection('telegram')}
+            telegramSyncedReady={telegramSyncedReady}
+          />
+        )}
 
         {activeSection === 'mql5' && (
           <Mql5Studio config={mql5Config} onChangeConfig={setMql5Config} />
