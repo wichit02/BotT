@@ -497,7 +497,7 @@ function sanitizeGithubRepoName(raw: string): string {
 
 function buildSignalsSnapshotJson(): Buffer {
   const payload = {
-    app: 'AO Signal Studio (M5)',
+    app: 'Stoch (M5)',
     monitoredSymbols: persisted.symbols,
     direction: persisted.direction,
     totalCapturedSignals: persisted.events.length,
@@ -2114,9 +2114,9 @@ void OnTick()
 
     let okCount = 0;
     const payload = JSON.stringify({
-      title: 'AO M5 ทดสอบระบบสำเร็จ',
+      title: 'Stoch M5 ทดสอบระบบสำเร็จ',
       body: 'เซิร์ฟเวอร์เชื่อมต่อมือถือเครื่องนี้แล้ว พร้อมส่งสัญญาณอัตโนมัติ',
-      tag: `ao-test-${Date.now()}`,
+      tag: `stoch-test-${Date.now()}`,
       url: '/',
     });
 
@@ -2350,7 +2350,7 @@ void OnTick()
     }
     const ok = await sendNtfyPush(
       topic,
-      'AO M5 Test Alert',
+      'Stoch M5 Test Alert',
       'เชื่อมต่อการแจ้งเตือนอัตโนมัติเข้ามือถือ Android สำเร็จ'
     );
     if (!ok) {

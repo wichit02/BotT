@@ -175,16 +175,22 @@ export default function App() {
       {!isWebMode && (
         <header className="border-b border-slate-200/80 bg-white">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-8 px-4 py-4 sm:px-6 lg:px-8">
-            {/* Zone 1: Brand wordmark only */}
+            {/* Zone 1: Brand logo + Stoch wordmark */}
             <a
               href="#top"
               onClick={(e) => {
                 e.preventDefault();
                 setActiveSection('stoch');
               }}
-              className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-2.5 text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
             >
-              Stoch Signal Studio
+              <img
+                src="/pwa-192x192.png"
+                alt="Stoch logo"
+                className="h-8 w-8 rounded-lg object-cover shrink-0 ring-1 ring-slate-900/10"
+                referrerPolicy="no-referrer"
+              />
+              <span>Stoch</span>
             </a>
 
             {/* Zone 2: concise single-line nav links */}
@@ -296,15 +302,23 @@ export default function App() {
             isWebMode ? 'mb-4' : 'mb-7'
           }`}
         >
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
-              {isWebMode
-                ? 'แจ้งเตือน Stoch (15,3,3) M5'
-                : 'กราฟ M5 Stochastic (15,3,3)'}
-            </h1>
-            <p className="mt-1 text-xs text-slate-500">
-              MetaTrader 5 · US100 M5 · Stoch(15,3,3) เส้นสีฟ้าเส้นเดียว · แจ้งเตือนปิด &gt; 80 / &lt; 20
-            </p>
+          <div className={isWebMode ? 'flex items-center gap-3' : ''}>
+            {isWebMode && (
+              <img
+                src="/pwa-192x192.png"
+                alt="Stoch logo"
+                className="h-10 w-10 rounded-xl object-cover shrink-0 ring-1 ring-slate-900/10"
+                referrerPolicy="no-referrer"
+              />
+            )}
+            <div>
+              <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
+                {isWebMode ? 'Stoch' : 'Stoch · กราฟ M5 (15,3,3)'}
+              </h1>
+              <p className="mt-1 text-xs text-slate-500">
+                MetaTrader 5 · US100 M5 · Stoch(15,3,3) เส้นสีฟ้าเส้นเดียว · แจ้งเตือนปิด &gt; 80 / &lt; 20
+              </p>
+            </div>
           </div>
         </div>
 
@@ -353,7 +367,7 @@ export default function App() {
       {!isWebMode && (
         <footer className="border-t border-slate-200/80 bg-white py-4">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-4 text-xs text-slate-400 sm:px-6 lg:px-8">
-            <span>Stoch Signal Studio</span>
+            <span>Stoch</span>
             <span>US100 · M5 (US 100 Index Cash)</span>
           </div>
         </footer>
