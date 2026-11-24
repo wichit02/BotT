@@ -1751,75 +1751,7 @@ async function runBackgroundMonitorCycle() {
           continue;
         }
 
-        // 1) Awesome Oscillator zero-cross alert (once per closed candle)
-        if (closedBar.signal) {
-          const signal = closedBar.signal;
-          const allowDir =
-            (persisted.direction !== 'buy_only' || signal === 'BUY') &&
-            (persisted.direction !== 'sell_only' || signal === 'SELL');
-
-          if (allowDir && !hasClosedBarBeenAlerted(sym, closedBar.timestampIso, signal)) {
-            // Lock synchronously before awaiting network calls so overlapping ticks can never duplicate
-            recordClosedBarAlerted(sym, closedBar.timestampIso, signal);
-            monitorRuntime.lastBarBySymbol[sym] = `${closedBar.timestampIso}:${signal}`;
-
-            const title = `AO M5 ${signal}: ${sym}`;
-            const body = `${sym} M5 ${signal} | AO ${prevClosedBar.ao.toFixed(
-              3
-            )} → ${closedBar.ao.toFixed(3)} | ราคา ${closedBar.close}`;
-
-            const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
-              broadcastWebPush({
-                title,
-                body,
-                tag: `ao-${sym}-${signal}-${Date.now()}`,
-                url: '/',
-              }),
-              persisted.ntfyTopic
-                ? sendNtfyPush(persisted.ntfyTopic, title, body)
-                : Promise.resolve(false),
-            ]);
-
-            const shouldSendTelegram =
-              Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
-              (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
-
-            const tgRes = shouldSendTelegram
-              ? await sendTelegramPush(
-                  persisted.telegramBotToken,
-                  persisted.telegramChatId,
-                  formatTelegramSignalMessage({
-                    symbol: sym,
-                    timeframe: 'M5',
-                    signal,
-                    aoPrev: prevClosedBar.ao,
-                    aoCurr: closedBar.ao,
-                    mode: 'live',
-                    timestampIso: closedBar.timestampIso,
-                  }),
-                  'HTML'
-                )
-              : { ok: false };
-
-            persisted.events.unshift({
-              id: `${sym}-${closedBar.timestampIso}-${signal}-${Date.now()}`,
-              timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
-              symbol: sym,
-              signal,
-              aoPrev: prevClosedBar.ao,
-              aoCurr: closedBar.ao,
-              price: closedBar.close,
-              deliveredToNtfy,
-              deliveredToTelegram: tgRes.ok,
-              deliveredWebPushCount,
-            });
-            persisted.events = persisted.events.slice(0, 30);
-            syncPersistence();
-            scheduleGithubAutoSync('signal-event', 1000);
-          }
-        }
-
-        // 2) Stoch(15,3,3) single cyan %K line threshold alert (>80 or <20 on candle close, once per threshold cross)
+        // Stoch(15,3,3) single cyan %K line threshold alert (>80 or <20 on candle close, once per threshold cross)
         const stochSeries = computeStochMainSeries(bars, persisted.stochConfig);
         const closedStoch = stochSeries[stochSeries.length - 2];
         const prevClosedStoch = stochSeries[stochSeries.length - 3];
