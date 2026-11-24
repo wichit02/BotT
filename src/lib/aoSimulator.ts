@@ -90,19 +90,25 @@ export function recalculateAwesomeOscillator(rawBars: Omit<M5Bar, 'ao' | 'aoRisi
   return result;
 }
 
-export function generateInitialSeries(symbol: TradingSymbol, count = 100): M5Bar[] {
+export function generateInitialSeries(
+  symbol: TradingSymbol,
+  count = 100,
+  intervalMinutes: 1 | 5 = 5
+): M5Bar[] {
   const spec = SYMBOL_SPECS[symbol];
   const rawBars: Omit<M5Bar, 'ao' | 'aoRising' | 'signal'>[] = [];
 
   const now = new Date();
   now.setSeconds(0, 0);
-  const roundedMinutes = Math.floor(now.getMinutes() / 5) * 5;
+  const roundedMinutes = Math.floor(now.getMinutes() / intervalMinutes) * intervalMinutes;
   now.setMinutes(roundedMinutes);
 
   let price = spec.basePrice;
 
   for (let i = 0; i < count; i++) {
-    const barTime = new Date(now.getTime() - (count - 1 - i) * 5 * 60 * 1000);
+    const barTime = new Date(
+      now.getTime() - (count - 1 - i) * intervalMinutes * 60 * 1000
+    );
     // Sinusoidal + realistic momentum cycles so AO naturally crosses zero a couple times
     const wave =
       Math.sin(i * 0.34) * spec.stepSize * 1.15 +
