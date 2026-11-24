@@ -22,6 +22,7 @@ import {
 import {
   DEFAULT_STOCH_PARAMS,
   StochParams,
+  StochTriggerType,
   appendStochSimBars,
   computeStochasticSeries,
 } from '../lib/stochCalculator';
@@ -99,21 +100,24 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
 
   const [lastSignalBanner, setLastSignalBanner] = useState<{
     signal: 'BUY' | 'SELL';
+    triggerType: Exclude<StochTriggerType, null>;
+    kPrev: number;
     k: number;
-    d: number;
     price: number;
     time: string;
-    zone: string;
+    label: string;
   } | null>(null);
+  const [monitorNote, setMonitorNote] = useState<string | null>(null);
 
   const [recentStochSignals, setRecentStochSignals] = useState<
     Array<{
       id: string;
       time: string;
       signal: 'BUY' | 'SELL';
+      triggerType: Exclude<StochTriggerType, null>;
       k: number;
-      d: number;
       price: number;
+      label: string;
     }>
   >([]);
 
@@ -123,18 +127,18 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
 
   const lastObservedClosedBucketRef = useRef<number | null>(null);
   const alertedStochBucketsRef = useRef<Set<string>>(new Set<string>());
+  const hasLoadedMonitorConfigRef = useRef(false);
 
   const stochSeries = useMemo(
     () => computeStochasticSeries(bars, stochParams),
     [bars, stochParams]
   );
 
-  const [animatedTip, setAnimatedTip] = useState<{ close: number; k: number; d: number }>(() => {
+  const [animatedTip, setAnimatedTip] = useState<{ close: number; k: number }>(() => {
     const last = stochSeries[stochSeries.length - 1];
     return {
       close: last?.close ?? spec.basePrice,
       k: last?.k ?? 50,
-      d: last?.d ?? 50,
     };
   });
   const animatedTipRef = useRef(animatedTip);
@@ -146,16 +150,10 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
 
     const fromClose = animatedTipRef.current.close;
     const fromK = animatedTipRef.current.k;
-    const fromD = animatedTipRef.current.d;
     const toClose = latest.close;
     const toK = latest.k;
-    const toD = latest.d;
 
-    if (
-      Math.abs(toClose - fromClose) < 1e-6 &&
-      Math.abs(toK - fromK) < 1e-4 &&
-      Math.abs(toD - fromD) < 1e-4
-    ) {
+    if (Math.abs(toClose - fromClose) < 1e-6 && Math.abs(toK - fromK) < 1e-4) {
       return;
     }
 
@@ -169,7 +167,6 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
       setAnimatedTip({
         close: fromClose + (toClose - fromClose) * ease,
         k: fromK + (toK - fromK) * ease,
-        d: fromD + (toD - fromD) * ease,
       });
       if (progress < 1) {
         rafId = window.requestAnimationFrame(step);
@@ -231,29 +228,64 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
     [soundEnabled]
   );
 
-  const recordLocalStochSignal = useCallback(
+  // Load server Stoch monitor config on mount
+  useEffect(() => {
+    fetch('/api/monitor/status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.stochConfig && typeof data.stochConfig === 'object') {
+          setStochParams({
+            kPeriod: Math.max(1, Number(data.stochConfig.kPeriod) || 15),
+            dPeriod: Math.max(1, Number(data.stochConfig.dPeriod) || 3),
+            slowing: Math.max(1, Number(data.stochConfig.slowing) || 3),
+            upperLevel: Math.min(99, Math.max(51, Number(data.stochConfig.upperLevel) || 80)),
+            lowerLevel: Math.max(1, Math.min(49, Number(data.stochConfig.lowerLevel) || 20)),
+          });
+        }
+        hasLoadedMonitorConfigRef.current = true;
+      })
+      .catch(() => {
+        hasLoadedMonitorConfigRef.current = true;
+      });
+  }, []);
+
+  // Sync Stoch parameters with server 24/7 monitor when changed by user
+  useEffect(() => {
+    if (!hasLoadedMonitorConfigRef.current) return;
+    const t = window.setTimeout(() => {
+      void fetch('/api/monitor/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stochConfig: stochParams }),
+      }).catch(() => {});
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [stochParams]);
+
+  const recordStochSignal = useCallback(
     (
       signal: 'BUY' | 'SELL',
+      triggerType: Exclude<StochTriggerType, null>,
+      kPrev: number,
       k: number,
-      d: number,
       price: number,
       timeLabel: string,
-      timestampIso: string
+      timestampIso: string,
+      mode: 'live' | 'sim'
     ) => {
-      const zoneLabel =
-        k >= stochParams.upperLevel
-          ? `Overbought (${stochParams.upperLevel}+)`
-          : k <= stochParams.lowerLevel
-          ? `Oversold (${stochParams.lowerLevel}-)`
-          : 'Neutral (20–80)';
+      const label =
+        triggerType === 'ABOVE_80'
+          ? `ปิดสูงกว่า ${stochParams.upperLevel}`
+          : `ปิดต่ำกว่า ${stochParams.lowerLevel}`;
 
       setLastSignalBanner({
         signal,
+        triggerType,
+        kPrev,
         k,
-        d,
         price,
         time: timeLabel,
-        zone: zoneLabel,
+        label,
       });
 
       setRecentStochSignals((prev) =>
@@ -262,17 +294,60 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
             id: `stoch-${timestampIso}-${Math.random().toString(36).slice(2, 6)}`,
             time: timeLabel,
             signal,
+            triggerType,
             k,
-            d,
             price,
+            label,
           },
           ...prev,
         ].slice(0, 8)
       );
 
       trigger10sSound(signal);
+
+      if (mode === 'sim') {
+        void fetch('/api/monitor/notify-signal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            indicator: 'STOCH',
+            symbol,
+            timeframe: 'M5',
+            signal,
+            triggerType,
+            aoPrev: kPrev,
+            aoCurr: k,
+            price,
+            mode: 'sim',
+            timestampIso,
+          }),
+        })
+          .then(async (r) => {
+            const resData = await r.json().catch(() => null);
+            if (!r.ok) {
+              setMonitorNote(resData?.error || 'ส่งแจ้งเตือนจำลองไม่สำเร็จ');
+              return;
+            }
+            if (resData?.skipped) {
+              setMonitorNote(`จำลอง "${label}" แล้ว (ยังไม่ได้ตั้งค่า Telegram/Push)`);
+              return;
+            }
+            const channels: string[] = [];
+            if (resData?.deliveredToTelegram) channels.push('Telegram');
+            if (resData?.deliveredWebPushCount > 0) channels.push('มือถือ');
+            if (resData?.deliveredToNtfy) channels.push('ntfy');
+            setMonitorNote(
+              channels.length > 0
+                ? `ส่งแจ้งเตือนจำลองไปยัง ${channels.join(' + ')} แล้ว`
+                : `บันทึกสัญญาณ "${label}" แล้ว`
+            );
+          })
+          .catch(() => {});
+      } else {
+        setMonitorNote('ระบบหลังบ้านส่งแจ้งเตือน Telegram / มือถือ รอบปิดแท่งแล้ว');
+      }
     },
-    [stochParams.lowerLevel, stochParams.upperLevel, trigger10sSound]
+    [stochParams.lowerLevel, stochParams.upperLevel, symbol, trigger10sSound]
   );
 
   const fetchLiveBars = useCallback(
@@ -301,7 +376,8 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
 
         const computed = computeStochasticSeries(data.bars, stochParams);
         const closedBar = computed[computed.length - 2];
-        if (closedBar) {
+        const prevClosedBar = computed[computed.length - 3];
+        if (closedBar && prevClosedBar) {
           const closedOpenMs = Date.parse(closedBar.timestampIso);
           if (Number.isFinite(closedOpenMs)) {
             const closedBucketMs = Math.floor(closedOpenMs / 300000) * 300000;
@@ -315,18 +391,21 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
               const bucketKey = `STOCH-${new Date(closedBucketMs).toISOString()}`;
               if (
                 closedBar.signal &&
+                closedBar.triggerType &&
                 secSinceClose >= -5 &&
                 secSinceClose <= 90 &&
                 !alertedStochBucketsRef.current.has(bucketKey)
               ) {
                 alertedStochBucketsRef.current.add(bucketKey);
-                recordLocalStochSignal(
+                recordStochSignal(
                   closedBar.signal,
+                  closedBar.triggerType,
+                  prevClosedBar.k,
                   closedBar.k,
-                  closedBar.d,
                   closedBar.close,
                   closedBar.timeLabel,
-                  closedBar.timestampIso
+                  closedBar.timestampIso,
+                  'live'
                 );
               }
             }
@@ -338,7 +417,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
         if (!silent) setIsLoadingLive(false);
       }
     },
-    [recordLocalStochSignal, stochParams, symbol]
+    [recordStochSignal, stochParams, symbol]
   );
 
   // Real-time 2-second polling in Live mode
@@ -357,6 +436,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
     setHoveredIdx(null);
     setPanOffset(0);
     setLiveError(null);
+    setMonitorNote(null);
     if (nextMode === 'live') {
       lastObservedClosedBucketRef.current = null;
     } else {
@@ -370,21 +450,29 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
   };
 
   const advanceSimBar = (forceCross?: 'BUY' | 'SELL') => {
-    const nextBars = appendStochSimBars(barsRef.current, forceCross);
+    const prevSeries = computeStochasticSeries(barsRef.current, stochParams);
+    const prevK = prevSeries[prevSeries.length - 1]?.k ?? 50;
+
+    const nextBars = appendStochSimBars(barsRef.current, forceCross, stochParams);
     barsRef.current = nextBars;
     setBars(nextBars);
 
     const computed = computeStochasticSeries(nextBars, stochParams);
     const latest = computed[computed.length - 1];
+    const beforeLatest = computed[computed.length - 2];
     if (latest && (latest.signal || forceCross)) {
       const sig = latest.signal || forceCross!;
-      recordLocalStochSignal(
+      const trig: Exclude<StochTriggerType, null> =
+        latest.triggerType || (sig === 'SELL' ? 'ABOVE_80' : 'BELOW_20');
+      recordStochSignal(
         sig,
+        trig,
+        beforeLatest?.k ?? prevK,
         latest.k,
-        latest.d,
         latest.close,
         latest.timeLabel,
-        latest.timestampIso
+        latest.timestampIso,
+        'sim'
       );
     }
   };
@@ -410,7 +498,6 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
       high: Math.max(last.high, animatedTip.close),
       low: Math.min(last.low, animatedTip.close),
       k: animatedTip.k,
-      d: animatedTip.d,
     };
     return copy;
   }, [stochSeries, animatedTip]);
@@ -487,17 +574,6 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
       .join(' ');
   }, [visiblePoints, plotLeft, slotW, stochParams]);
 
-  const dPathD = useMemo(() => {
-    if (visiblePoints.length === 0) return '';
-    return visiblePoints
-      .map((pt, idx) => {
-        const x = plotLeft + 6 + idx * slotW + slotW / 2;
-        const y = stochToY(pt.d);
-        return `${idx === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(' ');
-  }, [visiblePoints, plotLeft, slotW, stochParams]);
-
   const liveDisplayPrice =
     feedMode === 'live' && typeof liveBidAsk.bid === 'number' && liveBidAsk.bid > 0
       ? liveBidAsk.bid
@@ -548,20 +624,20 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
   };
 
   const zoneText =
-    latestPoint.k >= stochParams.upperLevel
-      ? `Overbought (≥ ${stochParams.upperLevel})`
-      : latestPoint.k <= stochParams.lowerLevel
-      ? `Oversold (≤ ${stochParams.lowerLevel})`
-      : 'กลางโซน (20–80)';
+    latestPoint.k > stochParams.upperLevel
+      ? `ปิดสูงกว่า ${stochParams.upperLevel} (Overbought)`
+      : latestPoint.k < stochParams.lowerLevel
+      ? `ปิดต่ำกว่า ${stochParams.lowerLevel} (Oversold)`
+      : `กลางโซน (${stochParams.lowerLevel}–${stochParams.upperLevel})`;
 
   const zoneColorClass =
-    latestPoint.k >= stochParams.upperLevel
+    latestPoint.k > stochParams.upperLevel
       ? 'text-rose-700'
-      : latestPoint.k <= stochParams.lowerLevel
+      : latestPoint.k < stochParams.lowerLevel
       ? 'text-emerald-700'
       : 'text-slate-800';
 
-  const crossCountInView = visiblePoints.filter((p) => p.signal !== null).length;
+  const triggerCountInView = visiblePoints.filter((p) => p.signal !== null).length;
 
   return (
     <section className="space-y-6">
@@ -623,7 +699,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 text-xs font-medium text-white whitespace-nowrap transition-colors hover:bg-emerald-700"
               >
                 <ArrowUpRight className="h-3.5 w-3.5" />
-                จำลอง ตัดขึ้น (&lt;20)
+                จำลอง ปิด &lt; {stochParams.lowerLevel}
               </button>
 
               <button
@@ -632,7 +708,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-rose-600 px-3.5 text-xs font-medium text-white whitespace-nowrap transition-colors hover:bg-rose-700"
               >
                 <ArrowDownRight className="h-3.5 w-3.5" />
-                จำลอง ตัดลง (&gt;80)
+                จำลอง ปิด &gt; {stochParams.upperLevel}
               </button>
 
               <button
@@ -766,9 +842,8 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                 C {activePoint.close.toFixed(spec.digits)}
               </span>
               <span className="font-semibold text-[#00b8b8]">
-                %K {activePoint.k.toFixed(2)}
+                Stoch {activePoint.k.toFixed(2)}
               </span>
-              <span className="text-neutral-400">%D {activePoint.d.toFixed(2)}</span>
             </div>
           </div>
 
@@ -1008,32 +1083,19 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                 );
               })}
 
-              {/* Signal %D Dashed Line (matching subtle dark-gray dashed curve in MT5 screenshot) */}
-              {dPathD && (
-                <path
-                  d={dPathD}
-                  fill="none"
-                  stroke="#52525b"
-                  strokeWidth="1.35"
-                  strokeDasharray="4 3"
-                  strokeLinejoin="round"
-                  strokeLinecap="round"
-                />
-              )}
-
-              {/* Main %K Solid Cyan Line (matching bright teal/cyan curve in MT5 screenshot) */}
+              {/* Single Main %K Solid Cyan Line */}
               {kPathD && (
                 <path
                   d={kPathD}
                   fill="none"
                   stroke="#00b8b8"
-                  strokeWidth="2.1"
+                  strokeWidth="2.2"
                   strokeLinejoin="round"
                   strokeLinecap="round"
                 />
               )}
 
-              {/* Crossover Dots on Stoch */}
+              {/* Threshold Close Markers (> 80 or < 20) */}
               {visiblePoints.map((pt, idx) => {
                 if (!pt.signal) return null;
                 const xCenter = plotLeft + 6 + idx * slotW + slotW / 2;
@@ -1043,7 +1105,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                     key={`sig-${pt.timestampIso}-${idx}`}
                     cx={xCenter}
                     cy={yK}
-                    r="2.8"
+                    r="3"
                     fill={pt.signal === 'BUY' ? '#22c55e' : '#ef4444'}
                   />
                 );
@@ -1068,7 +1130,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                 {spec.label}
               </text>
 
-              {/* Top-left Stoch Readout matching screenshot: Stoch(15,3,3) 80.67 79.76 */}
+              {/* Top-left Stoch Single-Line Readout */}
               <text
                 x={plotLeft + 8}
                 y={dividerY + 19}
@@ -1077,8 +1139,8 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                 className="font-sans tabular-nums"
               >
                 Stoch({stochParams.kPeriod},{stochParams.dPeriod},{stochParams.slowing}){' '}
-                <tspan fill="#9ca3af" className="font-mono">
-                  {activePoint.k.toFixed(2)} {activePoint.d.toFixed(2)}
+                <tspan fill="#00b8b8" className="font-mono font-semibold">
+                  {activePoint.k.toFixed(2)}
                 </tspan>
               </text>
 
@@ -1145,13 +1207,13 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
           </div>
         </div>
 
-        {/* Right Column: Live Stoch(15,3,3) Readout, Parameters & Crossover Log */}
+        {/* Right Column: Live Single-Line Stoch(15,3,3) Alert Status & Parameters */}
         <div className="lg:col-span-4 flex flex-col justify-between gap-5 rounded-xl border border-slate-200 bg-white p-5">
           <div className="space-y-5">
             <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-sm font-semibold text-slate-900">
-                  Stochastic Oscillator (M5)
+                  Stoch({stochParams.kPeriod},{stochParams.dPeriod},{stochParams.slowing}) · เส้นสีฟ้าเส้นเดียว
                 </h3>
                 <p className="mt-0.5 text-xs text-slate-500">
                   {feedMode === 'live' ? feedSource || 'MT5 CFD Real-Time' : 'โหมดจำลอง'}
@@ -1166,7 +1228,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
               </button>
             </div>
 
-            {/* Latest Crossover Card */}
+            {/* Latest Alert Card */}
             <div className="rounded-xl bg-slate-900 p-4 text-slate-100">
               {lastSignalBanner ? (
                 <div>
@@ -1180,7 +1242,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                         }`}
                       />
                       <span className="font-semibold text-white">
-                        {symbol} · Stoch {lastSignalBanner.signal}
+                        {symbol} · {lastSignalBanner.label}
                       </span>
                     </div>
                     <span className="font-mono text-[11px] text-slate-400 tabular-nums">
@@ -1188,28 +1250,36 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                     </span>
                   </div>
                   <p className="mt-2 font-mono text-xs text-slate-300 tabular-nums">
-                    %K {lastSignalBanner.k.toFixed(2)} / %D {lastSignalBanner.d.toFixed(2)} ·{' '}
-                    {lastSignalBanner.zone}
+                    เส้นฟ้า %K: {lastSignalBanner.kPrev.toFixed(2)} →{' '}
+                    {lastSignalBanner.k.toFixed(2)} · ราคา {lastSignalBanner.price.toFixed(spec.digits)}
                   </p>
+                  {monitorNote && (
+                    <p className="mt-1.5 text-[11px] text-sky-300">{monitorNote}</p>
+                  )}
                 </div>
               ) : (
-                <p className="py-1.5 text-xs text-slate-400">
-                  {feedMode === 'live'
-                    ? `กำลังติดตาม Stoch(${stochParams.kPeriod},${stochParams.dPeriod},${stochParams.slowing}) บน ${symbol} M5 ทุก 2 วินาที`
-                    : 'กด “จำลอง ตัดขึ้น (<20)” หรือ “จำลอง ตัดลง (>80)”'}
-                </p>
+                <div className="space-y-1 py-0.5">
+                  <p className="text-xs text-slate-300">
+                    {feedMode === 'live'
+                      ? `แจ้งเตือนอัตโนมัติเมื่อปิดแท่ง M5 สูงกว่า ${stochParams.upperLevel} หรือต่ำกว่า ${stochParams.lowerLevel}`
+                      : `กด “จำลอง ปิด < ${stochParams.lowerLevel}” หรือ “จำลอง ปิด > ${stochParams.upperLevel}”`}
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    ตรวจกราฟจริงทุก 2 วินาที · ส่งแจ้งเตือนรอบเดียวต่อสัญญาณ (Telegram + มือถือ)
+                  </p>
+                </div>
               )}
             </div>
 
-            {/* Parameters Editor (preloaded to 15,3,3 & 80/20 matching screenshot) */}
+            {/* Parameters Editor (preloaded to 15,3,3 & 80/20) */}
             <div className="space-y-3 border-t border-slate-100 pt-4">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-slate-800">
-                  ตั้งค่าพารามิเตอร์ Stoch
+                  ตั้งค่าเส้น Stoch &amp; ระดับแจ้งเตือน
                 </span>
                 <span className="text-[11px] text-slate-400">Low/High · SMA</span>
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <label className="space-y-1">
                   <span className="block text-[11px] text-slate-500">%K period</span>
                   <input
@@ -1221,22 +1291,6 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                       setStochParams((p) => ({
                         ...p,
                         kPeriod: Math.max(1, Number(e.target.value) || 15),
-                      }))
-                    }
-                    className="h-9 w-full rounded-lg border border-slate-200 px-2.5 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="block text-[11px] text-slate-500">%D period</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={stochParams.dPeriod}
-                    onChange={(e) =>
-                      setStochParams((p) => ({
-                        ...p,
-                        dPeriod: Math.max(1, Number(e.target.value) || 3),
                       }))
                     }
                     className="h-9 w-full rounded-lg border border-slate-200 px-2.5 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
@@ -1261,10 +1315,12 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="space-y-1">
-                  <span className="block text-[11px] text-slate-500">ระดับบน (Overbought)</span>
+                  <span className="block text-[11px] text-slate-500">
+                    แจ้งเตือนเมื่อปิดสูงกว่า
+                  </span>
                   <input
                     type="number"
-                    min={50}
+                    min={51}
                     max={99}
                     value={stochParams.upperLevel}
                     onChange={(e) =>
@@ -1277,11 +1333,13 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                   />
                 </label>
                 <label className="space-y-1">
-                  <span className="block text-[11px] text-slate-500">ระดับล่าง (Oversold)</span>
+                  <span className="block text-[11px] text-slate-500">
+                    แจ้งเตือนเมื่อปิดต่ำกว่า
+                  </span>
                   <input
                     type="number"
                     min={1}
-                    max={50}
+                    max={49}
                     value={stochParams.lowerLevel}
                     onChange={(e) =>
                       setStochParams((p) => ({
@@ -1295,19 +1353,18 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
               </div>
             </div>
 
-            {/* Recent Crossovers */}
+            {/* Recent Threshold Alerts */}
             <div className="border-t border-slate-100 pt-4">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-medium text-slate-500">
-                  จุดตัด %K / %D ล่าสุด ({recentStochSignals.length})
+                  ประวัติแจ้งเตือน (&gt;{stochParams.upperLevel} / &lt;{stochParams.lowerLevel}) (
+                  {recentStochSignals.length})
                 </h4>
-                <span className="font-mono text-[11px] text-slate-400">
-                  %K ฟ้า · %D ประ
-                </span>
+                <span className="font-mono text-[11px] text-teal-600">เส้นสีฟ้าเส้นเดียว</span>
               </div>
 
               {recentStochSignals.length === 0 ? (
-                <p className="mt-2 text-xs text-slate-400">ยังไม่มีจุดตัดใหม่ตั้งแต่เปิดหน้า</p>
+                <p className="mt-2 text-xs text-slate-400">ยังไม่มีสัญญาณปิดแท่งตั้งแต่เปิดหน้า</p>
               ) : (
                 <ul className="mt-2 divide-y divide-slate-100">
                   {recentStochSignals.slice(0, 4).map((item) => (
@@ -1321,12 +1378,12 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
                             item.signal === 'BUY' ? 'text-emerald-700' : 'text-rose-700'
                           }`}
                         >
-                          {item.signal}
+                          {item.label}
                         </span>
                         <span className="text-slate-600">{item.time}</span>
                       </div>
-                      <span className="font-mono text-slate-600 tabular-nums">
-                        {item.k.toFixed(2)} / {item.d.toFixed(2)}
+                      <span className="font-mono text-teal-700 tabular-nums">
+                        {item.k.toFixed(2)}
                       </span>
                     </li>
                   ))}
@@ -1348,21 +1405,21 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({ isWebMode = fals
           </div>
           <div>
             <p className="text-xs text-slate-500">
-              Main %K ({stochParams.kPeriod},{stochParams.slowing})
+              เส้นฟ้า Stoch({stochParams.kPeriod},{stochParams.dPeriod},{stochParams.slowing})
             </p>
             <p className="mt-1 font-mono text-base font-semibold text-teal-700 tabular-nums">
               {latestPoint.k.toFixed(2)}
             </p>
           </div>
           <div>
-            <p className="text-xs text-slate-500">Signal %D ({stochParams.dPeriod})</p>
-            <p className="mt-1 font-mono text-base font-semibold text-slate-900 tabular-nums">
-              {latestPoint.d.toFixed(2)}
+            <p className="text-xs text-slate-500">เงื่อนไขแจ้งเตือน</p>
+            <p className="mt-1 text-base font-semibold text-slate-900 tabular-nums">
+              ปิด &gt; {stochParams.upperLevel} หรือ &lt; {stochParams.lowerLevel}
             </p>
           </div>
           <div>
             <p className="text-xs text-slate-500">
-              สถานะโซน ({stochParams.lowerLevel}/{stochParams.upperLevel}) · ตัดกัน {crossCountInView} ครั้ง
+              สถานะปัจจุบัน · เกิด {triggerCountInView} ครั้งในหน้าจอ
             </p>
             <p className={`mt-1 text-base font-semibold tabular-nums ${zoneColorClass}`}>
               {zoneText}
