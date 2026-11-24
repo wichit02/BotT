@@ -4,9 +4,21 @@
     "US100"
   ],
   "direction": "both",
-  "totalCapturedSignals": 9,
-  "latestSignalAt": "24/11/2569 13:55:02",
+  "totalCapturedSignals": 10,
+  "latestSignalAt": "24/11/2569 14:30:03",
   "events": [
+    {
+      "id": "stoch-US100-2026-11-24T07:25:00.000Z-BELOW_20-1795505403477",
+      "timestamp": "24/11/2569 14:30:03",
+      "symbol": "US100",
+      "signal": "BUY",
+      "aoPrev": 31.070626403792396,
+      "aoCurr": 17.466700175922618,
+      "price": 26748.1,
+      "deliveredToTelegram": true,
+      "deliveredToNtfy": false,
+      "deliveredWebPushCount": 0
+    },
     {
       "id": "stoch-US100-2026-11-24T06:50:00.000Z-ABOVE_80-1795503302606",
       "timestamp": "24/11/2569 13:55:02",
