@@ -116,6 +116,7 @@ const STATE_DIR = path.resolve(__dirname, '.data');
 const STATE_FILE = path.join(STATE_DIR, 'ao-server-state.json');
 
 const feedCache = new Map<TradingSymbol, { expiresAt: number; data: MarketFeedResult }>();
+const feedCacheM1 = new Map<TradingSymbol, { expiresAt: number; data: MarketFeedResult }>();
 
 function normalizeTelegramChatId(raw: string): string {
   const trimmed = raw.trim();
@@ -1070,6 +1071,7 @@ const CFD_TICKERS = ['PEPPERSTONE:NAS100', 'VANTAGE:NAS100', 'ICMARKETS:USTEC'] 
 const cfdStreamState = {
   tickerIndex: 0,
   barsMap: new Map<number, RawM5Bar>(),
+  barsM1Map: new Map<number, RawM5Bar>(),
   bid: 0,
   ask: 0,
   connected: false,
@@ -1086,6 +1088,7 @@ const xmMt5Bridge = {
   ask: 0,
   updatedAtMs: 0,
   bars: [] as Array<Omit<M5Candle, 'ao' | 'aoRising' | 'signal'>>,
+  barsM1: [] as Array<Omit<M5Candle, 'ao' | 'aoRising' | 'signal'>>,
 };
 
 function tvFrame(method: string, params: unknown[]): string {
@@ -1135,8 +1138,43 @@ function connectRealtimeCfdStream() {
         ])
       );
       ws.send(tvFrame('create_series', [sessionId, 'sds_1', 's1', 'sds_sym_1', '5', 260]));
+      ws.send(tvFrame('create_series', [sessionId, 'sds_2', 's2', 'sds_sym_1', '1', 260]));
       ws.send(tvFrame('quote_create_session', [quoteSessionId]));
       ws.send(tvFrame('quote_add_symbols', [quoteSessionId, ticker]));
+    };
+
+    const ingestSeriesRows = (
+      targetMap: Map<number, RawM5Bar>,
+      rows: Array<{ v?: number[] }>
+    ) => {
+      if (rows.length === 0) return false;
+      for (const row of rows) {
+        const v = row?.v;
+        if (!Array.isArray(v) || v.length < 5) continue;
+        const tSec = Math.floor(Number(v[0]));
+        const open = roundTo(Number(v[1]), 2);
+        const high = roundTo(Number(v[2]), 2);
+        const low = roundTo(Number(v[3]), 2);
+        const close = roundTo(Number(v[4]), 2);
+        if (
+          !Number.isFinite(tSec) ||
+          !Number.isFinite(open) ||
+          !Number.isFinite(high) ||
+          !Number.isFinite(low) ||
+          !Number.isFinite(close)
+        ) {
+          continue;
+        }
+        targetMap.set(tSec, { tSec, open, high, low, close });
+      }
+      if (targetMap.size > 320) {
+        const sortedKeys = Array.from(targetMap.keys()).sort((a, b) => a - b);
+        const toDelete = sortedKeys.length - 300;
+        for (let i = 0; i < toDelete; i++) {
+          targetMap.delete(sortedKeys[i]);
+        }
+      }
+      return true;
     };
 
     ws.onmessage = (evt: MessageEvent) => {
@@ -1188,38 +1226,24 @@ function connectRealtimeCfdStream() {
                     if (tickPrice < existing.low) existing.low = tickPrice;
                   }
                 }
+                if (cfdStreamState.barsM1Map.size > 0) {
+                  const currentM1BucketSec = Math.floor(Date.now() / 60000) * 60;
+                  const existingM1 = cfdStreamState.barsM1Map.get(currentM1BucketSec);
+                  if (existingM1) {
+                    existingM1.close = tickPrice;
+                    if (tickPrice > existingM1.high) existingM1.high = tickPrice;
+                    if (tickPrice < existingM1.low) existingM1.low = tickPrice;
+                  }
+                }
               }
             }
           }
           if (msg.m === 'timescale_update' || msg.m === 'du') {
-            const rows: Array<{ v?: number[] }> = msg.p?.[1]?.sds_1?.s || [];
-            if (rows.length > 0) {
-              for (const row of rows) {
-                const v = row?.v;
-                if (!Array.isArray(v) || v.length < 5) continue;
-                const tSec = Math.floor(Number(v[0]));
-                const open = roundTo(Number(v[1]), 2);
-                const high = roundTo(Number(v[2]), 2);
-                const low = roundTo(Number(v[3]), 2);
-                const close = roundTo(Number(v[4]), 2);
-                if (
-                  !Number.isFinite(tSec) ||
-                  !Number.isFinite(open) ||
-                  !Number.isFinite(high) ||
-                  !Number.isFinite(low) ||
-                  !Number.isFinite(close)
-                ) {
-                  continue;
-                }
-                cfdStreamState.barsMap.set(tSec, { tSec, open, high, low, close });
-              }
-              if (cfdStreamState.barsMap.size > 320) {
-                const sortedKeys = Array.from(cfdStreamState.barsMap.keys()).sort((a, b) => a - b);
-                const toDelete = sortedKeys.length - 300;
-                for (let i = 0; i < toDelete; i++) {
-                  cfdStreamState.barsMap.delete(sortedKeys[i]);
-                }
-              }
+            const m5Rows: Array<{ v?: number[] }> = msg.p?.[1]?.sds_1?.s || [];
+            const m1Rows: Array<{ v?: number[] }> = msg.p?.[1]?.sds_2?.s || [];
+            const gotM5 = ingestSeriesRows(cfdStreamState.barsMap, m5Rows);
+            const gotM1 = ingestSeriesRows(cfdStreamState.barsM1Map, m1Rows);
+            if (gotM5 || gotM1) {
               cfdStreamState.lastTickAtMs = Date.now();
             }
           }
@@ -1266,9 +1290,13 @@ setInterval(() => {
   }
 }, 30000);
 
-function buildCfdMarketFeed(symbol: TradingSymbol): MarketFeedResult | null {
-  if (cfdStreamState.barsMap.size < 36) return null;
-  const sorted = Array.from(cfdStreamState.barsMap.values())
+function buildCfdMarketFeed(
+  symbol: TradingSymbol,
+  timeframe: 'M5' | 'M1' = 'M5'
+): MarketFeedResult | null {
+  const sourceMap = timeframe === 'M1' ? cfdStreamState.barsM1Map : cfdStreamState.barsMap;
+  if (sourceMap.size < 36) return null;
+  const sorted = Array.from(sourceMap.values())
     .sort((a, b) => a.tSec - b.tSec)
     .slice(-260);
 
@@ -1311,11 +1339,16 @@ function buildCfdMarketFeed(symbol: TradingSymbol): MarketFeedResult | null {
   };
 }
 
-async function fetchYahooM5(symbol: TradingSymbol): Promise<MarketFeedResult> {
+async function fetchYahooM5(
+  symbol: TradingSymbol,
+  timeframe: 'M5' | 'M1' = 'M5'
+): Promise<MarketFeedResult> {
   const mapping = YAHOO_SYMBOL_MAP[symbol];
+  const intervalParam = timeframe === 'M1' ? '1m' : '5m';
+  const rangeParam = timeframe === 'M1' ? '1d' : '5d';
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     mapping.ticker
-  )}?interval=5m&range=5d`;
+  )}?interval=${intervalParam}&range=${rangeParam}`;
 
   const res = await fetch(url, {
     headers: {
@@ -1430,7 +1463,7 @@ async function getLiveM5Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
     }
   }
 
-  const cfdFeed = buildCfdMarketFeed(symbol);
+  const cfdFeed = buildCfdMarketFeed(symbol, 'M5');
   if (cfdFeed) {
     return cfdFeed;
   }
@@ -1441,9 +1474,55 @@ async function getLiveM5Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
     return cached.data;
   }
 
-  const data = await fetchYahooM5(symbol);
+  const data = await fetchYahooM5(symbol, 'M5');
 
   feedCache.set(symbol, {
+    expiresAt: Date.now() + 1500,
+    data,
+  });
+  return data;
+}
+
+async function getLiveM1Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
+  // Priority 1: Direct XM MT5 Bridge M1 bars pushed from user's MT5 terminal (within 15s)
+  if (xmMt5Bridge.barsM1.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000) {
+    const bars = computeAwesomeOscillator(xmMt5Bridge.barsM1.slice(-260))
+      .slice(-180)
+      .map((b, idx) => ({ ...b, index: idx }));
+    return {
+      symbol,
+      source: `XM MT5 Live (${xmMt5Bridge.symbolName})`,
+      marketState: 'LIVE',
+      fetchedAt: new Date().toISOString(),
+      lastTickAt: new Date(xmMt5Bridge.updatedAtMs).toISOString(),
+      bid: xmMt5Bridge.bid,
+      ask: xmMt5Bridge.ask,
+      bars,
+    };
+  }
+
+  // Priority 2: Wait briefly up to 1.8s on cold start for real-time CFD M1 stream handshake
+  if (cfdStreamState.barsM1Map.size < 36) {
+    const deadline = Date.now() + 1800;
+    while (cfdStreamState.barsM1Map.size < 36 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  }
+
+  const cfdFeed = buildCfdMarketFeed(symbol, 'M1');
+  if (cfdFeed) {
+    return cfdFeed;
+  }
+
+  // Priority 3: Fallback to Yahoo 1m feed (1.5s cache)
+  const cached = feedCacheM1.get(symbol);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  const data = await fetchYahooM5(symbol, 'M1');
+
+  feedCacheM1.set(symbol, {
     expiresAt: Date.now() + 1500,
     data,
   });
@@ -1892,46 +1971,54 @@ async function startServer() {
       return;
     }
 
-    const cleaned: Array<Omit<M5Candle, 'ao' | 'aoRising' | 'signal'>> = [];
-    for (const item of rawBars.slice(-260)) {
-      const tVal = Number(item?.t ?? item?.time ?? 0);
-      const o = Number(item?.o ?? item?.open);
-      const h = Number(item?.h ?? item?.high);
-      const l = Number(item?.l ?? item?.low);
-      const c = Number(item?.c ?? item?.close);
-      if (
-        !Number.isFinite(tVal) ||
-        tVal <= 0 ||
-        !Number.isFinite(o) ||
-        !Number.isFinite(h) ||
-        !Number.isFinite(l) ||
-        !Number.isFinite(c)
-      ) {
-        continue;
+    const parseBridgeBars = (rawList: any[]) => {
+      const parsed: Array<Omit<M5Candle, 'ao' | 'aoRising' | 'signal'>> = [];
+      for (const item of rawList.slice(-260)) {
+        const tVal = Number(item?.t ?? item?.time ?? 0);
+        const o = Number(item?.o ?? item?.open);
+        const h = Number(item?.h ?? item?.high);
+        const l = Number(item?.l ?? item?.low);
+        const c = Number(item?.c ?? item?.close);
+        if (
+          !Number.isFinite(tVal) ||
+          tVal <= 0 ||
+          !Number.isFinite(o) ||
+          !Number.isFinite(h) ||
+          !Number.isFinite(l) ||
+          !Number.isFinite(c)
+        ) {
+          continue;
+        }
+        const ms = tVal > 1e11 ? tVal : tVal * 1000;
+        const dt = new Date(ms);
+        parsed.push({
+          index: parsed.length,
+          timeLabel: formatTimeLabel(dt),
+          timestampIso: dt.toISOString(),
+          open: roundTo(o, 2),
+          high: roundTo(h, 2),
+          low: roundTo(l, 2),
+          close: roundTo(c, 2),
+          median: (roundTo(h, 2) + roundTo(l, 2)) / 2,
+        });
       }
-      const ms = tVal > 1e11 ? tVal : tVal * 1000;
-      const dt = new Date(ms);
-      cleaned.push({
-        index: cleaned.length,
-        timeLabel: formatTimeLabel(dt),
-        timestampIso: dt.toISOString(),
-        open: roundTo(o, 2),
-        high: roundTo(h, 2),
-        low: roundTo(l, 2),
-        close: roundTo(c, 2),
-        median: (roundTo(h, 2) + roundTo(l, 2)) / 2,
-      });
-    }
+      parsed.sort((a, b) => Date.parse(a.timestampIso) - Date.parse(b.timestampIso));
+      return parsed.map((b, idx) => ({ ...b, index: idx }));
+    };
 
+    const cleaned = parseBridgeBars(rawBars);
     if (cleaned.length < 36) {
       res.status(400).json({ error: 'ข้อมูลแท่งเทียนจาก MT5 ไม่สมบูรณ์' });
       return;
     }
 
-    cleaned.sort(
-      (a, b) => Date.parse(a.timestampIso) - Date.parse(b.timestampIso)
-    );
-    xmMt5Bridge.bars = cleaned.map((b, idx) => ({ ...b, index: idx }));
+    xmMt5Bridge.bars = cleaned;
+    const rawM1Bars = Array.isArray(body.barsM1) ? body.barsM1 : [];
+    const cleanedM1 = parseBridgeBars(rawM1Bars);
+    if (cleanedM1.length >= 36) {
+      xmMt5Bridge.barsM1 = cleanedM1;
+      feedCacheM1.delete('US100');
+    }
     xmMt5Bridge.symbolName = String(body.symbol || 'US100Cash#').slice(0, 32);
     xmMt5Bridge.broker = String(body.broker || 'XM Global MT5').slice(0, 48);
     xmMt5Bridge.bid = Number(body.bid) || cleaned[cleaned.length - 1].close;
@@ -1942,6 +2029,7 @@ async function startServer() {
     res.json({
       ok: true,
       barsCount: xmMt5Bridge.bars.length,
+      barsM1Count: xmMt5Bridge.barsM1.length,
       receivedAt: new Date(xmMt5Bridge.updatedAtMs).toISOString(),
     });
   });
@@ -2063,6 +2151,30 @@ void OnTick()
     } catch (err: any) {
       res.status(502).json({
         error: err?.message || 'ไม่สามารถดึงข้อมูลกราฟจริงได้ในขณะนี้',
+      });
+    }
+  });
+
+  app.get('/api/market/m1', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    const rawSymbol = String(req.query.symbol || 'US100').toUpperCase();
+    if (!(rawSymbol in YAHOO_SYMBOL_MAP)) {
+      res.status(400).json({ error: 'ไม่รองรับสินทรัพย์นี้' });
+      return;
+    }
+    try {
+      const sym = rawSymbol as TradingSymbol;
+      const data = await getLiveM1Feed(sym);
+      res.json({
+        ...data,
+        xmBridgeConnected:
+          xmMt5Bridge.barsM1.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000,
+        cfdStreamConnected: cfdStreamState.connected,
+      });
+    } catch (err: any) {
+      res.status(502).json({
+        error: err?.message || 'ไม่สามารถดึงข้อมูลกราฟ M1 ได้ในขณะนี้',
       });
     }
   });
