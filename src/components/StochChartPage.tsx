@@ -1492,91 +1492,93 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
                 )}
               </div>
 
-              {/* Stoch Settings (15,3,3 & >80 / <20) */}
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-800">
-                    ตั้งค่า Stoch({stochParams.kPeriod},{stochParams.dPeriod},{stochParams.slowing}) · เส้นเดียว
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setStochParams(DEFAULT_STOCH_PARAMS)}
-                    className="text-[11px] font-medium text-blue-600 hover:underline whitespace-nowrap"
-                  >
-                    ค่าเริ่มต้น
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="space-y-1">
-                    <span className="block text-[11px] text-slate-500">%K period</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={100}
-                      value={stochParams.kPeriod}
-                      onChange={(e) =>
-                        setStochParams((p) => ({
-                          ...p,
-                          kPeriod: Math.max(1, Number(e.target.value) || 15),
-                        }))
-                      }
-                      className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
-                    />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="block text-[11px] text-slate-500">Slowing</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={50}
-                      value={stochParams.slowing}
-                      onChange={(e) =>
-                        setStochParams((p) => ({
-                          ...p,
-                          slowing: Math.max(1, Number(e.target.value) || 3),
-                        }))
-                      }
-                      className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
-                    />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="block text-[11px] text-slate-500">
-                      แจ้งเตือนเมื่อปิดสูงกว่า
+              {/* Stoch Settings (15,3,3 & >80 / <20) — shown in Sim/Studio mode only */}
+              {!isWebMode && feedMode === 'sim' && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-800">
+                      ตั้งค่า Stoch({stochParams.kPeriod},{stochParams.dPeriod},{stochParams.slowing}) · เส้นเดียว
                     </span>
-                    <input
-                      type="number"
-                      min={51}
-                      max={99}
-                      value={stochParams.upperLevel}
-                      onChange={(e) =>
-                        setStochParams((p) => ({
-                          ...p,
-                          upperLevel: Math.min(99, Math.max(51, Number(e.target.value) || 80)),
-                        }))
-                      }
-                      className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
-                    />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="block text-[11px] text-slate-500">
-                      แจ้งเตือนเมื่อปิดต่ำกว่า
-                    </span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={49}
-                      value={stochParams.lowerLevel}
-                      onChange={(e) =>
-                        setStochParams((p) => ({
-                          ...p,
-                          lowerLevel: Math.max(1, Math.min(49, Number(e.target.value) || 20)),
-                        }))
-                      }
-                      className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
-                    />
-                  </label>
+                    <button
+                      type="button"
+                      onClick={() => setStochParams(DEFAULT_STOCH_PARAMS)}
+                      className="text-[11px] font-medium text-blue-600 hover:underline whitespace-nowrap"
+                    >
+                      ค่าเริ่มต้น
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="space-y-1">
+                      <span className="block text-[11px] text-slate-500">%K period</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={stochParams.kPeriod}
+                        onChange={(e) =>
+                          setStochParams((p) => ({
+                            ...p,
+                            kPeriod: Math.max(1, Number(e.target.value) || 15),
+                          }))
+                        }
+                        className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="block text-[11px] text-slate-500">Slowing</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={stochParams.slowing}
+                        onChange={(e) =>
+                          setStochParams((p) => ({
+                            ...p,
+                            slowing: Math.max(1, Number(e.target.value) || 3),
+                          }))
+                        }
+                        className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="block text-[11px] text-slate-500">
+                        แจ้งเตือนเมื่อปิดสูงกว่า
+                      </span>
+                      <input
+                        type="number"
+                        min={51}
+                        max={99}
+                        value={stochParams.upperLevel}
+                        onChange={(e) =>
+                          setStochParams((p) => ({
+                            ...p,
+                            upperLevel: Math.min(99, Math.max(51, Number(e.target.value) || 80)),
+                          }))
+                        }
+                        className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="block text-[11px] text-slate-500">
+                        แจ้งเตือนเมื่อปิดต่ำกว่า
+                      </span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={49}
+                        value={stochParams.lowerLevel}
+                        onChange={(e) =>
+                          setStochParams((p) => ({
+                            ...p,
+                            lowerLevel: Math.max(1, Math.min(49, Number(e.target.value) || 20)),
+                          }))
+                        }
+                        className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 font-mono text-xs text-slate-900 tabular-nums focus:border-blue-600 focus:outline-none"
+                      />
+                    </label>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <details className="text-xs text-slate-500">
                 <summary className="cursor-pointer select-none py-1 hover:text-slate-800">
@@ -1645,8 +1647,8 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
         </div>
       </div>
 
-      {/* 4-Column Summary Strip */}
-      {!isWebMode && (
+      {/* 4-Column Summary Strip (shown in Sim/Studio mode only) */}
+      {!isWebMode && feedMode === 'sim' && (
         <div className="grid grid-cols-2 gap-4 rounded-xl border border-slate-200 bg-white p-5 lg:grid-cols-4">
           <div>
             <p className="text-xs text-slate-500">สินทรัพย์</p>
