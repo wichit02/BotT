@@ -6,6 +6,7 @@ import { AndroidSetupGuide } from './components/AndroidSetupGuide';
 import { GoogleSheetsSync } from './components/GoogleSheetsSync';
 import { TelegramConfig } from './components/TelegramConfig';
 import { ServerDeployPanel } from './components/ServerDeployPanel';
+import { StochChartPage } from './components/StochChartPage';
 import {
   DEFAULT_MQL5_CONFIG,
   Mql5Config,
@@ -20,10 +21,11 @@ import {
 import { loadSavedTelegramConfig } from './lib/telegramStorage';
 import { loadSavedGithubConfig } from './lib/githubStorage';
 
-type ActiveSection = 'simulator' | 'mql5' | 'android' | 'telegram' | 'sheets' | 'deploy';
+type ActiveSection = 'simulator' | 'stoch' | 'mql5' | 'android' | 'telegram' | 'sheets' | 'deploy';
 
 const NAV_ITEMS: Array<{ id: ActiveSection; label: string }> = [
   { id: 'simulator', label: 'จำลองกราฟ' },
+  { id: 'stoch', label: 'Stoch M5' },
   { id: 'mql5', label: 'โค้ด MQL5' },
   { id: 'android', label: 'ตั้งค่ามือถือ' },
   { id: 'telegram', label: 'Telegram' },
@@ -276,8 +278,8 @@ export default function App() {
           </div>
         )}
 
-        {/* Back button when opening Telegram/Sheets sub-view from deployed web UI */}
-        {isWebMode && activeSection !== 'simulator' && (
+        {/* Back button when opening sub-views from deployed web UI */}
+        {isWebMode && activeSection !== 'simulator' && activeSection !== 'stoch' && (
           <div className="mb-4">
             <button
               type="button"
@@ -290,18 +292,55 @@ export default function App() {
           </div>
         )}
 
-        {/* Clean Minimal Title */}
-        <div className={isWebMode ? 'mb-4' : 'mb-7'}>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
-            {isWebMode
-              ? 'แจ้งเตือน AO'
-              : `แจ้งเตือน AO ตัดเส้น 0 (${mql5Config.lockM5 ? 'M5' : 'Chart'}) เข้ามือถือ Android`}
-          </h1>
-          <p className="mt-1 text-xs text-slate-500">
-            {isWebMode
-              ? 'MetaTrader 5 · BUY / SELL'
-              : 'MetaTrader 5 · BUY / SELL · เสียงแจ้งเตือน 10 วินาที · Google Sheets'}
-          </p>
+        {/* Clean Minimal Title + Web-Mode Chart Switcher */}
+        <div
+          className={`flex flex-wrap items-end justify-between gap-3 ${
+            isWebMode ? 'mb-4' : 'mb-7'
+          }`}
+        >
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
+              {activeSection === 'stoch'
+                ? 'กราฟ M5 Stochastic (15,3,3)'
+                : isWebMode
+                ? 'แจ้งเตือน AO'
+                : `แจ้งเตือน AO ตัดเส้น 0 (${mql5Config.lockM5 ? 'M5' : 'Chart'}) เข้ามือถือ Android`}
+            </h1>
+            <p className="mt-1 text-xs text-slate-500">
+              {activeSection === 'stoch'
+                ? 'MetaTrader 5 · US100 M5 · Stoch(15,3,3) ระดับ 20 / 80'
+                : isWebMode
+                ? 'MetaTrader 5 · BUY / SELL'
+                : 'MetaTrader 5 · BUY / SELL · เสียงแจ้งเตือน 10 วินาที · Google Sheets'}
+            </p>
+          </div>
+
+          {isWebMode && (activeSection === 'simulator' || activeSection === 'stoch') && (
+            <div className="flex items-center gap-1 rounded-lg bg-slate-200/70 p-1">
+              <button
+                type="button"
+                onClick={() => setActiveSection('simulator')}
+                className={`h-8 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors ${
+                  activeSection === 'simulator'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                AO M5
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSection('stoch')}
+                className={`h-8 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors ${
+                  activeSection === 'stoch'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Stoch (15,3,3) M5
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Active Workspace View */}
@@ -318,6 +357,8 @@ export default function App() {
             isWebMode={isWebMode}
           />
         )}
+
+        {activeSection === 'stoch' && <StochChartPage isWebMode={isWebMode} />}
 
         {activeSection === 'mql5' && (
           <Mql5Studio config={mql5Config} onChangeConfig={setMql5Config} />
