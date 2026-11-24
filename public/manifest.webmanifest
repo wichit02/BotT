@@ -1,13 +1,13 @@
 {
   "id": "/",
-  "name": "AO Signal Studio",
-  "short_name": "AO Signal",
-  "description": "ระบบเฝ้ากราฟ AO M5 อัตโนมัติ แจ้งเตือนเข้ามือถือทันทีโดยไม่ต้องเปิดกราฟ",
+  "name": "Stoch",
+  "short_name": "Stoch",
+  "description": "ระบบเฝ้ากราฟ Stoch(15,3,3) M5 อัตโนมัติ แจ้งเตือนเมื่อปิดสูงกว่า 80 และต่ำกว่า 20 เข้ามือถือและ Telegram",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "theme_color": "#ffffff",
-  "background_color": "#f8fafc",
+  "theme_color": "#090d16",
+  "background_color": "#090d16",
   "icons": [
     {
       "src": "/pwa-192x192.png",

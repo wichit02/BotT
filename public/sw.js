@@ -8,9 +8,9 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('push', (event) => {
   let payload = {
-    title: 'AO M5 Alert',
-    body: 'ตรวจพบสัญญาณ AO ตัดเส้น 0',
-    tag: 'ao-m5-signal',
+    title: 'Stoch M5 Alert',
+    body: 'ตรวจพบสัญญาณ Stoch(15,3,3) ปิดทะลุระดับ 80 / 20',
+    tag: 'stoch-m5-signal',
     url: '/',
   };
 
@@ -28,7 +28,7 @@ self.addEventListener('push', (event) => {
       body: payload.body,
       icon: '/pwa-192x192.png',
       badge: '/pwa-192x192.png',
-      tag: payload.tag || 'ao-m5-signal',
+      tag: payload.tag || 'stoch-m5-signal',
       renotify: true,
       requireInteraction: true,
       vibrate: [450, 150, 450, 150, 450, 150, 450, 150, 450],

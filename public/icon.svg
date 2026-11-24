@@ -1,9 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="28" fill="#0f172a"/>
-  <line x1="20" y1="68" x2="108" y2="68" stroke="#e2e8f0" stroke-width="3" stroke-dasharray="4 3"/>
-  <rect x="24" y="68" width="12" height="22" rx="3" fill="#e11d48"/>
-  <rect x="42" y="68" width="12" height="11" rx="3" fill="#e11d48"/>
-  <rect x="60" y="50" width="12" height="18" rx="3" fill="#16a34a"/>
-  <rect x="78" y="34" width="12" height="34" rx="3" fill="#16a34a"/>
-  <rect x="96" y="28" width="12" height="40" rx="3" fill="#2563eb"/>
+  <rect width="128" height="128" rx="28" fill="#090d16"/>
+  <line x1="20" y1="42" x2="108" y2="42" stroke="#1e3a44" stroke-width="2" stroke-dasharray="5 4"/>
+  <line x1="20" y1="86" x2="108" y2="86" stroke="#1e3a44" stroke-width="2" stroke-dasharray="5 4"/>
+  <path d="M 22 70 C 34 86, 40 34, 52 34 C 66 34, 72 96, 84 96 C 95 96, 98 54, 108 58" fill="none" stroke="#00c2c2" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="52" cy="34" r="7" fill="#00e5e5" opacity="0.28"/>
+  <circle cx="52" cy="34" r="4" fill="#67ffff"/>
 </svg>
