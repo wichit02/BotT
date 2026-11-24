@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Download } from 'lucide-react';
-import { AoChartSimulator } from './components/AoChartSimulator';
 import { Mql5Studio } from './components/Mql5Studio';
 import { AndroidSetupGuide } from './components/AndroidSetupGuide';
 import { GoogleSheetsSync } from './components/GoogleSheetsSync';
@@ -21,10 +20,9 @@ import {
 import { loadSavedTelegramConfig } from './lib/telegramStorage';
 import { loadSavedGithubConfig } from './lib/githubStorage';
 
-type ActiveSection = 'simulator' | 'stoch' | 'mql5' | 'android' | 'telegram' | 'sheets' | 'deploy';
+type ActiveSection = 'stoch' | 'mql5' | 'android' | 'telegram' | 'sheets' | 'deploy';
 
 const NAV_ITEMS: Array<{ id: ActiveSection; label: string }> = [
-  { id: 'simulator', label: 'จำลองกราฟ' },
   { id: 'stoch', label: 'Stoch M5' },
   { id: 'mql5', label: 'โค้ด MQL5' },
   { id: 'android', label: 'ตั้งค่ามือถือ' },
@@ -34,7 +32,7 @@ const NAV_ITEMS: Array<{ id: ActiveSection; label: string }> = [
 ];
 
 export default function App() {
-  const [activeSection, setActiveSection] = useState<ActiveSection>('simulator');
+  const [activeSection, setActiveSection] = useState<ActiveSection>('stoch');
   const [mql5Config, setMql5Config] = useState<Mql5Config>(DEFAULT_MQL5_CONFIG);
   const [signals, setSignals] = useState<SignalLogRecord[]>([]);
   const [telegramSyncedReady, setTelegramSyncedReady] = useState<boolean | null>(null);
@@ -182,11 +180,11 @@ export default function App() {
               href="#top"
               onClick={(e) => {
                 e.preventDefault();
-                setActiveSection('simulator');
+                setActiveSection('stoch');
               }}
               className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
             >
-              AO Signal Studio
+              Stoch Signal Studio
             </a>
 
             {/* Zone 2: concise single-line nav links */}
@@ -279,11 +277,11 @@ export default function App() {
         )}
 
         {/* Back button when opening sub-views from deployed web UI */}
-        {isWebMode && activeSection !== 'simulator' && activeSection !== 'stoch' && (
+        {isWebMode && activeSection !== 'stoch' && (
           <div className="mb-4">
             <button
               type="button"
-              onClick={() => setActiveSection('simulator')}
+              onClick={() => setActiveSection('stoch')}
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
@@ -292,7 +290,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Clean Minimal Title + Web-Mode Chart Switcher */}
+        {/* Clean Minimal Title */}
         <div
           className={`flex flex-wrap items-end justify-between gap-3 ${
             isWebMode ? 'mb-4' : 'mb-7'
@@ -300,64 +298,17 @@ export default function App() {
         >
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
-              {activeSection === 'stoch'
-                ? 'กราฟ M5 Stochastic (15,3,3)'
-                : isWebMode
-                ? 'แจ้งเตือน AO'
-                : `แจ้งเตือน AO ตัดเส้น 0 (${mql5Config.lockM5 ? 'M5' : 'Chart'}) เข้ามือถือ Android`}
+              {isWebMode
+                ? 'แจ้งเตือน Stoch (15,3,3) M5'
+                : 'กราฟ M5 Stochastic (15,3,3)'}
             </h1>
             <p className="mt-1 text-xs text-slate-500">
-              {activeSection === 'stoch'
-                ? 'MetaTrader 5 · US100 M5 · Stoch(15,3,3) เส้นสีฟ้าเส้นเดียว · แจ้งเตือนปิด > 80 / < 20'
-                : isWebMode
-                ? 'MetaTrader 5 · BUY / SELL'
-                : 'MetaTrader 5 · BUY / SELL · เสียงแจ้งเตือน 10 วินาที · Google Sheets'}
+              MetaTrader 5 · US100 M5 · Stoch(15,3,3) เส้นสีฟ้าเส้นเดียว · แจ้งเตือนปิด &gt; 80 / &lt; 20
             </p>
           </div>
-
-          {isWebMode && (activeSection === 'simulator' || activeSection === 'stoch') && (
-            <div className="flex items-center gap-1 rounded-lg bg-slate-200/70 p-1">
-              <button
-                type="button"
-                onClick={() => setActiveSection('simulator')}
-                className={`h-8 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors ${
-                  activeSection === 'simulator'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                AO M5
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveSection('stoch')}
-                className={`h-8 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors ${
-                  activeSection === 'stoch'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Stoch (15,3,3) M5
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Active Workspace View */}
-        {activeSection === 'simulator' && (
-          <AoChartSimulator
-            alertDirection={mql5Config.alertDirection}
-            lockM5={mql5Config.lockM5}
-            customPrefix={mql5Config.customPrefix}
-            onSignalDetected={handleSignalDetected}
-            recentSignals={signals}
-            onGoToSheets={() => setActiveSection('sheets')}
-            onGoToTelegram={() => setActiveSection('telegram')}
-            telegramSyncedReady={telegramSyncedReady}
-            isWebMode={isWebMode}
-          />
-        )}
-
         {activeSection === 'stoch' && (
           <StochChartPage
             isWebMode={isWebMode}
@@ -392,7 +343,7 @@ export default function App() {
           <ServerDeployPanel
             onPreviewWebMode={() => {
               setDevPreviewWeb(true);
-              setActiveSection('simulator');
+              setActiveSection('stoch');
             }}
           />
         )}
@@ -402,7 +353,7 @@ export default function App() {
       {!isWebMode && (
         <footer className="border-t border-slate-200/80 bg-white py-4">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-4 text-xs text-slate-400 sm:px-6 lg:px-8">
-            <span>AO Signal Studio</span>
+            <span>Stoch Signal Studio</span>
             <span>US100 · M5 (US 100 Index Cash)</span>
           </div>
         </footer>
