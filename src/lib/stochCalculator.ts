@@ -92,6 +92,7 @@ export function computeStochasticSeries(
 
   const out: StochPoint[] = [];
   const warmup = kPeriod + slowing - 1;
+  let lastSide: Exclude<StochTriggerType, null> | null = null;
 
   for (let i = 0; i < bars.length; i++) {
     const k = kValues[i];
@@ -103,11 +104,17 @@ export function computeStochasticSeries(
 
     if (i >= warmup) {
       if (prevK <= params.upperLevel && k > params.upperLevel) {
-        signal = 'SELL';
-        triggerType = 'ABOVE_80';
+        if (lastSide !== 'ABOVE_80') {
+          signal = 'SELL';
+          triggerType = 'ABOVE_80';
+          lastSide = 'ABOVE_80';
+        }
       } else if (prevK >= params.lowerLevel && k < params.lowerLevel) {
-        signal = 'BUY';
-        triggerType = 'BELOW_20';
+        if (lastSide !== 'BELOW_20') {
+          signal = 'BUY';
+          triggerType = 'BELOW_20';
+          lastSide = 'BELOW_20';
+        }
       }
     }
 
