@@ -155,6 +155,7 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
 
   const lastObservedClosedBucketRef = useRef<number | null>(null);
   const alertedStochBucketsRef = useRef<Set<string>>(new Set<string>());
+  const lastLiveStochSideRef = useRef<'ABOVE_80' | 'BELOW_20' | null>(null);
   const hasLoadedMonitorConfigRef = useRef(false);
 
   const stochSeries = useMemo(
@@ -268,6 +269,12 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
             setNtfyTopic(data.ntfyTopic);
           }
           setTelegramConfigured(Boolean(data.telegramConfigured));
+          if (
+            data.lastStochSideBySymbol?.US100 === 'ABOVE_80' ||
+            data.lastStochSideBySymbol?.US100 === 'BELOW_20'
+          ) {
+            lastLiveStochSideRef.current = data.lastStochSideBySymbol.US100;
+          }
           if (data.stochConfig && typeof data.stochConfig === 'object') {
             setStochParams({
               kPeriod: Math.max(1, Number(data.stochConfig.kPeriod) || 15),
@@ -538,20 +545,38 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
               const closedBucketMs = Math.floor(closedOpenMs / 300000) * 300000;
               const prevObserved = lastObservedClosedBucketRef.current;
               if (prevObserved === null) {
-                // Silent baseline on page open: never trigger retroactive signals
+                // Silent baseline on page open: sync latest closed side without retroactive alerts
                 lastObservedClosedBucketRef.current = closedBucketMs;
+                for (let i = computed.length - 2; i >= 0; i--) {
+                  const trig = computed[i]?.triggerType;
+                  if (trig) {
+                    lastLiveStochSideRef.current = trig;
+                    break;
+                  }
+                }
               } else if (closedBucketMs > prevObserved) {
                 lastObservedClosedBucketRef.current = closedBucketMs;
                 const secSinceClose = (Date.now() - (closedBucketMs + 300000)) / 1000;
                 const bucketKey = `STOCH-${new Date(closedBucketMs).toISOString()}`;
+                let priorWindowSide: Exclude<StochTriggerType, null> | null = null;
+                for (let i = computed.length - 3; i >= 0; i--) {
+                  const trig = computed[i]?.triggerType;
+                  if (trig) {
+                    priorWindowSide = trig;
+                    break;
+                  }
+                }
+                const effectivePriorSide = priorWindowSide ?? lastLiveStochSideRef.current;
                 if (
                   closedBar.signal &&
                   closedBar.triggerType &&
+                  effectivePriorSide !== closedBar.triggerType &&
                   secSinceClose >= -5 &&
                   secSinceClose <= 90 &&
                   !alertedStochBucketsRef.current.has(bucketKey)
                 ) {
                   alertedStochBucketsRef.current.add(bucketKey);
+                  lastLiveStochSideRef.current = closedBar.triggerType;
                   recordStochSignal(
                     closedBar.signal,
                     closedBar.triggerType,
@@ -634,24 +659,27 @@ export const StochChartPage: React.FC<StochChartPageProps> = ({
     barsRef.current = nextBars;
     setBars(nextBars);
 
-    // Only M5 triggers alerts; M1 stays completely silent
+    // Only M5 triggers alerts, and strictly once per side until switching to the opposite side
     if (timeframe === 'M5') {
       const computed = computeStochasticSeries(nextBars, stochParams);
       const latest = computed[computed.length - 1];
       const beforeLatest = computed[computed.length - 2];
-      if (latest && (latest.signal || forceCross)) {
-        const sig = latest.signal || forceCross!;
-        const trig: Exclude<StochTriggerType, null> =
-          latest.triggerType || (sig === 'SELL' ? 'ABOVE_80' : 'BELOW_20');
+      if (latest && latest.signal && latest.triggerType) {
         recordStochSignal(
-          sig,
-          trig,
+          latest.signal,
+          latest.triggerType,
           beforeLatest?.k ?? prevK,
           latest.k,
           latest.close,
           latest.timeLabel,
           latest.timestampIso,
           'sim'
+        );
+      } else if (forceCross) {
+        setMonitorNote(
+          forceCross === 'SELL'
+            ? `ฝั่งปิด > ${stochParams.upperLevel} แจ้งเตือนไปแล้ว (รอสลับไปปิด < ${stochParams.lowerLevel} ก่อนจึงแจ้งเตือนรอบใหม่)`
+            : `ฝั่งปิด < ${stochParams.lowerLevel} แจ้งเตือนไปแล้ว (รอสลับไปปิด > ${stochParams.upperLevel} ก่อนจึงแจ้งเตือนรอบใหม่)`
         );
       }
     }

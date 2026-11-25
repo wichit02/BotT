@@ -105,6 +105,7 @@ interface PersistedServerState {
   alertedStochBarKeys: string[];
   stochConfig: StochMonitorConfig;
   lastLiveDirectionBySymbol: Partial<Record<TradingSymbol, 'BUY' | 'SELL'>>;
+  lastStochSideBySymbol: Partial<Record<TradingSymbol, 'ABOVE_80' | 'BELOW_20'>>;
 }
 
 const YAHOO_SYMBOL_MAP: Record<TradingSymbol, { ticker: string; digits: number }> = {
@@ -229,6 +230,10 @@ function loadPersistedState(): PersistedServerState {
           parsed.lastLiveDirectionBySymbol && typeof parsed.lastLiveDirectionBySymbol === 'object'
             ? parsed.lastLiveDirectionBySymbol
             : {},
+        lastStochSideBySymbol:
+          parsed.lastStochSideBySymbol && typeof parsed.lastStochSideBySymbol === 'object'
+            ? parsed.lastStochSideBySymbol
+            : {},
       };
     }
   } catch {
@@ -266,6 +271,7 @@ function loadPersistedState(): PersistedServerState {
     alertedStochBarKeys: [],
     stochConfig: { ...DEFAULT_STOCH_CONFIG },
     lastLiveDirectionBySymbol: {},
+    lastStochSideBySymbol: {},
   };
   savePersistedState(initial);
   return initial;
@@ -1041,17 +1047,24 @@ function computeStochMainSeries(
   }
 
   const warmup = kPeriod + slowing - 1;
+  let lastSide: 'ABOVE_80' | 'BELOW_20' | null = null;
   return kValues.map((k, i) => {
     const prevK = i > 0 ? kValues[i - 1] : k;
     let signal: 'BUY' | 'SELL' | null = null;
     let triggerType: 'ABOVE_80' | 'BELOW_20' | null = null;
     if (i >= warmup) {
       if (prevK <= cfg.upperLevel && k > cfg.upperLevel) {
-        signal = 'SELL';
-        triggerType = 'ABOVE_80';
+        if (lastSide !== 'ABOVE_80') {
+          signal = 'SELL';
+          triggerType = 'ABOVE_80';
+          lastSide = 'ABOVE_80';
+        }
       } else if (prevK >= cfg.lowerLevel && k < cfg.lowerLevel) {
-        signal = 'BUY';
-        triggerType = 'BELOW_20';
+        if (lastSide !== 'BELOW_20') {
+          signal = 'BUY';
+          triggerType = 'BELOW_20';
+          lastSide = 'BELOW_20';
+        }
       }
     }
     return { k, signal, triggerType };
@@ -1821,10 +1834,23 @@ async function runBackgroundMonitorCycle() {
         if (!Number.isFinite(closedBarOpenMs)) continue;
         const closedBucketMs = Math.floor(closedBarOpenMs / 300000) * 300000;
 
-        // First observation after server startup: record baseline silently so past candles never fire retroactively
+        // Stoch(15,3,3) single cyan %K line threshold alert (>80 or <20 on candle close, strictly once per side until switching to opposite side)
+        const stochSeries = computeStochMainSeries(bars, persisted.stochConfig);
+
+        // First observation after server startup: record baseline silently and sync latest observed side
         const prevBaselineMs = monitorRuntime.lastClosedBarBucketMsBySymbol[sym];
         if (prevBaselineMs === undefined) {
           monitorRuntime.lastClosedBarBucketMsBySymbol[sym] = closedBucketMs;
+          for (let i = stochSeries.length - 2; i >= 0; i--) {
+            const trig = stochSeries[i]?.triggerType;
+            if (trig) {
+              if (persisted.lastStochSideBySymbol[sym] !== trig) {
+                persisted.lastStochSideBySymbol[sym] = trig;
+                syncPersistence();
+              }
+              break;
+            }
+          }
           continue;
         }
 
@@ -1841,18 +1867,27 @@ async function runBackgroundMonitorCycle() {
           continue;
         }
 
-        // Stoch(15,3,3) single cyan %K line threshold alert (>80 or <20 on candle close, once per threshold cross)
-        const stochSeries = computeStochMainSeries(bars, persisted.stochConfig);
         const closedStoch = stochSeries[stochSeries.length - 2];
         const prevClosedStoch = stochSeries[stochSeries.length - 3];
+        let lastPriorSideInWindow: 'ABOVE_80' | 'BELOW_20' | null = null;
+        for (let i = stochSeries.length - 3; i >= 0; i--) {
+          if (stochSeries[i]?.triggerType) {
+            lastPriorSideInWindow = stochSeries[i].triggerType;
+            break;
+          }
+        }
+        const effectivePriorSide = lastPriorSideInWindow ?? persisted.lastStochSideBySymbol[sym] ?? null;
+
         if (
           closedStoch &&
           prevClosedStoch &&
           closedStoch.signal &&
           closedStoch.triggerType &&
+          effectivePriorSide !== closedStoch.triggerType &&
           !hasClosedStochBarBeenAlerted(sym, closedBar.timestampIso)
         ) {
           recordClosedStochBarAlerted(sym, closedBar.timestampIso);
+          persisted.lastStochSideBySymbol[sym] = closedStoch.triggerType;
           const sSignal = closedStoch.signal;
           const sTrigger = closedStoch.triggerType;
           const isAbove = sTrigger === 'ABOVE_80';
@@ -2293,6 +2328,7 @@ void OnTick()
       alertedStochBarKeys: persisted.alertedStochBarKeys,
       stochConfig: persisted.stochConfig,
       lastLiveDirectionBySymbol: persisted.lastLiveDirectionBySymbol,
+      lastStochSideBySymbol: persisted.lastStochSideBySymbol,
     });
   });
 
@@ -2301,6 +2337,7 @@ void OnTick()
     persisted.alertedBarKeys = [];
     persisted.alertedStochBarKeys = [];
     persisted.lastLiveDirectionBySymbol = {};
+    persisted.lastStochSideBySymbol = {};
     persisted.subscriptions = [];
     persisted.ntfyTopic = '';
     persisted.symbols = [...ALL_SYMBOLS];
