@@ -53,6 +53,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
   const [chatId, setChatId] = useState(SYSTEM_TELEGRAM_CHAT_ID);
   const [showToken, setShowToken] = useState(false);
   const [telegramMode, setTelegramMode] = useState<'fallback' | 'always'>('always');
+  const [telegramSenderEnabled, setTelegramSenderEnabled] = useState<boolean>(true);
   const [syncToMql5, setSyncToMql5] = useState(true);
   const [cisdTimeframes, setCisdTimeframes] = useState<Array<'M15'>>([
     'M15',
@@ -99,6 +100,9 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       }
       if (data.telegramMode === 'always' || data.telegramMode === 'fallback') {
         setTelegramMode(data.telegramMode);
+      }
+      if (typeof data.telegramSenderEnabled === 'boolean') {
+        setTelegramSenderEnabled(data.telegramSenderEnabled);
       }
       if (typeof data.subscribersCount === 'number') {
         setSubscribersCount(data.subscribersCount);
@@ -588,6 +592,27 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
               ? `สถานะปัจจุบัน: มีอุปกรณ์ Android Web Push เชื่อมต่ออยู่ ${subscribersCount} เครื่อง (ถ้าส่งเข้ามือถือไม่ได้ ระบบจะสลับส่งเข้า Telegram ทันที)`
               : 'ส่งข้อความเข้า Telegram ทันทีทุกครั้งที่เกิดสัญญาณ BUY / SELL'}
           </p>
+
+          <label className="mt-2 flex items-start gap-2.5 rounded-lg border border-amber-200/80 bg-amber-50/70 px-3.5 py-2.5 text-xs text-amber-900 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={telegramSenderEnabled}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setTelegramSenderEnabled(next);
+                void fetch('/api/monitor/config', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ telegramSenderEnabled: next }),
+                }).catch(() => {});
+              }}
+              className="mt-0.5 h-3.5 w-3.5 rounded border-amber-400 text-blue-600 focus:ring-blue-600"
+            />
+            <span className="leading-relaxed">
+              <strong className="font-semibold">อนุญาตให้เซิร์ฟเวอร์นี้ส่งข้อความเข้า Telegram</strong>
+              {' '}— หากเปิดใช้งานเว็บนี้ทั้งบน Render และ AI Studio (หรือลิงก์แชร์) ด้วย Bot Token เดียวกันพร้อมกัน ให้ติ๊กปิดบนฝั่งใดฝั่งหนึ่ง เพื่อป้องกันข้อความเข้าซ้ำ 2 เด้ง
+            </span>
+          </label>
         </div>
 
         {/* Signal Systems Settings */}
