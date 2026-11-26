@@ -45,6 +45,7 @@ interface MonitorAlertEvent {
   id: string;
   timestamp: string;
   symbol: TradingSymbol;
+  timeframe?: 'M5' | 'M1';
   signal: 'BUY' | 'SELL';
   aoPrev: number;
   aoCurr: number;
@@ -103,9 +104,11 @@ interface PersistedServerState {
   githubLastError: string | null;
   alertedBarKeys: string[];
   alertedStochBarKeys: string[];
+  alertedStochM1BarKeys: string[];
   stochConfig: StochMonitorConfig;
   lastLiveDirectionBySymbol: Partial<Record<TradingSymbol, 'BUY' | 'SELL'>>;
   lastStochSideBySymbol: Partial<Record<TradingSymbol, 'ABOVE_80' | 'BELOW_20'>>;
+  lastStochSideM1BySymbol: Partial<Record<TradingSymbol, 'ABOVE_80' | 'BELOW_20'>>;
 }
 
 const YAHOO_SYMBOL_MAP: Record<TradingSymbol, { ticker: string; digits: number }> = {
@@ -216,6 +219,9 @@ function loadPersistedState(): PersistedServerState {
         alertedStochBarKeys: Array.isArray(parsed.alertedStochBarKeys)
           ? parsed.alertedStochBarKeys.filter((k): k is string => typeof k === 'string').slice(0, 60)
           : [],
+        alertedStochM1BarKeys: Array.isArray(parsed.alertedStochM1BarKeys)
+          ? parsed.alertedStochM1BarKeys.filter((k): k is string => typeof k === 'string').slice(0, 80)
+          : [],
         stochConfig:
           parsed.stochConfig && typeof parsed.stochConfig === 'object'
             ? {
@@ -233,6 +239,10 @@ function loadPersistedState(): PersistedServerState {
         lastStochSideBySymbol:
           parsed.lastStochSideBySymbol && typeof parsed.lastStochSideBySymbol === 'object'
             ? parsed.lastStochSideBySymbol
+            : {},
+        lastStochSideM1BySymbol:
+          parsed.lastStochSideM1BySymbol && typeof parsed.lastStochSideM1BySymbol === 'object'
+            ? parsed.lastStochSideM1BySymbol
             : {},
       };
     }
@@ -269,9 +279,11 @@ function loadPersistedState(): PersistedServerState {
     githubLastError: null,
     alertedBarKeys: [],
     alertedStochBarKeys: [],
+    alertedStochM1BarKeys: [],
     stochConfig: { ...DEFAULT_STOCH_CONFIG },
     lastLiveDirectionBySymbol: {},
     lastStochSideBySymbol: {},
+    lastStochSideM1BySymbol: {},
   };
   savePersistedState(initial);
   return initial;
@@ -299,8 +311,8 @@ const monitorRuntime = {
   lastCheckedMs: 0,
   isRunningCycle: false,
   lastBarBySymbol: {} as Partial<Record<TradingSymbol, string>>,
-  lastClosedBarBucketMsBySymbol: {} as Partial<Record<TradingSymbol, number>>,
-  lastFeedSourceBySymbol: {} as Partial<Record<TradingSymbol, string>>,
+  lastClosedBarBucketMsByKey: {} as Record<string, number>,
+  lastFeedSourceByKey: {} as Record<string, string>,
   dispatchedLiveSignalKeys: new Set<string>(),
   dispatchedStochSignalKeys: new Set<string>(),
 };
@@ -313,10 +325,15 @@ function markLiveSignalDispatched(key: string) {
   }
 }
 
-function normalizeM5BarKey(sym: TradingSymbol, barTimestampIso: string): string {
+function normalizeBarKey(
+  sym: TradingSymbol,
+  barTimestampIso: string,
+  tf: 'M5' | 'M1' = 'M5'
+): string {
+  const periodMs = tf === 'M1' ? 60000 : 300000;
   const ms = Date.parse(barTimestampIso);
   if (Number.isFinite(ms)) {
-    const bucketMs = Math.floor(ms / 300000) * 300000;
+    const bucketMs = Math.floor(ms / periodMs) * periodMs;
     return `${sym}-${new Date(bucketMs).toISOString()}`;
   }
   return `${sym}-${barTimestampIso}`;
@@ -327,7 +344,7 @@ function hasClosedBarBeenAlerted(
   barTimestampIso: string,
   _signal?: 'BUY' | 'SELL'
 ): boolean {
-  const bucketKey = normalizeM5BarKey(sym, barTimestampIso);
+  const bucketKey = normalizeBarKey(sym, barTimestampIso, 'M5');
   return (
     monitorRuntime.dispatchedLiveSignalKeys.has(bucketKey) ||
     persisted.alertedBarKeys.includes(bucketKey) ||
@@ -341,7 +358,7 @@ function recordClosedBarAlerted(
   barTimestampIso: string,
   signal: 'BUY' | 'SELL'
 ): void {
-  const bucketKey = normalizeM5BarKey(sym, barTimestampIso);
+  const bucketKey = normalizeBarKey(sym, barTimestampIso, 'M5');
   markLiveSignalDispatched(bucketKey);
   if (!persisted.alertedBarKeys.includes(bucketKey)) {
     persisted.alertedBarKeys = [bucketKey, ...persisted.alertedBarKeys].slice(0, 60);
@@ -350,23 +367,41 @@ function recordClosedBarAlerted(
   syncPersistence();
 }
 
-function hasClosedStochBarBeenAlerted(sym: TradingSymbol, barTimestampIso: string): boolean {
-  const bucketKey = `STOCH-${normalizeM5BarKey(sym, barTimestampIso)}`;
+function hasClosedStochBarBeenAlerted(
+  sym: TradingSymbol,
+  barTimestampIso: string,
+  tf: 'M5' | 'M1' = 'M5'
+): boolean {
+  const baseKey = normalizeBarKey(sym, barTimestampIso, tf);
+  const bucketKey = tf === 'M1' ? `STOCH-M1-${baseKey}` : `STOCH-${baseKey}`;
+  const persistedKeys =
+    tf === 'M1' ? persisted.alertedStochM1BarKeys : persisted.alertedStochBarKeys;
   return (
     monitorRuntime.dispatchedStochSignalKeys.has(bucketKey) ||
-    persisted.alertedStochBarKeys.includes(bucketKey)
+    persistedKeys.includes(bucketKey)
   );
 }
 
-function recordClosedStochBarAlerted(sym: TradingSymbol, barTimestampIso: string): void {
-  const bucketKey = `STOCH-${normalizeM5BarKey(sym, barTimestampIso)}`;
+function recordClosedStochBarAlerted(
+  sym: TradingSymbol,
+  barTimestampIso: string,
+  tf: 'M5' | 'M1' = 'M5'
+): void {
+  const baseKey = normalizeBarKey(sym, barTimestampIso, tf);
+  const bucketKey = tf === 'M1' ? `STOCH-M1-${baseKey}` : `STOCH-${baseKey}`;
   monitorRuntime.dispatchedStochSignalKeys.add(bucketKey);
-  if (monitorRuntime.dispatchedStochSignalKeys.size > 300) {
+  if (monitorRuntime.dispatchedStochSignalKeys.size > 400) {
     const first = monitorRuntime.dispatchedStochSignalKeys.values().next().value;
     if (first) monitorRuntime.dispatchedStochSignalKeys.delete(first);
   }
-  if (!persisted.alertedStochBarKeys.includes(bucketKey)) {
-    persisted.alertedStochBarKeys = [bucketKey, ...persisted.alertedStochBarKeys].slice(0, 60);
+  if (tf === 'M1') {
+    if (!persisted.alertedStochM1BarKeys.includes(bucketKey)) {
+      persisted.alertedStochM1BarKeys = [bucketKey, ...persisted.alertedStochM1BarKeys].slice(0, 80);
+    }
+  } else {
+    if (!persisted.alertedStochBarKeys.includes(bucketKey)) {
+      persisted.alertedStochBarKeys = [bucketKey, ...persisted.alertedStochBarKeys].slice(0, 60);
+    }
   }
   syncPersistence();
 }
@@ -505,7 +540,7 @@ function sanitizeGithubRepoName(raw: string): string {
 
 function buildSignalsSnapshotJson(): Buffer {
   const payload = {
-    app: 'Stoch (M5)',
+    app: 'Stoch (M5 / M1)',
     monitoredSymbols: persisted.symbols,
     direction: persisted.direction,
     totalCapturedSignals: persisted.events.length,
@@ -514,6 +549,7 @@ function buildSignalsSnapshotJson(): Buffer {
       id: ev.id,
       timestamp: ev.timestamp,
       symbol: ev.symbol,
+      timeframe: ev.timeframe || 'M5',
       signal: ev.signal,
       aoPrev: ev.aoPrev,
       aoCurr: ev.aoCurr,
@@ -1517,11 +1553,14 @@ async function getLiveM5Feed(
   return data;
 }
 
-async function getLiveM1Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
+async function getLiveM1Feed(
+  symbol: TradingSymbol,
+  opts?: { waitCfdMs?: number }
+): Promise<MarketFeedResult> {
   // Priority 1: Direct XM MT5 Bridge M1 bars pushed from user's MT5 terminal (within 15s)
   if (xmMt5Bridge.barsM1.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000) {
     const bars = computeAwesomeOscillator(xmMt5Bridge.barsM1.slice(-260))
-      .slice(-180)
+      .slice(-260)
       .map((b, idx) => ({ ...b, index: idx }));
     return {
       symbol,
@@ -1535,9 +1574,10 @@ async function getLiveM1Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
     };
   }
 
-  // Priority 2: Wait briefly up to 1.8s on cold start for real-time CFD M1 stream handshake
+  // Priority 2: Wait briefly on cold start for real-time CFD M1 stream handshake
+  const maxWaitMs = opts?.waitCfdMs ?? 1800;
   if (cfdStreamState.barsM1Map.size < 36) {
-    const deadline = Date.now() + 1800;
+    const deadline = Date.now() + maxWaitMs;
     while (cfdStreamState.barsM1Map.size < 36 && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 120));
     }
@@ -1828,156 +1868,171 @@ async function runBackgroundMonitorCycle() {
   monitorRuntime.lastCheckedMs = Date.now();
   monitorRuntime.lastCheckedAt = new Date().toISOString();
 
+  const monitoredTimeframes: Array<'M5' | 'M1'> = ['M5', 'M1'];
+
   try {
     for (const sym of persisted.symbols) {
-      try {
-        const isBaselinePending =
-          monitorRuntime.lastClosedBarBucketMsBySymbol[sym] === undefined;
-        const feed = await getLiveM5Feed(sym, {
-          waitCfdMs: isBaselinePending ? 4000 : 1800,
-        });
-        const bars = feed.bars;
-        if (bars.length < 4) continue;
+      for (const tf of monitoredTimeframes) {
+        try {
+          const runtimeKey = `${sym}:${tf}`;
+          const periodMs = tf === 'M1' ? 60000 : 300000;
+          const maxCloseAgeSec = tf === 'M1' ? 45 : 90;
+          const isBaselinePending =
+            monitorRuntime.lastClosedBarBucketMsByKey[runtimeKey] === undefined;
+          const feed =
+            tf === 'M1'
+              ? await getLiveM1Feed(sym, { waitCfdMs: isBaselinePending ? 4000 : 1800 })
+              : await getLiveM5Feed(sym, { waitCfdMs: isBaselinePending ? 4000 : 1800 });
 
-        // Confirmed closed M5 bar [1] vs previous closed bar [2]
-        const closedBar = bars[bars.length - 2];
-        const prevClosedBar = bars[bars.length - 3];
-        if (!closedBar || !prevClosedBar) continue;
+          const bars = feed.bars;
+          if (bars.length < 4) continue;
 
-        const closedBarOpenMs = Date.parse(closedBar.timestampIso);
-        if (!Number.isFinite(closedBarOpenMs)) continue;
-        const closedBucketMs = Math.floor(closedBarOpenMs / 300000) * 300000;
+          // Confirmed closed bar [length - 2] vs previous closed bar [length - 3]
+          const closedBar = bars[bars.length - 2];
+          const prevClosedBar = bars[bars.length - 3];
+          if (!closedBar || !prevClosedBar) continue;
 
-        // Stoch(15,3,3) single cyan %K line threshold alert (>80 or <20 on candle close, strictly once per side until switching to opposite side)
-        const stochSeries = computeStochMainSeries(bars, persisted.stochConfig);
+          const closedBarOpenMs = Date.parse(closedBar.timestampIso);
+          if (!Number.isFinite(closedBarOpenMs)) continue;
+          const closedBucketMs = Math.floor(closedBarOpenMs / periodMs) * periodMs;
 
-        // First observation after server startup or feed-source change: record baseline silently and sync latest observed side
-        const prevBaselineMs = monitorRuntime.lastClosedBarBucketMsBySymbol[sym];
-        const prevSource = monitorRuntime.lastFeedSourceBySymbol[sym];
-        const sourceSwitched = Boolean(prevSource && prevSource !== feed.source);
-        monitorRuntime.lastFeedSourceBySymbol[sym] = feed.source;
+          // Stoch(15,3,3) single cyan %K line threshold alert (>80 or <20 on candle close, strictly once per side until switching to opposite side)
+          const stochSeries = computeStochMainSeries(bars, persisted.stochConfig);
+          const sideStore =
+            tf === 'M1' ? persisted.lastStochSideM1BySymbol : persisted.lastStochSideBySymbol;
 
-        if (prevBaselineMs === undefined || sourceSwitched) {
-          monitorRuntime.lastClosedBarBucketMsBySymbol[sym] = closedBucketMs;
-          for (let i = stochSeries.length - 2; i >= 0; i--) {
-            const trig = stochSeries[i]?.triggerType;
-            if (trig) {
-              if (persisted.lastStochSideBySymbol[sym] !== trig) {
-                persisted.lastStochSideBySymbol[sym] = trig;
-                syncPersistence();
+          // First observation after server startup or feed-source change: record baseline silently and sync latest observed side
+          const prevBaselineMs = monitorRuntime.lastClosedBarBucketMsByKey[runtimeKey];
+          const prevSource = monitorRuntime.lastFeedSourceByKey[runtimeKey];
+          const sourceSwitched = Boolean(prevSource && prevSource !== feed.source);
+          monitorRuntime.lastFeedSourceByKey[runtimeKey] = feed.source;
+
+          if (prevBaselineMs === undefined || sourceSwitched) {
+            monitorRuntime.lastClosedBarBucketMsByKey[runtimeKey] = closedBucketMs;
+            for (let i = stochSeries.length - 2; i >= 0; i--) {
+              const trig = stochSeries[i]?.triggerType;
+              if (trig) {
+                if (sideStore[sym] !== trig) {
+                  sideStore[sym] = trig;
+                  syncPersistence();
+                }
+                break;
               }
+            }
+            continue;
+          }
+
+          // Only process when a brand-new candle for this timeframe closes moving forward in time
+          if (closedBucketMs <= prevBaselineMs) {
+            continue;
+          }
+          monitorRuntime.lastClosedBarBucketMsByKey[runtimeKey] = closedBucketMs;
+
+          // Must be freshly closed within the timeframe's freshness window
+          const closedBarCloseMs = closedBucketMs + periodMs;
+          const secondsSinceClose = (Date.now() - closedBarCloseMs) / 1000;
+          if (secondsSinceClose < -5 || secondsSinceClose > maxCloseAgeSec) {
+            continue;
+          }
+
+          const closedStoch = stochSeries[stochSeries.length - 2];
+          const prevClosedStoch = stochSeries[stochSeries.length - 3];
+          let lastPriorSideInWindow: 'ABOVE_80' | 'BELOW_20' | null = null;
+          for (let i = stochSeries.length - 3; i >= 0; i--) {
+            if (stochSeries[i]?.triggerType) {
+              lastPriorSideInWindow = stochSeries[i].triggerType;
               break;
             }
           }
-          continue;
-        }
+          const effectivePriorSide = lastPriorSideInWindow ?? sideStore[sym] ?? null;
+          const latestStochEventForSymTf = persisted.events.find(
+            (ev) =>
+              ev.symbol === sym &&
+              (ev.timeframe ?? 'M5') === tf &&
+              ev.id.startsWith('stoch-')
+          );
+          const lastEventSameSide =
+            latestStochEventForSymTf &&
+            closedStoch &&
+            latestStochEventForSymTf.signal === closedStoch.signal;
 
-        // Only process when a brand-new M5 candle closes moving forward in time
-        if (closedBucketMs <= prevBaselineMs) {
-          continue;
-        }
-        monitorRuntime.lastClosedBarBucketMsBySymbol[sym] = closedBucketMs;
+          if (
+            closedStoch &&
+            prevClosedStoch &&
+            closedStoch.signal &&
+            closedStoch.triggerType &&
+            effectivePriorSide !== closedStoch.triggerType &&
+            !lastEventSameSide &&
+            !hasClosedStochBarBeenAlerted(sym, closedBar.timestampIso, tf)
+          ) {
+            recordClosedStochBarAlerted(sym, closedBar.timestampIso, tf);
+            sideStore[sym] = closedStoch.triggerType;
+            const sSignal = closedStoch.signal;
+            const sTrigger = closedStoch.triggerType;
+            const isAbove = sTrigger === 'ABOVE_80';
+            const thresholdLabel = isAbove
+              ? `ปิดสูงกว่า ${persisted.stochConfig.upperLevel}`
+              : `ปิดต่ำกว่า ${persisted.stochConfig.lowerLevel}`;
+            const title = `Stoch(${persisted.stochConfig.kPeriod},${persisted.stochConfig.dPeriod},${persisted.stochConfig.slowing}) ${tf} ${thresholdLabel}: ${sym}`;
+            const body = `${sym} ${tf} %K ${prevClosedStoch.k.toFixed(2)} → ${closedStoch.k.toFixed(
+              2
+            )} | ราคา ${closedBar.close}`;
 
-        // Must be freshly closed (within 90 seconds of the exact candle close boundary)
-        const closedBarCloseMs = closedBucketMs + 300000;
-        const secondsSinceClose = (Date.now() - closedBarCloseMs) / 1000;
-        if (secondsSinceClose < -5 || secondsSinceClose > 90) {
-          continue;
-        }
+            const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
+              broadcastWebPush({
+                title,
+                body,
+                tag: `stoch-${tf}-${sym}-${sTrigger}-${Date.now()}`,
+                url: '/',
+              }),
+              persisted.ntfyTopic
+                ? sendNtfyPush(persisted.ntfyTopic, title, body)
+                : Promise.resolve(false),
+            ]);
 
-        const closedStoch = stochSeries[stochSeries.length - 2];
-        const prevClosedStoch = stochSeries[stochSeries.length - 3];
-        let lastPriorSideInWindow: 'ABOVE_80' | 'BELOW_20' | null = null;
-        for (let i = stochSeries.length - 3; i >= 0; i--) {
-          if (stochSeries[i]?.triggerType) {
-            lastPriorSideInWindow = stochSeries[i].triggerType;
-            break;
+            const shouldSendTelegram =
+              Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
+              (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
+
+            const tgRes = shouldSendTelegram
+              ? await sendTelegramPush(
+                  persisted.telegramBotToken,
+                  persisted.telegramChatId,
+                  formatTelegramStochMessage({
+                    symbol: sym,
+                    timeframe: tf,
+                    triggerType: sTrigger,
+                    kPrev: prevClosedStoch.k,
+                    kCurr: closedStoch.k,
+                    price: closedBar.close,
+                    stochConfig: persisted.stochConfig,
+                    mode: 'live',
+                    timestampIso: closedBar.timestampIso,
+                  }),
+                  'HTML'
+                )
+              : { ok: false };
+
+            persisted.events.unshift({
+              id: `stoch-${tf}-${sym}-${closedBar.timestampIso}-${sTrigger}-${Date.now()}`,
+              timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+              symbol: sym,
+              timeframe: tf,
+              signal: sSignal,
+              aoPrev: prevClosedStoch.k,
+              aoCurr: closedStoch.k,
+              price: closedBar.close,
+              deliveredToNtfy,
+              deliveredToTelegram: tgRes.ok,
+              deliveredWebPushCount,
+            });
+            persisted.events = persisted.events.slice(0, 50);
+            syncPersistence();
+            scheduleGithubAutoSync('stoch-signal-event', 1000);
           }
+        } catch {
+          // Keep polling remaining timeframes/symbols
         }
-        const effectivePriorSide = lastPriorSideInWindow ?? persisted.lastStochSideBySymbol[sym] ?? null;
-        const latestStochEventForSym = persisted.events.find(
-          (ev) => ev.symbol === sym && ev.id.startsWith('stoch-')
-        );
-        const lastEventSameSide =
-          latestStochEventForSym &&
-          closedStoch &&
-          latestStochEventForSym.signal === closedStoch.signal;
-
-        if (
-          closedStoch &&
-          prevClosedStoch &&
-          closedStoch.signal &&
-          closedStoch.triggerType &&
-          effectivePriorSide !== closedStoch.triggerType &&
-          !lastEventSameSide &&
-          !hasClosedStochBarBeenAlerted(sym, closedBar.timestampIso)
-        ) {
-          recordClosedStochBarAlerted(sym, closedBar.timestampIso);
-          persisted.lastStochSideBySymbol[sym] = closedStoch.triggerType;
-          const sSignal = closedStoch.signal;
-          const sTrigger = closedStoch.triggerType;
-          const isAbove = sTrigger === 'ABOVE_80';
-          const thresholdLabel = isAbove
-            ? `ปิดสูงกว่า ${persisted.stochConfig.upperLevel}`
-            : `ปิดต่ำกว่า ${persisted.stochConfig.lowerLevel}`;
-          const title = `Stoch(${persisted.stochConfig.kPeriod},${persisted.stochConfig.dPeriod},${persisted.stochConfig.slowing}) M5 ${thresholdLabel}: ${sym}`;
-          const body = `${sym} M5 %K ${prevClosedStoch.k.toFixed(2)} → ${closedStoch.k.toFixed(
-            2
-          )} | ราคา ${closedBar.close}`;
-
-          const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
-            broadcastWebPush({
-              title,
-              body,
-              tag: `stoch-${sym}-${sTrigger}-${Date.now()}`,
-              url: '/',
-            }),
-            persisted.ntfyTopic
-              ? sendNtfyPush(persisted.ntfyTopic, title, body)
-              : Promise.resolve(false),
-          ]);
-
-          const shouldSendTelegram =
-            Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
-            (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
-
-          const tgRes = shouldSendTelegram
-            ? await sendTelegramPush(
-                persisted.telegramBotToken,
-                persisted.telegramChatId,
-                formatTelegramStochMessage({
-                  symbol: sym,
-                  timeframe: 'M5',
-                  triggerType: sTrigger,
-                  kPrev: prevClosedStoch.k,
-                  kCurr: closedStoch.k,
-                  price: closedBar.close,
-                  stochConfig: persisted.stochConfig,
-                  mode: 'live',
-                  timestampIso: closedBar.timestampIso,
-                }),
-                'HTML'
-              )
-            : { ok: false };
-
-          persisted.events.unshift({
-            id: `stoch-${sym}-${closedBar.timestampIso}-${sTrigger}-${Date.now()}`,
-            timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
-            symbol: sym,
-            signal: sSignal,
-            aoPrev: prevClosedStoch.k,
-            aoCurr: closedStoch.k,
-            price: closedBar.close,
-            deliveredToNtfy,
-            deliveredToTelegram: tgRes.ok,
-            deliveredWebPushCount,
-          });
-          persisted.events = persisted.events.slice(0, 30);
-          syncPersistence();
-          scheduleGithubAutoSync('stoch-signal-event', 1000);
-        }
-      } catch {
-        // Keep polling remaining symbols
       }
     }
   } finally {
@@ -2252,6 +2307,8 @@ void OnTick()
         xmBridgeConnected:
           xmMt5Bridge.barsM1.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000,
         cfdStreamConnected: cfdStreamState.connected,
+        alertedStochM1BarKeys: persisted.alertedStochM1BarKeys,
+        lastStochSideM1: persisted.lastStochSideM1BySymbol[sym] || null,
       });
     } catch (err: any) {
       res.status(502).json({
@@ -2307,7 +2364,7 @@ void OnTick()
 
     let okCount = 0;
     const payload = JSON.stringify({
-      title: 'Stoch M5 ทดสอบระบบสำเร็จ',
+      title: 'Stoch M5 / M1 ทดสอบระบบสำเร็จ',
       body: 'เซิร์ฟเวอร์เชื่อมต่อมือถือเครื่องนี้แล้ว พร้อมส่งสัญญาณอัตโนมัติ',
       tag: `stoch-test-${Date.now()}`,
       url: '/',
@@ -2352,9 +2409,11 @@ void OnTick()
       events: persisted.events,
       alertedBarKeys: persisted.alertedBarKeys,
       alertedStochBarKeys: persisted.alertedStochBarKeys,
+      alertedStochM1BarKeys: persisted.alertedStochM1BarKeys,
       stochConfig: persisted.stochConfig,
       lastLiveDirectionBySymbol: persisted.lastLiveDirectionBySymbol,
       lastStochSideBySymbol: persisted.lastStochSideBySymbol,
+      lastStochSideM1BySymbol: persisted.lastStochSideM1BySymbol,
     });
   });
 
@@ -2362,8 +2421,10 @@ void OnTick()
     persisted.events = [];
     persisted.alertedBarKeys = [];
     persisted.alertedStochBarKeys = [];
+    persisted.alertedStochM1BarKeys = [];
     persisted.lastLiveDirectionBySymbol = {};
     persisted.lastStochSideBySymbol = {};
+    persisted.lastStochSideM1BySymbol = {};
     persisted.subscriptions = [];
     persisted.ntfyTopic = '';
     persisted.symbols = [...ALL_SYMBOLS];
@@ -2371,8 +2432,8 @@ void OnTick()
     persisted.enabled = true;
     persisted.telegramMode = 'always';
     monitorRuntime.lastBarBySymbol = {};
-    monitorRuntime.lastClosedBarBucketMsBySymbol = {};
-    monitorRuntime.lastFeedSourceBySymbol = {};
+    monitorRuntime.lastClosedBarBucketMsByKey = {};
+    monitorRuntime.lastFeedSourceByKey = {};
     monitorRuntime.dispatchedLiveSignalKeys.clear();
     monitorRuntime.dispatchedStochSignalKeys.clear();
     syncPersistence();
@@ -2382,6 +2443,7 @@ void OnTick()
       events: persisted.events,
       alertedBarKeys: persisted.alertedBarKeys,
       alertedStochBarKeys: persisted.alertedStochBarKeys,
+      alertedStochM1BarKeys: persisted.alertedStochM1BarKeys,
       telegramChatId: persisted.telegramChatId,
       telegramMode: persisted.telegramMode,
     });
@@ -2695,9 +2757,10 @@ void OnTick()
     }
 
     persisted.events.unshift({
-      id: `${mode}-${symbol}-${Date.now()}`,
+      id: `${mode}-${timeframe}-${symbol}-${Date.now()}`,
       timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
       symbol: (symbol in YAHOO_SYMBOL_MAP ? symbol : 'US100') as TradingSymbol,
+      timeframe: timeframe === 'M1' ? 'M1' : 'M5',
       signal,
       aoPrev,
       aoCurr,
@@ -2706,7 +2769,7 @@ void OnTick()
       deliveredToTelegram,
       deliveredWebPushCount,
     });
-    persisted.events = persisted.events.slice(0, 30);
+    persisted.events = persisted.events.slice(0, 50);
     syncPersistence();
     scheduleGithubAutoSync('signal-event', 1000);
 
