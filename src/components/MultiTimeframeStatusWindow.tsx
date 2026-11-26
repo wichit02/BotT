@@ -304,39 +304,39 @@ export const MultiTimeframeStatusWindow: React.FC<
   return (
     <section className="space-y-5">
       {errorMsg && mode === 'live' && (
-        <div className="rounded-xl border border-rose-200/70 bg-rose-50/60 px-4 py-3.5 text-sm text-rose-800">
+        <div className="rounded-xl border border-rose-200/70 dark:border-rose-500/30 bg-rose-50/60 dark:bg-rose-950/45 px-4 py-3.5 text-sm text-rose-800 dark:text-rose-200">
           {errorMsg}
         </div>
       )}
 
       {!isWebMode && (
-        <div className="rounded-2xl border border-slate-200/90 bg-white px-5 py-4 text-slate-900 shadow-xs sm:px-6 sm:py-5">
+        <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0e1525] px-5 py-4 text-slate-900 dark:text-slate-100 shadow-xs sm:px-6 sm:py-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3.5">
               <img
                 src={cstLogoImg}
                 alt="โลโก้ CST"
                 referrerPolicy="no-referrer"
-                className="h-11 w-11 shrink-0 rounded-xl bg-white object-cover ring-1 ring-slate-200"
+                className="h-11 w-11 shrink-0 rounded-xl bg-white object-cover ring-1 ring-slate-200 dark:ring-slate-700"
               />
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-base font-semibold tracking-tight text-slate-900 sm:text-lg">
+                  <h2 className="text-base font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-lg">
                     CST · สรุปสถานะ M15 CISD &amp; M1 Stoch(15,3,3)
                   </h2>
-                  <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:text-slate-300">
                     US100Cash#
                   </span>
                 </div>
-                <p className="mt-1 text-sm text-slate-600">
+                <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
                   ติดตามทั้งโครงสร้าง CISD M15 และ Stoch(15,3,3) M1 แบบปิดแท่งครั้งเดียวต่อฝั่ง
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 text-xs font-medium text-slate-600 sm:text-sm">
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-400 sm:text-sm">
               {lastUpdated && (
-                <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono tabular-nums">
+                <span className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-1.5 font-mono tabular-nums">
                   อัปเดต {lastUpdated}
                 </span>
               )}
@@ -345,20 +345,20 @@ export const MultiTimeframeStatusWindow: React.FC<
         </div>
       )}
 
-      <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-[#f9fafc]">
+      <div className="overflow-hidden rounded-2xl border border-slate-200/80 dark:border-slate-800/90 bg-[#f9fafc] dark:bg-[#0b1120]">
         {/* Top Controls Row */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 bg-slate-100/60 px-5 py-4 sm:px-6">
-          <div className="flex items-center gap-1.5 rounded-xl bg-slate-200/65 p-1">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-900/70 px-5 py-4 sm:px-6">
+          <div className="flex items-center gap-1.5 rounded-xl bg-slate-200/65 dark:bg-slate-950/80 p-1">
             <button
               type="button"
               onClick={() => setMode('live')}
               className={`inline-flex h-10 items-center gap-2 rounded-lg px-4 text-sm font-medium whitespace-nowrap shrink-0 transition-colors ${
                 mode === 'live'
-                  ? 'bg-[#fcfdfe] text-slate-800 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-800'
+                  ? 'bg-[#fcfdfe] dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100'
               }`}
             >
-              <Radio className="h-4 w-4 text-emerald-600/90" />
+              <Radio className="h-4 w-4 text-emerald-600/90 dark:text-emerald-400" />
               กราฟจริง
             </button>
             <button
@@ -366,8 +366,8 @@ export const MultiTimeframeStatusWindow: React.FC<
               onClick={() => setMode('sim')}
               className={`h-10 rounded-lg px-4 text-sm font-medium whitespace-nowrap shrink-0 transition-colors ${
                 mode === 'sim'
-                  ? 'bg-[#fcfdfe] text-slate-800 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-800'
+                  ? 'bg-[#fcfdfe] dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100'
               }`}
             >
               จำลอง
@@ -378,23 +378,23 @@ export const MultiTimeframeStatusWindow: React.FC<
             type="button"
             onClick={handleRefresh}
             disabled={isLoading}
-            className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200/80 bg-[#fcfdfe] px-4 text-sm font-medium text-slate-700 whitespace-nowrap shrink-0 transition-colors hover:bg-slate-100/80 disabled:opacity-50"
+            className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200/80 dark:border-slate-700 bg-[#fcfdfe] dark:bg-slate-900 px-4 text-sm font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0 transition-colors hover:bg-slate-100/80 dark:hover:bg-slate-800 disabled:opacity-50"
           >
-            <RefreshCw className={`h-4 w-4 text-slate-500 ${isLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 text-slate-500 dark:text-slate-400 ${isLoading ? 'animate-spin' : ''}`} />
             รีเฟรชข้อมูล
           </button>
         </div>
 
         {/* Overall Summary Strip */}
-        <div className="flex flex-col gap-3 border-b border-slate-200/70 bg-[#fcfdfe] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <div className="flex flex-col gap-3 border-b border-slate-200/70 dark:border-slate-800 bg-[#fcfdfe] dark:bg-[#0e1525] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="flex items-center gap-3.5">
             <span
               className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
                 summary.overallTone === 'up'
-                  ? 'bg-emerald-100/65 text-emerald-700/90'
+                  ? 'bg-emerald-100/65 dark:bg-emerald-950/60 text-emerald-700/90 dark:text-emerald-400'
                   : summary.overallTone === 'down'
-                  ? 'bg-rose-100/65 text-rose-700/90'
-                  : 'bg-slate-200/65 text-slate-600'
+                  ? 'bg-rose-100/65 dark:bg-rose-950/60 text-rose-700/90 dark:text-rose-400'
+                  : 'bg-slate-200/65 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
               }`}
             >
               {summary.overallTone === 'up' ? (
@@ -406,16 +406,16 @@ export const MultiTimeframeStatusWindow: React.FC<
               )}
             </span>
             <div>
-              <p className="text-xs font-medium text-slate-500 sm:text-sm">
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400 sm:text-sm">
                 ภาพรวมระบบ (M15 CISD · M1 Stoch)
               </p>
               <p
                 className={`mt-0.5 text-base font-semibold sm:text-lg ${
                   summary.overallTone === 'up'
-                    ? 'text-emerald-800/90'
+                    ? 'text-emerald-800/90 dark:text-emerald-300'
                     : summary.overallTone === 'down'
-                    ? 'text-rose-800/90'
-                    : 'text-slate-700'
+                    ? 'text-rose-800/90 dark:text-rose-300'
+                    : 'text-slate-700 dark:text-slate-200'
                 }`}
               >
                 {summary.overallLabel}
@@ -423,12 +423,12 @@ export const MultiTimeframeStatusWindow: React.FC<
             </div>
           </div>
 
-          <div className="inline-flex items-center gap-3.5 self-start rounded-xl border border-slate-200/70 bg-slate-100/60 px-4 py-2 text-sm font-semibold tabular-nums whitespace-nowrap sm:self-auto">
-            <span className="text-emerald-700/90">ฝั่งขึ้น {summary.upCount}</span>
-            <span aria-hidden="true" className="text-slate-300">
+          <div className="inline-flex items-center gap-3.5 self-start rounded-xl border border-slate-200/70 dark:border-slate-800 bg-slate-100/60 dark:bg-slate-900/80 px-4 py-2 text-sm font-semibold tabular-nums whitespace-nowrap sm:self-auto">
+            <span className="text-emerald-700/90 dark:text-emerald-400">ฝั่งขึ้น {summary.upCount}</span>
+            <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">
               |
             </span>
-            <span className="text-rose-700/90">ฝั่งลง {summary.downCount}</span>
+            <span className="text-rose-700/90 dark:text-rose-400">ฝั่งลง {summary.downCount}</span>
           </div>
         </div>
 
@@ -461,25 +461,25 @@ export const MultiTimeframeStatusWindow: React.FC<
                 onClick={() => onSelectTimeframeForChart(tf)}
                 className={`group flex flex-col justify-between rounded-2xl border p-5 sm:p-6 text-left transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${
                   isUp
-                    ? 'border-emerald-200/75 bg-emerald-50/45 hover:bg-emerald-50/75'
+                    ? 'border-emerald-200/75 dark:border-emerald-500/30 bg-emerald-50/45 dark:bg-emerald-950/25 hover:bg-emerald-50/75 dark:hover:bg-emerald-950/40'
                     : isDown
-                    ? 'border-rose-200/75 bg-rose-50/45 hover:bg-rose-50/75'
-                    : 'border-slate-200/80 bg-[#fcfdfe] hover:bg-slate-100/70'
+                    ? 'border-rose-200/75 dark:border-rose-500/30 bg-rose-50/45 dark:bg-rose-950/25 hover:bg-rose-50/75 dark:hover:bg-rose-950/40'
+                    : 'border-slate-200/80 dark:border-slate-800 bg-[#fcfdfe] dark:bg-[#0e1525] hover:bg-slate-100/70 dark:hover:bg-slate-800/60'
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2.5">
-                      <span className="font-mono text-xl font-bold tracking-tight text-slate-800 sm:text-2xl">
+                      <span className="font-mono text-xl font-bold tracking-tight text-slate-800 dark:text-slate-100 sm:text-2xl">
                         {tf}
                       </span>
-                      <span className="rounded-lg bg-slate-200/60 px-2.5 py-0.5 text-xs font-medium text-slate-600 sm:text-sm">
+                      <span className="rounded-lg bg-slate-200/60 dark:bg-slate-800 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:text-slate-300 sm:text-sm">
                         {isM15 ? 'CISD (15 นาที)' : 'Stoch(15,3,3) (1 นาที)'}
                       </span>
                     </div>
 
-                    <div className="mt-2 inline-flex items-center gap-1.5 text-sm text-slate-600">
-                      <Bell className="h-4 w-4 text-amber-600/90" />
+                    <div className="mt-2 inline-flex items-center gap-1.5 text-sm text-slate-600 dark:text-slate-400">
+                      <Bell className="h-4 w-4 text-amber-600/90 dark:text-amber-400" />
                       <span>
                         {isM15
                           ? 'Step 1: กำหนดทิศทาง BUY/SELL ให้ M1'
@@ -497,36 +497,36 @@ export const MultiTimeframeStatusWindow: React.FC<
                   </div>
 
                   {isLoading && !item ? (
-                    <span className="h-12 w-12 shrink-0 animate-pulse rounded-2xl bg-slate-200/70" />
+                    <span className="h-12 w-12 shrink-0 animate-pulse rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
                   ) : isUp ? (
-                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-100/75 text-emerald-700/90 transition-transform group-hover:scale-105">
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-100/75 dark:bg-emerald-950/70 text-emerald-700/90 dark:text-emerald-400 transition-transform group-hover:scale-105">
                       <ArrowUpRight className="h-6 w-6" />
                     </span>
                   ) : isDown ? (
-                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-rose-100/75 text-rose-700/90 transition-transform group-hover:scale-105">
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-rose-100/75 dark:bg-rose-950/70 text-rose-700/90 dark:text-rose-400 transition-transform group-hover:scale-105">
                       <ArrowDownRight className="h-6 w-6" />
                     </span>
                   ) : (
-                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-200/70 text-slate-500">
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-200/70 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
                       <Minus className="h-6 w-6" />
                     </span>
                   )}
                 </div>
 
-                <div className="my-5 flex flex-wrap items-baseline justify-between gap-3 rounded-xl border border-slate-200/60 bg-white/75 px-4 py-3.5">
+                <div className="my-5 flex flex-wrap items-baseline justify-between gap-3 rounded-xl border border-slate-200/60 dark:border-slate-800 bg-white/75 dark:bg-[#080d1a]/90 px-4 py-3.5">
                   <div>
-                    <p className="text-xs font-medium text-slate-500 sm:text-sm">
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400 sm:text-sm">
                       {isM15 ? 'ทิศทาง CISD ล่าสุด' : 'สถานะฝั่ง Stoch ล่าสุด'}
                     </p>
                     <p
                       className={`mt-0.5 text-lg font-bold tracking-tight sm:text-xl ${
                         isLoading && !item
-                          ? 'text-slate-400'
+                          ? 'text-slate-400 dark:text-slate-500'
                           : isUp
-                          ? 'text-emerald-700/95'
+                          ? 'text-emerald-700/95 dark:text-emerald-400'
                           : isDown
-                          ? 'text-rose-700/95'
-                          : 'text-slate-600'
+                          ? 'text-rose-700/95 dark:text-rose-400'
+                          : 'text-slate-600 dark:text-slate-300'
                       }`}
                     >
                       {isLoading && !item
@@ -550,10 +550,10 @@ export const MultiTimeframeStatusWindow: React.FC<
                   </div>
 
                   <div className="text-right">
-                    <p className="text-xs font-medium text-slate-500 sm:text-sm">
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400 sm:text-sm">
                       {isM15 ? 'ราคาปัจจุบัน' : 'Stoch(15,3,3)'}
                     </p>
-                    <p className="mt-0.5 font-mono text-base font-semibold text-slate-800 tabular-nums sm:text-lg">
+                    <p className="mt-0.5 font-mono text-base font-semibold text-slate-800 dark:text-slate-100 tabular-nums sm:text-lg">
                       {isM15
                         ? item && item.currentPrice > 0
                           ? item.currentPrice.toFixed(spec.digits)
@@ -565,13 +565,13 @@ export const MultiTimeframeStatusWindow: React.FC<
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-sm text-slate-600">
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-sm text-slate-600 dark:text-slate-400">
                   <span className="font-medium">
                     {isM15 ? (
                       activeCisdWatch !== null && activeCisdWatch !== undefined ? (
                         <>
                           {activeWatchLabel}:{' '}
-                          <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                          <span className="font-mono font-semibold text-slate-700 dark:text-slate-200 tabular-nums">
                             {activeCisdWatch.toFixed(spec.digits)}
                           </span>
                         </>
@@ -581,7 +581,7 @@ export const MultiTimeframeStatusWindow: React.FC<
                     ) : (
                       <>
                         ราคา:{' '}
-                        <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                        <span className="font-mono font-semibold text-slate-700 dark:text-slate-200 tabular-nums">
                           {item && item.currentPrice > 0
                             ? item.currentPrice.toFixed(spec.digits)
                             : '—'}
@@ -590,7 +590,7 @@ export const MultiTimeframeStatusWindow: React.FC<
                     )}
                   </span>
 
-                  <span className="inline-flex items-center gap-1 font-medium text-slate-700 group-hover:text-slate-900">
+                  <span className="inline-flex items-center gap-1 font-medium text-slate-700 dark:text-slate-300 group-hover:text-slate-900 dark:group-hover:text-white">
                     เปิดกราฟ {tf}
                     <ChevronRight className="h-4 w-4 text-slate-400 transition-transform group-hover:translate-x-0.5" />
                   </span>
@@ -600,9 +600,9 @@ export const MultiTimeframeStatusWindow: React.FC<
           })}
         </div>
 
-        <div className="border-t border-slate-200/70 bg-slate-100/50 px-5 py-3.5 text-center text-sm text-slate-600 sm:px-6 sm:text-left">
-          แตะที่การ์ด <span className="font-semibold text-slate-700">M15</span> หรือ{' '}
-          <span className="font-semibold text-slate-700">M1</span> เพื่อเปิดดูกราฟแบบละเอียดได้ทันที
+        <div className="border-t border-slate-200/70 dark:border-slate-800 bg-slate-100/50 dark:bg-slate-900/60 px-5 py-3.5 text-center text-sm text-slate-600 dark:text-slate-400 sm:px-6 sm:text-left">
+          แตะที่การ์ด <span className="font-semibold text-slate-700 dark:text-slate-200">M15</span> หรือ{' '}
+          <span className="font-semibold text-slate-700 dark:text-slate-200">M1</span> เพื่อเปิดดูกราฟแบบละเอียดได้ทันที
         </div>
       </div>
     </section>

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { MotionConfig } from 'motion/react';
-import { ArrowLeft, Download } from 'lucide-react';
+import { ArrowLeft, Download, Moon, Sun } from 'lucide-react';
 import { M15CisdChartView } from './components/M15CisdChartView';
 import { StochM1ChartView } from './components/StochM1ChartView';
 import { MultiTimeframeStatusWindow } from './components/MultiTimeframeStatusWindow';
@@ -97,6 +97,31 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     return params.get('view') === 'web';
   });
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return (
+        window.localStorage.getItem('cst-theme') === 'dark' ||
+        document.documentElement.classList.contains('dark')
+      );
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.classList.toggle('dark', isDarkMode);
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+      metaTheme.setAttribute('content', isDarkMode ? '#070b14' : '#ffffff');
+    }
+    try {
+      window.localStorage.setItem('cst-theme', isDarkMode ? 'dark' : 'light');
+    } catch {
+      // Ignore storage restrictions
+    }
+  }, [isDarkMode]);
 
   const forceStudio =
     typeof window !== 'undefined' &&
@@ -243,10 +268,10 @@ export default function App() {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="min-h-screen flex flex-col bg-[#f6f8fb] text-slate-900">
+      <div className="min-h-screen flex flex-col bg-[#f6f8fb] text-slate-900 dark:bg-[#070b14] dark:text-slate-100 transition-colors duration-200">
         {/* Studio Top Bar: hidden on deployed online web view to match clean live UI */}
         {!isWebMode && (
-          <header className="border-b border-slate-200/80 bg-white">
+          <header className="border-b border-slate-200/80 dark:border-slate-800/90 bg-white dark:bg-[#0e1525] transition-colors duration-200">
             <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 lg:gap-6 px-4 py-3.5 sm:px-6 lg:px-8">
               {/* Zone 1: Brand Logo & CST wordmark */}
               <a
@@ -255,13 +280,13 @@ export default function App() {
                   e.preventDefault();
                   setActiveSection('t01');
                 }}
-                className="inline-flex items-center gap-2.5 text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-2.5 text-base font-bold tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap shrink-0"
               >
                 <img
                   src={cstLogoImg}
                   alt="โลโก้ CST"
                   referrerPolicy="no-referrer"
-                  className="h-9 w-9 rounded-xl bg-white object-cover ring-1 ring-slate-200 shadow-xs"
+                  className="h-9 w-9 rounded-xl bg-white object-cover ring-1 ring-slate-200 dark:ring-slate-700 shadow-xs"
                 />
                 <span>CST</span>
               </a>
@@ -280,13 +305,13 @@ export default function App() {
                       onClick={() => setActiveSection(item.id)}
                       className={`relative py-2 whitespace-nowrap shrink-0 border-b-2 transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${
                         isActive
-                          ? 'border-blue-600 font-semibold text-slate-900'
-                          : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+                          ? 'border-blue-600 dark:border-blue-400 font-semibold text-slate-900 dark:text-white'
+                          : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:border-slate-300 dark:hover:border-slate-700'
                       }`}
                     >
                       {item.label}
                       {item.id === 'sheets' && unsyncedCount > 0 ? (
-                        <span className="ml-1 font-mono text-xs text-blue-600 tabular-nums">
+                        <span className="ml-1 font-mono text-xs text-blue-600 dark:text-blue-400 tabular-nums">
                           ({unsyncedCount})
                         </span>
                       ) : null}
@@ -310,7 +335,7 @@ export default function App() {
             </div>
 
             {/* Mobile & Tablet Nav Switcher */}
-            <div className="flex lg:hidden items-center gap-1.5 overflow-x-auto border-t border-slate-100 px-4 py-2">
+            <div className="flex lg:hidden items-center gap-1.5 overflow-x-auto border-t border-slate-100 dark:border-slate-800/80 px-4 py-2">
               {NAV_ITEMS.map((item) => {
                 const isActive = activeSection === item.id;
                 return (
@@ -320,8 +345,8 @@ export default function App() {
                     onClick={() => setActiveSection(item.id)}
                     className={`h-10 rounded-lg px-3.5 text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
                       isActive
-                        ? 'bg-slate-900 text-white'
-                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                        ? 'bg-slate-900 dark:bg-blue-600 text-white'
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/80 hover:text-slate-900 dark:hover:text-slate-100'
                     }`}
                   >
                     {item.label}
@@ -343,7 +368,7 @@ export default function App() {
           }`}
         >
           {devPreviewWeb && !import.meta.env.PROD && (
-            <div className="mb-3 flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            <div className="mb-3 flex items-center justify-between rounded-lg border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-950/45 px-3 py-2 text-xs text-blue-900 dark:text-blue-200">
               <span>กำลังดูตัวอย่างหน้าตาเว็บจริง (เมื่อนำขึ้น GitHub / Server ออนไลน์)</span>
               <button
                 type="button"
@@ -351,7 +376,7 @@ export default function App() {
                   setDevPreviewWeb(false);
                   setActiveSection('deploy');
                 }}
-                className="inline-flex items-center gap-1 font-semibold text-blue-700 hover:underline"
+                className="inline-flex items-center gap-1 font-semibold text-blue-700 dark:text-blue-300 hover:underline"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
                 กลับหน้า Studio
@@ -365,19 +390,38 @@ export default function App() {
             activeSection !== 'm15' &&
             activeSection !== 'm1' &&
             activeSection !== 'mtf' && (
-              <div className="mb-4">
+              <div className="mb-4 flex items-center justify-between gap-3">
                 <button
                   type="button"
                   onClick={() => setActiveSection('t01')}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0e1525] px-3.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/80 whitespace-nowrap shrink-0"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" />
                   กลับหน้ากราฟ
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setIsDarkMode((d) => !d)}
+                  aria-pressed={isDarkMode}
+                  aria-label={isDarkMode ? 'สลับเป็นโหมดสว่าง' : 'สลับเป็นโหมดกลางคืน (Dark Mode)'}
+                  className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0e1525] px-3.5 text-xs font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-blue-600"
+                >
+                  {isDarkMode ? (
+                    <>
+                      <Sun className="h-4 w-4 text-amber-400" />
+                      โหมดสว่าง
+                    </>
+                  ) : (
+                    <>
+                      <Moon className="h-4 w-4 text-slate-600" />
+                      โหมดกลางคืน
+                    </>
+                  )}
+                </button>
               </div>
             )}
 
-          {/* Clean Minimal Title (Studio/Preview mode only) + Web Mode Chart Switcher */}
+          {/* Clean Minimal Title (Studio/Preview mode only) + Web Mode Chart Switcher + Night Mode Toggle */}
           <div
             className={`${
               isWebMode ? 'mb-5' : 'mb-7'
@@ -385,7 +429,7 @@ export default function App() {
           >
             {!isWebMode && (
               <div>
-                <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
+                <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl text-balance">
                   {activeSection === 't01'
                     ? 'CST · กราฟคู่ M15 CISD + M1 Stoch(15,3,3)'
                     : activeSection === 'm1'
@@ -396,7 +440,7 @@ export default function App() {
                     ? 'เชื่อมต่อ Telegram แจ้งเตือน CST'
                     : `CST · CISD Timeframe ${cisdTimeframe}`}
                 </h1>
-                <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
+                <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600 dark:text-slate-400">
                   {SECTION_DESCRIPTIONS[activeSection]}
                 </p>
               </div>
@@ -407,14 +451,14 @@ export default function App() {
                 activeSection === 'm15' ||
                 activeSection === 'm1' ||
                 activeSection === 'mtf') && (
-                <div className="inline-flex flex-wrap items-center gap-1 self-start rounded-lg bg-slate-200/75 p-1">
+                <div className="inline-flex flex-wrap items-center gap-1 self-start rounded-lg bg-slate-200/75 dark:bg-slate-900/90 dark:border dark:border-slate-800 p-1">
                   <button
                     type="button"
                     onClick={() => setActiveSection('t01')}
                     className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
                       activeSection === 't01'
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
+                        ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                     }`}
                   >
                     M15 + M1
@@ -424,8 +468,8 @@ export default function App() {
                     onClick={() => setActiveSection('m15')}
                     className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
                       activeSection === 'm15'
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
+                        ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                     }`}
                   >
                     CISD ({cisdTimeframe})
@@ -435,8 +479,8 @@ export default function App() {
                     onClick={() => setActiveSection('m1')}
                     className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
                       activeSection === 'm1'
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
+                        ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                     }`}
                   >
                     Stoch M1
@@ -446,14 +490,40 @@ export default function App() {
                     onClick={() => setActiveSection('mtf')}
                     className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
                       activeSection === 'mtf'
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
+                        ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                     }`}
                   >
                     สถานะ M15/M1
                   </button>
                 </div>
               )}
+
+            {(!isWebMode ||
+              activeSection === 't01' ||
+              activeSection === 'm15' ||
+              activeSection === 'm1' ||
+              activeSection === 'mtf') && (
+              <button
+                type="button"
+                onClick={() => setIsDarkMode((d) => !d)}
+                aria-pressed={isDarkMode}
+                aria-label={isDarkMode ? 'สลับเป็นโหมดสว่าง' : 'สลับเป็นโหมดกลางคืน (Dark Mode)'}
+                className="inline-flex h-10 self-start sm:self-auto items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700/90 bg-white dark:bg-[#0e1525] px-3.5 text-[13px] font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/90 focus-visible:outline-2 focus-visible:outline-blue-600"
+              >
+                {isDarkMode ? (
+                  <>
+                    <Sun className="h-4 w-4 text-amber-400" />
+                    โหมดสว่าง
+                  </>
+                ) : (
+                  <>
+                    <Moon className="h-4 w-4 text-slate-600" />
+                    โหมดกลางคืน
+                  </>
+                )}
+              </button>
+            )}
           </div>
 
           {/* Active Workspace View */}
@@ -563,14 +633,14 @@ export default function App() {
 
         {/* Quiet Clean Footer (shown in Studio mode only) */}
         {!isWebMode && (
-          <footer className="border-t border-slate-200/80 bg-white py-5">
-            <div className="mx-auto flex max-w-6xl items-center justify-between px-4 text-xs text-slate-500 sm:px-6 lg:px-8">
-              <span className="inline-flex items-center gap-2 font-semibold text-slate-800">
+          <footer className="border-t border-slate-200/80 dark:border-slate-800/90 bg-white dark:bg-[#0e1525] py-5 transition-colors duration-200">
+            <div className="mx-auto flex max-w-6xl items-center justify-between px-4 text-xs text-slate-500 dark:text-slate-400 sm:px-6 lg:px-8">
+              <span className="inline-flex items-center gap-2 font-semibold text-slate-800 dark:text-slate-100">
                 <img
                   src={cstLogoImg}
                   alt="โลโก้ CST"
                   referrerPolicy="no-referrer"
-                  className="h-6 w-6 rounded-md bg-white object-cover ring-1 ring-slate-200"
+                  className="h-6 w-6 rounded-md bg-white object-cover ring-1 ring-slate-200 dark:ring-slate-700"
                 />
                 CST
               </span>
