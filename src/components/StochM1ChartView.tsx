@@ -382,7 +382,8 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
       timestampIso: string,
       mode: 'live' | 'sim',
       t01Round = 1,
-      cisdLevel: number | null = null
+      cisdLevel: number | null = null,
+      skipServerNotify = false
     ) => {
       const signal: 'BUY' | 'SELL' = side === 'OVER_80' ? 'SELL' : 'BUY';
       const condLabel =
@@ -429,12 +430,15 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
         mode,
         timestampIso,
         prefix: customPrefix,
+        skipServerNotify,
       }).then((result) => {
         setAlertToast((prev) =>
           prev && prev.id === toastId
             ? {
                 ...prev,
-                telegramDelivered: result.deliveredToTelegram,
+                telegramDelivered: skipServerNotify
+                  ? true
+                  : result.deliveredToTelegram,
                 telegramMissingToken: Boolean(result.telegramMissingToken),
                 telegramError: result.telegramError,
                 mobileDelivered:
@@ -593,7 +597,8 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                       closedBar.timestampIso,
                       'live',
                       displayRound,
-                      currT01.biasCisdLevel
+                      currT01.biasCisdLevel,
+                      serverAlreadyAlertedThisBar
                     );
                   }
                 }
@@ -632,7 +637,8 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                       closedBar.timestampIso,
                       'live',
                       displayRound,
-                      currT01.biasCisdLevel
+                      currT01.biasCisdLevel,
+                      serverAlreadyAlertedThisBar
                     );
                   }
                 }
