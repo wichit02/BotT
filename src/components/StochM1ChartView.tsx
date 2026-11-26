@@ -188,6 +188,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
   >(null);
   const [brokerSymbolLabel, setBrokerSymbolLabel] = useState<string>('');
   const [alertToast, setAlertToast] = useState<StochAlertToast | null>(null);
+  const [simNoticeToast, setSimNoticeToast] = useState<string | null>(null);
   const [latestAlertBanner, setLatestAlertBanner] = useState<string | null>(null);
   const [t01State, setT01State] = useState<T01StateSnapshot | null>(null);
 
@@ -399,6 +400,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
       );
 
       const toastId = `stoch-${mode}-${timestampIso}-${Date.now()}`;
+      setSimNoticeToast(null);
       setAlertToast({
         id: toastId,
         mode,
@@ -889,17 +891,17 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
     simWaitingResetRef.current = false;
     setSimRoundCount(0);
     simRoundCountRef.current = 0;
-    setLatestAlertBanner(
-      `[จำลอง] M15 CISD สลับเป็นฝั่ง${
-        nextBias === 'BUY'
-          ? 'ขาขึ้น (BUY) → ยกเลิกฝั่งเดิม รอ M1 Stoch ปิด < 20'
-          : 'ขาลง (SELL) → ยกเลิกฝั่งเดิม รอ M1 Stoch ปิด > 80'
-      }`
-    );
+    const msg = `[จำลอง] M15 CISD สลับเป็นฝั่ง${
+      nextBias === 'BUY'
+        ? 'ขาขึ้น (BUY) → ยกเลิกฝั่งเดิม รอ M1 Stoch ปิด < 20'
+        : 'ขาลง (SELL) → ยกเลิกฝั่งเดิม รอ M1 Stoch ปิด > 80'
+    }`;
+    setLatestAlertBanner(msg);
+    setSimNoticeToast(msg);
   };
 
   const notifyIfSimClosedBarSwitched = useCallback(
-    (closedBar: StochM1Bar | undefined) => {
+    (closedBar: StochM1Bar | undefined, showResetToast = false) => {
       if (!closedBar || closedBar.stochK === null) return;
       const bias = simBiasRef.current;
 
@@ -907,11 +909,11 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
         if (closedBar.stochK > 80 && simWaitingResetRef.current) {
           simWaitingResetRef.current = false;
           setSimWaitingReset(false);
-          setLatestAlertBanner(
-            `[จำลอง] M1 Stoch เด้ง > 80 (${closedBar.stochK.toFixed(
-              2
-            )}) → รีเซ็ตสิทธิ์แล้ว รอย่อปิด < 20 รอบ ${simRoundCountRef.current + 1}`
-          );
+          const msg = `[จำลอง] M1 Stoch เด้ง > 80 (${closedBar.stochK.toFixed(
+            2
+          )}) → รีเซ็ตสิทธิ์แล้ว รอย่อปิด < 20 รอบ ${simRoundCountRef.current + 1}`;
+          setLatestAlertBanner(msg);
+          if (showResetToast) setSimNoticeToast(msg);
           return;
         }
         if (closedBar.stochK < 20 && !simWaitingResetRef.current) {
@@ -939,11 +941,11 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
         if (closedBar.stochK < 20 && simWaitingResetRef.current) {
           simWaitingResetRef.current = false;
           setSimWaitingReset(false);
-          setLatestAlertBanner(
-            `[จำลอง] M1 Stoch ย่อ < 20 (${closedBar.stochK.toFixed(
-              2
-            )}) → รีเซ็ตสิทธิ์แล้ว รอเด้งปิด > 80 รอบ ${simRoundCountRef.current + 1}`
-          );
+          const msg = `[จำลอง] M1 Stoch ย่อ < 20 (${closedBar.stochK.toFixed(
+            2
+          )}) → รีเซ็ตสิทธิ์แล้ว รอเด้งปิด > 80 รอบ ${simRoundCountRef.current + 1}`;
+          setLatestAlertBanner(msg);
+          if (showResetToast) setSimNoticeToast(msg);
           return;
         }
         if (closedBar.stochK > 80 && !simWaitingResetRef.current) {
@@ -975,16 +977,52 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
   const advanceBar = (forceTarget?: StochSide) => {
     simPlanRef.current = null;
     setSimTickStep(0);
-    const prevLast = barsRef.current[barsRef.current.length - 1];
-    const nextResult = appendNextStochM1Bar(barsRef.current, symbol, forceTarget);
+
+    // Manual test buttons ("ทดสอบ > 80" / "ทดสอบ < 20") should always respond immediately:
+    // If waiting for reset on the opposite bias, it performs the reset; if idle on the opposite bias, switch M15 bias to test that direction.
+    if (forceTarget === 'OVER_80' && simBiasRef.current === 'BUY' && !simWaitingResetRef.current) {
+      setSimBias('SELL');
+      simBiasRef.current = 'SELL';
+      setSimWaitingReset(false);
+      simWaitingResetRef.current = false;
+      setSimRoundCount(0);
+      simRoundCountRef.current = 0;
+    } else if (
+      forceTarget === 'UNDER_20' &&
+      simBiasRef.current === 'SELL' &&
+      !simWaitingResetRef.current
+    ) {
+      setSimBias('BUY');
+      simBiasRef.current = 'BUY';
+      setSimWaitingReset(false);
+      simWaitingResetRef.current = false;
+      setSimRoundCount(0);
+      simRoundCountRef.current = 0;
+    }
+
+    const prevBars = barsRef.current;
+    const prevLast = prevBars[prevBars.length - 1];
+    const prevLastClosedIso = prevBars[prevBars.length - 2]?.timestampIso;
+
+    const nextResult = appendNextStochM1Bar(prevBars, symbol, forceTarget);
     barsRef.current = nextResult.bars;
     setSeriesState(nextResult);
 
-    const latestClosed = nextResult.bars[nextResult.bars.length - 2];
+    const endClosedIdx = nextResult.bars.length - 2;
+    const latestClosed = nextResult.bars[endClosedIdx];
     if (prevLast && latestClosed) {
       triggerTickFlash(prevLast.close, latestClosed.close);
     }
-    notifyIfSimClosedBarSwitched(latestClosed);
+
+    // Evaluate every newly closed bar in order so intermediate >80 / <20 bars reset Round 2 properly
+    const prevClosedIdx = prevLastClosedIso
+      ? nextResult.bars.findIndex((b) => b.timestampIso === prevLastClosedIso)
+      : -1;
+    const startIdx = prevClosedIdx >= 0 ? prevClosedIdx + 1 : endClosedIdx;
+    for (let idx = startIdx; idx <= endClosedIdx; idx++) {
+      const isFinalBar = idx === endClosedIdx;
+      notifyIfSimClosedBarSwitched(nextResult.bars[idx], Boolean(forceTarget && isFinalBar));
+    }
   };
 
   const stepSimTick = () => {
@@ -1365,6 +1403,20 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
           )}
         </div>
       </div>
+
+      {simNoticeToast && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs font-medium text-sky-900">
+          <span>{simNoticeToast}</span>
+          <button
+            type="button"
+            onClick={() => setSimNoticeToast(null)}
+            aria-label="ปิดข้อความสถานะจำลอง"
+            className="rounded p-1 text-sky-700 hover:bg-sky-100"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {alertToast && (
         <div
