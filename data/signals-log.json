@@ -4,7 +4,21 @@
     "US100"
   ],
   "direction": "both",
-  "totalCapturedSignals": 0,
-  "latestSignalAt": null,
-  "events": []
+  "totalCapturedSignals": 1,
+  "latestSignalAt": "26/11/2569 12:50:04",
+  "events": [
+    {
+      "id": "stoch-M5-US100-2026-11-26T05:45:00.000Z-BELOW_20-1795672204484",
+      "timestamp": "26/11/2569 12:50:04",
+      "symbol": "US100",
+      "timeframe": "M5",
+      "signal": "BUY",
+      "aoPrev": 25.704067948145543,
+      "aoCurr": 13.632958801498301,
+      "price": 26269,
+      "deliveredToTelegram": true,
+      "deliveredToNtfy": false,
+      "deliveredWebPushCount": 0
+    }
+  ]
 }
