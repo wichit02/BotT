@@ -13,7 +13,7 @@ import { type LastCisdSignalInfo } from '../lib/cisdDetector';
 import { generateInitialCisdSeries } from '../lib/m15CisdSimulator';
 import { type StochSide } from '../lib/stochDetector';
 import { generateInitialStochM1Series } from '../lib/stochM1Simulator';
-import cisdLogoImg from '../assets/images/cisd_brand_logo_1795106433027.jpg';
+import cstLogoImg from '../assets/images/cst_brand_logo_1795675963467.jpg';
 
 export type StatusChartTimeframe = 'M15' | 'M1';
 
@@ -310,33 +310,33 @@ export const MultiTimeframeStatusWindow: React.FC<
       )}
 
       {!isWebMode && (
-        <div className="rounded-2xl border border-slate-700/60 bg-gradient-to-r from-[#111726] via-[#151d30] to-[#1a2338] px-5 py-4 text-slate-100 shadow-xs sm:px-6 sm:py-5">
+        <div className="rounded-2xl border border-slate-200/90 bg-white px-5 py-4 text-slate-900 shadow-xs sm:px-6 sm:py-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3.5">
               <img
-                src={cisdLogoImg}
-                alt="โลโก้ ท่า T01"
+                src={cstLogoImg}
+                alt="โลโก้ CST"
                 referrerPolicy="no-referrer"
-                className="h-11 w-11 shrink-0 rounded-xl object-cover ring-1 ring-amber-300/30"
+                className="h-11 w-11 shrink-0 rounded-xl bg-white object-cover ring-1 ring-slate-200"
               />
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-base font-semibold tracking-tight text-slate-100 sm:text-lg">
-                    ท่า T01 · สรุปสถานะ M15 CISD &amp; M1 Stoch(15,3,3)
+                  <h2 className="text-base font-semibold tracking-tight text-slate-900 sm:text-lg">
+                    CST · สรุปสถานะ M15 CISD &amp; M1 Stoch(15,3,3)
                   </h2>
-                  <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-800/80 px-2.5 py-0.5 text-xs font-medium text-amber-200/90 ring-1 ring-amber-300/20">
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-700">
                     US100Cash#
                   </span>
                 </div>
-                <p className="mt-1 text-sm text-slate-300/90">
+                <p className="mt-1 text-sm text-slate-600">
                   ติดตามทั้งโครงสร้าง CISD M15 และ Stoch(15,3,3) M1 แบบปิดแท่งครั้งเดียวต่อฝั่ง
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 text-xs font-medium text-slate-300/90 sm:text-sm">
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-600 sm:text-sm">
               {lastUpdated && (
-                <span className="rounded-lg bg-slate-900/60 px-3 py-1.5 font-mono tabular-nums ring-1 ring-white/10">
+                <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono tabular-nums">
                   อัปเดต {lastUpdated}
                 </span>
               )}

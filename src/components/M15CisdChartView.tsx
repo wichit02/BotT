@@ -51,8 +51,7 @@ import {
   showLocalMobileNotification,
   subscribeDeviceToWebPush,
 } from '../lib/webPushClient';
-import cisdLogoImg from '../assets/images/cisd_brand_logo_1795106433027.jpg';
-import cisdBannerImg from '../assets/images/cisd_alert_banner_1795106433758.jpg';
+import cstLogoImg from '../assets/images/cst_brand_logo_1795675963467.jpg';
 
 interface M15CisdChartViewProps {
   customPrefix: string;
@@ -1119,53 +1118,44 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
     <section className={isCombinedTop ? 'space-y-3' : 'space-y-6'}>
       {/* Compact Visual Brand Card (Studio/Preview mode only; hidden on deployed live web) */}
       {!isWebMode && (
-        <div className="relative overflow-hidden rounded-2xl border border-slate-800/80 bg-[#090d16] text-white shadow-sm">
-          <div className="pointer-events-none absolute inset-y-0 right-0 w-full sm:w-3/5 opacity-75">
-            <img
-              src={cisdBannerImg}
-              alt="Cisd เตือน กราฟ US100 M15 Real-Time"
-              referrerPolicy="no-referrer"
-              className="h-full w-full object-cover object-center"
-            />
-            <div className="absolute inset-0 bg-gradient-to-r from-[#090d16] via-[#090d16]/85 to-transparent" />
-          </div>
-          <div className="relative z-10 flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
+        <div className="rounded-2xl border border-slate-200/90 bg-white text-slate-900 shadow-xs">
+          <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
             <div className="flex items-center gap-3.5">
               <img
-                src={cisdLogoImg}
-                alt="โลโก้ Cisd เตือน"
+                src={cstLogoImg}
+                alt="โลโก้ CST"
                 referrerPolicy="no-referrer"
-                className="h-12 w-12 shrink-0 rounded-xl object-cover ring-1 ring-amber-400/35 shadow-md"
+                className="h-12 w-12 shrink-0 rounded-xl bg-white object-cover ring-1 ring-slate-200 shadow-xs"
               />
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold tracking-tight text-white sm:text-lg">
-                    {alertsDisabled ? `Cisd เตือน · กราฟ ${activeTimeframe}` : 'Cisd เตือน'}
+                  <h2 className="text-base font-bold tracking-tight text-slate-900 sm:text-lg">
+                    {alertsDisabled ? `CST · กราฟ ${activeTimeframe}` : 'CST'}
                   </h2>
                   <span
                     className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ring-1 ${
                       alertsDisabled
-                        ? 'bg-sky-500/15 text-sky-300 ring-sky-400/25'
-                        : 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/25'
+                        ? 'bg-sky-50 text-sky-700 ring-sky-200'
+                        : 'bg-emerald-50 text-emerald-700 ring-emerald-200'
                     }`}
                   >
                     <span
                       className={`h-1.5 w-1.5 rounded-full animate-pulse ${
-                        alertsDisabled ? 'bg-sky-400' : 'bg-emerald-400'
+                        alertsDisabled ? 'bg-sky-500' : 'bg-emerald-500'
                       }`}
                     />
-                    {alertsDisabled ? `${activeTimeframe} ดูกราฟ (ไม่แจ้งเตือน)` : 'M15 LIVE'}
+                    {alertsDisabled ? `${activeTimeframe} ดูกราฟ (ไม่แจ้งเตือน)` : 'LIVE'}
                   </span>
                 </div>
-                <p className="mt-0.5 text-xs text-slate-300">
+                <p className="mt-0.5 text-xs text-slate-600">
                   {alertsDisabled
                     ? `อัปเดตกราฟ US100 ${activeTimeframe} แบบ Real-Time ทุก 2 วินาที (ปิดการแจ้งเตือนเฉพาะหน้านี้)`
-                    : 'สแกนโครงสร้าง US100 M15 ทุก 2 วินาที · ส่งแจ้งเตือน Telegram (8217822307) & มือถือ'}
+                    : 'สแกน US100 M15 + M1 ทุก 2 วินาที · ส่งแจ้งเตือน Telegram (8217822307) & มือถือ'}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-xs text-amber-200/90 font-mono tabular-nums">
-              <span className="rounded-lg bg-slate-900/80 px-2.5 py-1.5 ring-1 ring-white/10">
+            <div className="flex items-center gap-2 text-xs text-slate-700 font-mono tabular-nums">
+              <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
                 US100Cash# · {activeTimeframe}
               </span>
             </div>
