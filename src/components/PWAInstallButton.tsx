@@ -71,9 +71,9 @@ export const PWAInstallButton: React.FC = () => {
       <button
         type="button"
         onClick={() => void install()}
-        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 whitespace-nowrap transition-colors hover:bg-slate-50"
+        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
       >
-        <Smartphone className="h-3.5 w-3.5 text-blue-600" />
+        <Smartphone className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
         เพิ่มลงหน้าจอมือถือ
       </button>
     );
@@ -85,19 +85,19 @@ export const PWAInstallButton: React.FC = () => {
         <button
           type="button"
           onClick={() => setShowIOSGuide(true)}
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 whitespace-nowrap transition-colors hover:bg-slate-50"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
         >
-          <Smartphone className="h-3.5 w-3.5 text-blue-600" />
+          <Smartphone className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
           เพิ่มบน iPhone
         </button>
 
         {showIOSGuide && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-            <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
-              <h3 className="text-sm font-semibold text-slate-900">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 dark:bg-black/70 p-4">
+            <div className="w-full max-w-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0e1525] p-6 shadow-xl">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 เปิดรับแจ้งเตือนบน iPhone / iPad
               </h3>
-              <p className="mt-2 text-xs leading-relaxed text-slate-600">
+              <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
                 1. กดปุ่ม <strong>Share</strong> ด้านล่างของ Safari
                 <br />
                 2. เลือก <strong>Add to Home Screen</strong> แล้วเปิดแอปจากหน้าจอหลัก
@@ -105,7 +105,7 @@ export const PWAInstallButton: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowIOSGuide(false)}
-                className="mt-4 h-9 w-full rounded-lg bg-slate-900 text-xs font-medium text-white hover:bg-slate-800"
+                className="mt-4 h-9 w-full rounded-lg bg-slate-900 dark:bg-blue-600 text-xs font-medium text-white hover:bg-slate-800 dark:hover:bg-blue-700"
               >
                 ปิด
               </button>
