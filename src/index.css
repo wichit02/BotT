@@ -10,7 +10,8 @@
   body {
     font-family: var(--font-sans);
     color: #0f172a;
-    background-color: #f8fafc;
+    background-color: #f6f8fb;
+    line-height: 1.6;
   }
 
   h1, h2, h3, h4 {

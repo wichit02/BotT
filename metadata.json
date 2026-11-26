@@ -1,6 +1,8 @@
 {
-  "name": "AO Signal Studio — MQL5 Push Notification & Sheets Logger",
-  "description": "ระบบสร้างโค้ด MQL5 Awesome Oscillator (AO) แจ้งเตือนตัดเส้น 0 บน M5 ส่ง Push Notification เข้ามือถือ Android พร้อมบันทึกสัญญาณลง Google Sheets",
+  "name": "ท่า T01",
+  "description": "cisd M15 stoch m1",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

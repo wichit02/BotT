@@ -9,22 +9,31 @@ import {
   Send,
   ShieldCheck,
   Trash2,
+  RefreshCw,
 } from 'lucide-react';
 import type { Mql5Config } from '../lib/mql5Generator';
 import {
   clearSavedTelegramConfig,
   loadSavedTelegramConfig,
   saveTelegramConfigLocally,
+  SYSTEM_TELEGRAM_CHAT_ID,
 } from '../lib/telegramStorage';
 
 interface MonitorEventItem {
   id: string;
   timestamp: string;
   symbol: string;
+  timeframe?: string;
+  strategy?: 'AO' | 'CISD' | 'STOCH';
   signal: 'BUY' | 'SELL';
   price: number;
+  cisdLevel?: number | null;
+  stochK?: number | null;
+  stochSide?: 'OVER_80' | 'UNDER_20' | null;
+  t01Round?: number | null;
   deliveredWebPushCount: number;
   deliveredToTelegram?: boolean;
+  telegramError?: string;
 }
 
 interface TelegramConfigProps {
@@ -41,18 +50,24 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
   const [botToken, setBotToken] = useState(
     () => mql5Config.telegramBotToken || loadSavedTelegramConfig()?.telegramBotToken || ''
   );
-  const [chatId, setChatId] = useState(
-    () => mql5Config.telegramChatId || loadSavedTelegramConfig()?.telegramChatId || ''
-  );
+  const [chatId, setChatId] = useState(SYSTEM_TELEGRAM_CHAT_ID);
   const [showToken, setShowToken] = useState(false);
   const [telegramMode, setTelegramMode] = useState<'fallback' | 'always'>('always');
   const [syncToMql5, setSyncToMql5] = useState(true);
+  const [cisdTimeframes, setCisdTimeframes] = useState<Array<'M15'>>([
+    'M15',
+  ]);
+  const [stochM1Enabled, setStochM1Enabled] = useState<boolean>(true);
+  const [m15StandaloneAlerts, setM15StandaloneAlerts] = useState<boolean>(false);
 
   const [hasSavedToken, setHasSavedToken] = useState(false);
+  const [savedTokenMasked, setSavedTokenMasked] = useState('');
   const [isConfigured, setIsConfigured] = useState(false);
   const [subscribersCount, setSubscribersCount] = useState(0);
+  const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
   const [events, setEvents] = useState<MonitorEventItem[]>([]);
   const [isBusy, setIsBusy] = useState(false);
+  const [isCheckingNow, setIsCheckingNow] = useState(false);
   const [botLink, setBotLink] = useState<{
     username?: string;
     url: string;
@@ -74,9 +89,13 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       if (!res.ok) return;
       const data = await res.json();
       setHasSavedToken(Boolean(data.telegramHasToken || data.telegramConfigured));
+      setSavedTokenMasked(
+        typeof data.telegramBotTokenMasked === 'string' ? data.telegramBotTokenMasked : ''
+      );
       setIsConfigured(Boolean(data.telegramConfigured));
+      onConfiguredChange?.(Boolean(data.telegramConfigured));
       if (typeof data.telegramChatId === 'string' && data.telegramChatId) {
-        setChatId(data.telegramChatId);
+        setChatId(SYSTEM_TELEGRAM_CHAT_ID);
       }
       if (data.telegramMode === 'always' || data.telegramMode === 'fallback') {
         setTelegramMode(data.telegramMode);
@@ -84,11 +103,50 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       if (typeof data.subscribersCount === 'number') {
         setSubscribersCount(data.subscribersCount);
       }
+      if (typeof data.lastCheckedAt === 'string') {
+        setLastCheckedAt(data.lastCheckedAt);
+      }
+      if (Array.isArray(data.cisdTimeframes)) {
+        const filtered = data.cisdTimeframes.filter((t: string): t is 'M15' => t === 'M15');
+        setCisdTimeframes(filtered.length > 0 ? filtered : ['M15']);
+      }
+      if (typeof data.stochM1Enabled === 'boolean') {
+        setStochM1Enabled(data.stochM1Enabled);
+      }
+      if (typeof data.m15StandaloneAlerts === 'boolean') {
+        setM15StandaloneAlerts(data.m15StandaloneAlerts);
+      }
       if (Array.isArray(data.events)) {
         setEvents(data.events);
       }
     } catch {
       // Ignore transient network error on mount
+    }
+  };
+
+  const handleCheckNow = async () => {
+    setIsCheckingNow(true);
+    setStatusMessage(null);
+    try {
+      const res = await fetch('/api/monitor/check-now', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'ตรวจสอบสัญญาณไม่สำเร็จ');
+      if (typeof data.lastCheckedAt === 'string') setLastCheckedAt(data.lastCheckedAt);
+      if (Array.isArray(data.events)) setEvents(data.events);
+      setStatusMessage({
+        type: 'ok',
+        text:
+          data.newEventsCount > 0
+            ? `ตรวจพบสัญญาณใหม่ ${data.newEventsCount} รายการ และส่งเข้า Telegram แล้ว`
+            : 'สแกนกราฟ M15 CISD และ M1 Stoch ล่าสุดแล้ว ระบบกำลังเฝ้ารอปิดแท่งเข้าเงื่อนไขใหม่',
+      });
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'err',
+        text: err?.message || 'ตรวจสอบสัญญาณล่าสุดไม่สำเร็จ',
+      });
+    } finally {
+      setIsCheckingNow(false);
     }
   };
 
@@ -212,6 +270,10 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
           telegramBotToken: botToken.trim(),
           telegramChatId: trimmedChatId,
           telegramMode,
+          m15Enabled: cisdTimeframes.length > 0,
+          m15StandaloneAlerts,
+          cisdTimeframes,
+          stochM1Enabled,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -230,9 +292,12 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       }
       applyMql5SyncIfChecked(botToken, trimmedChatId);
       setStatusMessage({
-        type: 'ok',
-        text: 'บันทึกการตั้งค่า Telegram เรียบร้อยแล้ว',
+        type: data.telegramConfigured ? 'ok' : 'warn',
+        text: data.telegramConfigured
+          ? 'บันทึกเรียบร้อย เซิร์ฟเวอร์เริ่มส่งสัญญาณ CISD (M15) และ Stoch (M1) เข้าแชท Telegram อัตโนมัติแล้ว'
+          : 'บันทึกแล้ว กรุณาตรวจสอบ Chat ID ตัวเลข (กด "ดึง Chat ID อัตโนมัติ" หากยังไม่ทราบเลข)',
       });
+      await loadStatus();
     } catch (err: any) {
       setStatusMessage({
         type: 'err',
@@ -262,6 +327,10 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
           telegramBotToken: botToken.trim(),
           telegramChatId: trimmedChatId,
           telegramMode,
+          m15Enabled: cisdTimeframes.length > 0,
+          m15StandaloneAlerts,
+          cisdTimeframes,
+          stochM1Enabled,
         }),
       });
 
@@ -295,7 +364,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       applyMql5SyncIfChecked(botToken, trimmedChatId);
       setStatusMessage({
         type: 'ok',
-        text: 'ส่งข้อความทดสอบเข้า Telegram สำเร็จ พร้อมรับสัญญาณ AO M5 แล้ว',
+        text: 'ส่งข้อความทดสอบเข้า Telegram สำเร็จ พร้อมรับสัญญาณ CISD (M15) และ Stoch (M1) อัตโนมัติแล้ว',
       });
       await loadStatus();
     } catch (err: any) {
@@ -323,14 +392,14 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       setIsConfigured(false);
       onConfiguredChange?.(false);
       setBotToken('');
-      setChatId('');
+      setChatId(SYSTEM_TELEGRAM_CHAT_ID);
       setBotLink(null);
       if (syncToMql5) {
         onUpdateMql5Config({
           ...mql5Config,
           enableTelegram: false,
           telegramBotToken: '',
-          telegramChatId: '',
+          telegramChatId: SYSTEM_TELEGRAM_CHAT_ID,
         });
       }
       setStatusMessage({
@@ -352,27 +421,27 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
       {/* Main Form */}
       <form
         onSubmit={handleSaveOnly}
-        className="lg:col-span-7 rounded-xl border border-slate-200 bg-white p-6 space-y-5"
+        className="lg:col-span-7 rounded-xl border border-slate-200/90 bg-white p-6 space-y-5"
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div>
             <h2 className="text-base font-semibold text-slate-900">
-              Telegram Configuration
+              ตั้งค่าการเชื่อมต่อ Telegram Bot
             </h2>
-            <p className="mt-0.5 text-xs text-slate-500">
-              แจ้งเตือนสัญญาณ AO ตัดเส้น 0 (M5) เข้าแชท Telegram โดยตรง
+            <p className="mt-1 text-[13px] text-slate-600">
+              แจ้งเตือน ท่า T01 (Step 1 M15 CISD → Step 2 M1 Stoch ปิด &lt; 20 / &gt; 80 พร้อมรีเซ็ตรอบ 2) เข้าแชท Telegram อัตโนมัติ
             </p>
           </div>
           <span
-            className={`inline-flex items-center gap-1.5 text-xs font-medium ${
-              isConfigured ? 'text-emerald-700' : 'text-amber-600'
+            className={`inline-flex items-center gap-1.5 text-[13px] font-semibold ${
+              isConfigured ? 'text-emerald-700' : 'text-amber-700'
             }`}
           >
-            <span
-              className={`h-2 w-2 rounded-full ${
-                isConfigured ? 'bg-emerald-500' : 'bg-amber-400'
-              }`}
-            />
+            {isConfigured ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            ) : (
+              <AlertCircle className="h-4 w-4 text-amber-500" />
+            )}
             {isConfigured
               ? 'เชื่อมต่อแล้ว'
               : hasSavedToken
@@ -381,11 +450,23 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
           </span>
         </div>
 
+        {hasSavedToken && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3.5 py-2.5 text-xs text-emerald-900">
+            <span className="font-semibold">ใช้รหัสเดิมที่บันทึกไว้บนเซิร์ฟเวอร์แล้ว:</span>{' '}
+            <span className="font-mono">
+              Token {savedTokenMasked || '••••••••'} · Chat ID {trimmedChatId || '-'}
+            </span>
+            <span className="block mt-0.5 text-emerald-700">
+              ไม่ต้องกรอกรหัสใหม่ สามารถกดปุ่ม “บันทึกและทดสอบส่งข้อความ” ด้านล่างเพื่อทดสอบเข้าแชทได้ทันที
+            </span>
+          </div>
+        )}
+
         {/* Bot Token */}
         <div className="space-y-1.5">
           <label
             htmlFor="telegram-config-token"
-            className="block text-xs font-medium text-slate-700"
+            className="block text-[13px] font-medium text-slate-700"
           >
             Telegram Bot Token
           </label>
@@ -398,58 +479,52 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
               onChange={(e) => setBotToken(e.target.value)}
               placeholder={
                 hasSavedToken
-                  ? 'บันทึก Token ไว้บนเซิร์ฟเวอร์แล้ว (กรอกใหม่เพื่อเปลี่ยน)'
+                  ? `ใช้ Bot Token เดิม (${savedTokenMasked || 'บันทึกไว้แล้ว'}) — กรอกใหม่เฉพาะเมื่อต้องการเปลี่ยน`
                   : 'เช่น 123456789:ABCdefGHIjklMNOpqrsTUVwxyz'
               }
-              className="h-10 w-full rounded-lg border border-slate-200 pl-3 pr-10 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+              className="h-10 w-full rounded-lg border border-slate-200 pl-3.5 pr-10 font-mono text-[13px] text-slate-900 focus:border-blue-600 focus:outline-none"
             />
             <button
               type="button"
               onClick={() => setShowToken((s) => !s)}
               aria-label={showToken ? 'ซ่อน Token' : 'แสดง Token'}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:text-slate-700"
             >
               {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
         </div>
 
-        {/* Chat ID + Auto Detect */}
-        <div className="space-y-1.5">
+        {/* Chat ID + Group Verification */}
+        <div className="space-y-2">
           <label
             htmlFor="telegram-config-chat-id"
-            className="block text-xs font-medium text-slate-700"
+            className="block text-[13px] font-medium text-slate-700"
           >
-            Telegram Chat ID (ตัวเลขบัญชีผู้ใช้ของคุณ ไม่ใช่ชื่อบอท)
+            Telegram Chat ID (แชทแจ้งเตือนหลักของระบบ)
           </label>
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="flex flex-col gap-2.5 sm:flex-row">
             <input
               id="telegram-config-chat-id"
               type="text"
-              autoComplete="off"
-              value={chatId}
-              onChange={(e) => setChatId(e.target.value)}
-              placeholder="เช่น 987654321"
-              className={`h-10 flex-1 rounded-lg border px-3 font-mono text-xs text-slate-900 focus:outline-none ${
-                isLikelyInvalidChatId
-                  ? 'border-amber-400 bg-amber-50/40 focus:border-amber-500'
-                  : 'border-slate-200 focus:border-blue-600'
-              }`}
+              readOnly
+              value={SYSTEM_TELEGRAM_CHAT_ID}
+              className="h-10 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3.5 font-mono text-[13px] font-semibold text-slate-900 focus:border-blue-600 focus:outline-none"
             />
             <button
               type="button"
               disabled={isBusy || (!botToken.trim() && !hasSavedToken)}
               onClick={() => void handleAutoDetectChatId()}
-              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-4 text-[13px] font-medium text-blue-700 whitespace-nowrap transition-colors hover:bg-blue-100 disabled:opacity-50"
             >
-              <Search className="h-3.5 w-3.5" />
-              ดึง Chat ID อัตโนมัติ
+              <Search className="h-4 w-4" />
+              ตรวจสอบสิทธิ์แชท
             </button>
           </div>
 
           {isLikelyInvalidChatId && (
-            <p className="flex items-center gap-1.5 text-[11px] text-amber-700">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            <p className="flex items-center gap-1.5 text-xs text-amber-700">
+              <AlertCircle className="h-4 w-4 shrink-0" />
               <span>
                 “{trimmedChatId}” ไม่ใช่ Chat ID ตัวเลข — ให้เปิดแชทบอทใน Telegram กด <strong>Start</strong> แล้วกด <strong>ดึง Chat ID อัตโนมัติ</strong>
               </span>
@@ -457,7 +532,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
           )}
 
           {botLink && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-2.5 text-xs text-sky-900">
               <span>
                 1. กดเปิดแชทบอท{' '}
                 <span className="font-mono font-semibold">
@@ -470,19 +545,19 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
                 href={botLink.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 rounded-md bg-sky-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-sky-700"
+                className="inline-flex items-center gap-1 rounded-md bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700"
               >
                 เปิดแชทบอท
-                <ExternalLink className="h-3 w-3" />
+                <ExternalLink className="h-3.5 w-3.5" />
               </a>
             </div>
           )}
         </div>
 
         {/* Delivery Mode: Fallback vs Always */}
-        <div className="space-y-2">
-          <label className="block text-xs font-medium text-slate-700">
-            เงื่อนไขการส่งเข้า Telegram
+        <div className="space-y-2 border-t border-slate-100 pt-5">
+          <label className="block text-[13px] font-medium text-slate-700">
+            เงื่อนไขการส่งข้อความเข้า Telegram
           </label>
           <div className="grid grid-cols-1 gap-1.5 rounded-lg bg-slate-100 p-1 sm:grid-cols-2">
             <button
@@ -508,15 +583,96 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
               ส่งคู่ขนานทุกสัญญาณ (Always)
             </button>
           </div>
-          <p className="text-[11px] text-slate-500">
+          <p className="text-xs leading-relaxed text-slate-500">
             {telegramMode === 'fallback'
               ? `สถานะปัจจุบัน: มีอุปกรณ์ Android Web Push เชื่อมต่ออยู่ ${subscribersCount} เครื่อง (ถ้าส่งเข้ามือถือไม่ได้ ระบบจะสลับส่งเข้า Telegram ทันที)`
-              : 'ส่งข้อความเข้า Telegram ทันทีทุกครั้งที่เกิดสัญญาณ BUY / SELL บน M5'}
+              : 'ส่งข้อความเข้า Telegram ทันทีทุกครั้งที่เกิดสัญญาณ BUY / SELL'}
           </p>
         </div>
 
+        {/* Signal Systems Settings */}
+        <div className="space-y-3 border-t border-slate-100 pt-5">
+          <div className="rounded-lg border border-slate-200/80 bg-slate-50/70 p-3.5 space-y-2">
+            <span className="block text-xs font-semibold text-slate-700">
+              ระบบสัญญาณที่เปิดรับการแจ้งเตือน (CISD M15 &amp; Stoch M1)
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {(['M15'] as const).map((tf) => {
+                const active = cisdTimeframes.includes(tf);
+                return (
+                  <button
+                    key={`tg-cisd-${tf}`}
+                    type="button"
+                    onClick={() => {
+                      const next = active
+                        ? cisdTimeframes.filter((t) => t !== tf)
+                        : [...cisdTimeframes, tf];
+                      setCisdTimeframes(next);
+                      void fetch('/api/monitor/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          m15Enabled: next.length > 0,
+                          cisdTimeframes: next,
+                        }),
+                      }).catch(() => {});
+                    }}
+                    className={`h-8 rounded-md px-3 font-mono text-xs font-semibold transition-colors ${
+                      active
+                        ? 'bg-slate-900 text-white'
+                        : 'border border-slate-200 bg-white text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    CISD {tf}
+                  </button>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !stochM1Enabled;
+                  setStochM1Enabled(next);
+                  void fetch('/api/monitor/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ stochM1Enabled: next }),
+                  }).catch(() => {});
+                }}
+                className={`h-8 rounded-md px-3 font-mono text-xs font-semibold transition-colors ${
+                  stochM1Enabled
+                    ? 'bg-slate-900 text-white'
+                    : 'border border-slate-200 bg-white text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Stoch(15,3,3) M1 (ท่า T01)
+              </button>
+            </div>
+
+            <label className="flex items-start gap-2 pt-1.5 text-xs text-slate-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={m15StandaloneAlerts}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setM15StandaloneAlerts(next);
+                  void fetch('/api/monitor/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ m15StandaloneAlerts: next }),
+                  }).catch(() => {});
+                }}
+                className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+              />
+              <span>
+                แจ้งเตือนตอน M15 CISD จบแยกต่างหากด้วย (ปกติปิด — ระบบจะเตือนเมื่อครบ M15 CISD + M1 Stoch ตามท่า T01)
+              </span>
+            </label>
+          </div>
+        </div>
+
         {/* Optional MQL5 Sync */}
-        <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer pt-1">
+        <label className="flex items-center gap-2.5 text-[13px] text-slate-700 cursor-pointer pt-1">
           <input
             type="checkbox"
             checked={syncToMql5}
@@ -528,7 +684,7 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
 
         {statusMessage && (
           <div
-            className={`flex items-start gap-2 rounded-lg border px-3.5 py-2.5 text-xs ${
+            className={`flex items-start gap-2.5 rounded-lg border px-4 py-3 text-[13px] ${
               statusMessage.type === 'ok'
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
                 : statusMessage.type === 'warn'
@@ -546,21 +702,21 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
         )}
 
         {/* Actions */}
-        <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-slate-100">
+        <div className="flex flex-wrap items-center gap-2.5 pt-4 border-t border-slate-100">
           <button
             type="button"
             disabled={isBusy}
             onClick={() => void handleSaveAndTest()}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-[13px] font-medium text-white whitespace-nowrap transition-colors hover:bg-blue-700 disabled:opacity-50"
           >
-            <Send className="h-3.5 w-3.5" />
+            <Send className="h-4 w-4" />
             บันทึกและทดสอบส่งข้อความ
           </button>
 
           <button
             type="submit"
             disabled={isBusy}
-            className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-white px-4 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            className="inline-flex h-10 items-center rounded-lg border border-slate-200 bg-white px-4 text-[13px] font-medium text-slate-700 whitespace-nowrap transition-colors hover:bg-slate-50 disabled:opacity-50"
           >
             บันทึกการตั้งค่า
           </button>
@@ -570,9 +726,9 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
               type="button"
               disabled={isBusy}
               onClick={() => void handleDisconnect()}
-              className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+              className="ml-auto inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 px-3.5 text-[13px] font-medium text-rose-600 whitespace-nowrap transition-colors hover:bg-rose-50 disabled:opacity-50"
             >
-              <Trash2 className="h-3.5 w-3.5" />
+              <Trash2 className="h-4 w-4" />
               ยกเลิกการเชื่อมต่อ
             </button>
           )}
@@ -581,47 +737,73 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
 
       {/* Right Column: Quick Setup Guide + Recent Server Alerts */}
       <div className="lg:col-span-5 space-y-5">
-        <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
+        <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 space-y-3.5">
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-blue-600" />
-            <h3 className="text-sm font-semibold text-slate-900">
-              วิธีเชื่อมต่อให้ส่งเข้าแชททันที (3 ขั้นตอน)
+            <h3 className="text-[15px] font-semibold text-slate-900">
+              วิธีเชื่อมต่อเข้ากลุ่มแจ้งเตือน (3 ขั้นตอน)
             </h3>
           </div>
-          <ol className="space-y-2 text-xs text-slate-600 list-decimal list-inside">
+          <ol className="space-y-2.5 text-[13px] leading-relaxed text-slate-600 list-decimal list-inside">
             <li>
-              วาง <strong>Bot Token</strong> จาก{' '}
-              <span className="font-mono text-slate-900">@BotFather</span>
+              ใช้ <strong>Bot Token</strong> เดิมที่บันทึกไว้บนเซิร์ฟเวอร์ หรือวาง Token จาก{' '}
+              <span className="font-mono font-medium text-slate-900">@BotFather</span>
             </li>
             <li>
-              เปิดแชทบอทของคุณใน Telegram แล้วกดปุ่ม <strong>Start</strong> 1 ครั้ง (บอทจะส่งข้อความเข้าแชทไม่ได้ถ้ายังไม่เคยกด Start)
+              ระบบล็อกการแจ้งเตือนทั้งหมดเข้าแชท{' '}
+              <span className="font-mono font-semibold text-slate-900">8217822307</span> เพียงแห่งเดียว
             </li>
             <li>
-              กดปุ่ม <strong>ดึง Chat ID อัตโนมัติ</strong> ระบบจะดึงเลข Chat ID ของคุณและทดสอบส่งข้อความให้ทันที
+              กด <strong>ตรวจสอบสิทธิ์แชท</strong> หรือ <strong>บันทึกและทดสอบส่งข้อความ</strong> เพื่อส่งทดสอบเข้าแชททันที
             </li>
           </ol>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-900">
-              ประวัติการแจ้งเตือนจากเซิร์ฟเวอร์
-            </h3>
-            <span className="font-mono text-xs text-slate-400">
-              {events.length} รายการ
-            </span>
+        <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 space-y-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-[15px] font-semibold text-slate-900">
+                ประวัติการแจ้งเตือนจากเซิร์ฟเวอร์
+              </h3>
+              {lastCheckedAt && (
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  เซิร์ฟเวอร์ตรวจกราฟล่าสุด:{' '}
+                  {new Date(lastCheckedAt).toLocaleTimeString('th-TH', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    timeZone: 'Asia/Bangkok',
+                  })}{' '}
+                  น.
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs text-slate-500 tabular-nums">
+                {events.length} รายการ
+              </span>
+              <button
+                type="button"
+                disabled={isCheckingNow}
+                onClick={() => void handleCheckNow()}
+                className="inline-flex h-8 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isCheckingNow ? 'animate-spin' : ''}`} />
+                สแกนกราฟทันที
+              </button>
+            </div>
           </div>
 
           {events.length === 0 ? (
-            <p className="text-xs text-slate-400">
-              ยังไม่มีสัญญาณ AO M5 ใหม่ตั้งแต่เปิดเซิร์ฟเวอร์
+            <p className="text-[13px] text-slate-500">
+              ยังไม่มีสัญญาณปิดแท่งทะลุแนว CISD ใหม่ตั้งแต่เชื่อมต่อรอบล่าสุด
             </p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {events.slice(0, 5).map((ev) => (
+              {events.slice(0, 8).map((ev) => (
                 <li
                   key={ev.id}
-                  className="flex items-center justify-between gap-2 py-2 text-xs"
+                  className="flex items-center justify-between gap-2 py-2.5 text-[13px]"
                 >
                   <div>
                     <div className="flex items-center gap-2">
@@ -630,20 +812,39 @@ export const TelegramConfig: React.FC<TelegramConfigProps> = ({
                           ev.signal === 'BUY' ? 'text-emerald-700' : 'text-rose-700'
                         }`}
                       >
-                        {ev.signal}
+                        {ev.strategy === 'STOCH'
+                          ? `T01 ${ev.signal}${
+                              ev.t01Round && ev.t01Round > 0 ? ` R${ev.t01Round}` : ''
+                            }`
+                          : ev.signal}
                       </span>
                       <span className="font-medium text-slate-900">{ev.symbol}</span>
-                      <span className="font-mono text-slate-500">{ev.price}</span>
+                      <span className="font-mono text-xs text-slate-500">
+                        {ev.strategy === 'STOCH'
+                          ? `M15 CISD + M1 ${ev.signal === 'BUY' ? '<20' : '>80'}`
+                          : `${ev.strategy || 'CISD'} ${ev.timeframe || 'M15'}`}
+                      </span>
+                      <span className="font-mono text-xs text-slate-600 tabular-nums">
+                        {ev.price}
+                        {ev.strategy === 'STOCH' &&
+                        typeof ev.stochK === 'number' &&
+                        Number.isFinite(ev.stochK)
+                          ? ` (${ev.stochK.toFixed(2)})`
+                          : ''}
+                      </span>
                     </div>
-                    <p className="mt-0.5 text-[11px] text-slate-400">{ev.timestamp}</p>
+                    <p className="mt-0.5 text-xs text-slate-500">{ev.timestamp}</p>
+                    {ev.telegramError && (
+                      <p className="mt-0.5 text-[11px] text-rose-600">{ev.telegramError}</p>
+                    )}
                   </div>
-                  <div className="text-right text-[11px] text-slate-500">
+                  <div className="text-right text-xs text-slate-600">
                     {ev.deliveredToTelegram ? (
                       <span className="text-sky-700 font-medium">Telegram ✓</span>
                     ) : ev.deliveredWebPushCount > 0 ? (
                       <span className="text-emerald-700 font-medium">Android Push ✓</span>
                     ) : (
-                      <span>บันทึกแล้ว</span>
+                      <span className="text-amber-700">บันทึกแล้ว</span>
                     )}
                   </div>
                 </li>

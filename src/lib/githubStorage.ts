@@ -4,6 +4,7 @@ export interface SavedGithubConfig {
   githubRepo: string;
   githubBranch: string;
   githubPrivate: boolean;
+  githubUploadAllowed: boolean;
   githubAutoSyncCode: boolean;
   githubSyncSignals: boolean;
 }
@@ -27,6 +28,8 @@ export function loadSavedGithubConfig(): SavedGithubConfig | null {
           ? parsed.githubBranch.trim()
           : 'main',
       githubPrivate: typeof parsed.githubPrivate === 'boolean' ? parsed.githubPrivate : true,
+      githubUploadAllowed:
+        typeof parsed.githubUploadAllowed === 'boolean' ? parsed.githubUploadAllowed : false,
       githubAutoSyncCode:
         typeof parsed.githubAutoSyncCode === 'boolean' ? parsed.githubAutoSyncCode : true,
       githubSyncSignals:
@@ -48,6 +51,7 @@ export function saveGithubConfigLocally(cfg: SavedGithubConfig): void {
         githubRepo: cfg.githubRepo.trim(),
         githubBranch: cfg.githubBranch.trim() || 'main',
         githubPrivate: Boolean(cfg.githubPrivate),
+        githubUploadAllowed: Boolean(cfg.githubUploadAllowed),
         githubAutoSyncCode: Boolean(cfg.githubAutoSyncCode),
         githubSyncSignals: Boolean(cfg.githubSyncSignals),
       })

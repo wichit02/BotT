@@ -93,3 +93,178 @@ export async function sendTestWebPush(endpoint?: string): Promise<void> {
     throw new Error(body.error || 'ส่งแจ้งเตือนทดสอบไม่สำเร็จ');
   }
 }
+
+export async function showLocalMobileNotification(payload: {
+  title: string;
+  body: string;
+  tag?: string;
+  url?: string;
+}): Promise<boolean> {
+  if (typeof window === 'undefined' || !('Notification' in window)) return false;
+  if (Notification.permission !== 'granted') return false;
+
+  const options: NotificationOptions & {
+    renotify?: boolean;
+    vibrate?: number[];
+    data?: { url: string };
+  } = {
+    body: payload.body,
+    icon: '/pwa-192x192.png',
+    badge: '/pwa-192x192.png',
+    tag: payload.tag || `signal-${Date.now()}`,
+    renotify: true,
+    requireInteraction: true,
+    vibrate: [450, 150, 450, 150, 450, 150, 450],
+    data: { url: payload.url || '/' },
+  };
+
+  try {
+    if ('serviceWorker' in navigator) {
+      let reg = await navigator.serviceWorker.getRegistration('/sw.js');
+      if (!reg) {
+        reg = await navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+      }
+      if (reg && 'showNotification' in reg) {
+        await reg.showNotification(payload.title, options);
+        return true;
+      }
+    }
+  } catch {
+    // Fall back to direct Notification constructor below
+  }
+
+  try {
+    new Notification(payload.title, {
+      body: payload.body,
+      icon: '/pwa-192x192.png',
+      tag: options.tag,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface MobileSignalDispatchResult {
+  ok: boolean;
+  deliveredWebPushCount: number;
+  deliveredToNtfy: boolean;
+  deliveredToTelegram: boolean;
+  telegramError?: string;
+  telegramMissingToken?: boolean;
+  localNotificationShown: boolean;
+  deduplicated?: boolean;
+}
+
+export async function dispatchMobileSignalNotification(params: {
+  symbol: string;
+  timeframe: string;
+  strategy: 'AO' | 'CISD' | 'STOCH';
+  signal: 'BUY' | 'SELL';
+  aoPrev: number;
+  aoCurr: number;
+  price: number;
+  cisdLevel?: number | null;
+  stochK?: number | null;
+  t01Round?: number | null;
+  mode: 'live' | 'sim';
+  timestampIso: string;
+  prefix?: string;
+}): Promise<MobileSignalDispatchResult> {
+  let deliveredWebPushCount = 0;
+  let deliveredToNtfy = false;
+  let deliveredToTelegram = false;
+  let telegramError: string | undefined;
+  let telegramMissingToken = false;
+  let deduplicated = false;
+  let skipped = false;
+
+  try {
+    const res = await fetch('/api/monitor/notify-signal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (res.ok) {
+      const data = (await res.json().catch(() => ({}))) as {
+        deliveredWebPushCount?: number;
+        deliveredToNtfy?: boolean;
+        deliveredToTelegram?: boolean;
+        telegramError?: string;
+        telegramMissingToken?: boolean;
+        deduplicated?: boolean;
+        skipped?: boolean;
+      };
+      deliveredWebPushCount = Number(data.deliveredWebPushCount ?? 0);
+      deliveredToNtfy = Boolean(data.deliveredToNtfy);
+      deliveredToTelegram = Boolean(data.deliveredToTelegram);
+      telegramError = data.telegramError;
+      telegramMissingToken = Boolean(data.telegramMissingToken);
+      deduplicated = Boolean(data.deduplicated);
+      skipped = Boolean(data.skipped);
+    }
+  } catch {
+    // Fallback to local mobile notification below if browser permitted
+  }
+
+  // Always show local browser/PWA notification if no Web Push delivered to phone (even when server deduplicated background cycle)
+  let localNotificationShown = false;
+  if (!skipped && (params.mode === 'sim' || deliveredWebPushCount === 0)) {
+    const modePrefix = params.mode === 'sim' ? '[จำลอง] ' : '';
+    let title = '';
+    let body = '';
+    let url = '/';
+
+    if (params.strategy === 'STOCH') {
+      const stochText =
+        typeof params.stochK === 'number' && Number.isFinite(params.stochK)
+          ? params.stochK.toFixed(2)
+          : '-';
+      const roundLabel =
+        params.t01Round && params.t01Round > 0 ? ` (รอบ ${params.t01Round})` : '';
+      title = `${modePrefix}ท่า T01 ${params.signal}${roundLabel}: ${params.symbol}`;
+      body = `${params.symbol} ${
+        params.signal === 'BUY'
+          ? 'M15 CISD ขึ้น + M1 Stoch < 20'
+          : 'M15 CISD ลง + M1 Stoch > 80'
+      } (${stochText}) | ปิด ${params.price.toFixed(2)}`;
+      url = '/?tab=m1';
+    } else if (params.strategy === 'CISD') {
+      title = `${modePrefix}CISD ${params.timeframe} ${params.signal}: ${params.symbol}`;
+      body = `${params.symbol} ${params.timeframe} ${
+        params.signal === 'SELL' ? 'ปิดต่ำกว่าระดับ CISD' : 'ปิดเหนือระดับ CISD'
+      } | ปิด ${params.price.toFixed(2)}${
+        params.cisdLevel != null ? ` (CISD ${params.cisdLevel.toFixed(2)})` : ''
+      }`;
+      url = `/?tf=${params.timeframe}`;
+    } else {
+      title = `${modePrefix}AO ${params.timeframe} ${params.signal}: ${params.symbol}`;
+      body = `${params.symbol} ${params.timeframe} ${
+        params.signal === 'BUY' ? 'AO ตัด 0 ขึ้น' : 'AO ตัด 0 ลง'
+      } | ราคา ${params.price.toFixed(2)}`;
+      url = '/';
+    }
+
+    localNotificationShown = await showLocalMobileNotification({
+      title,
+      body,
+      tag: `${params.mode}-${params.strategy}-${params.timeframe}-${params.symbol}-${params.timestampIso}-${params.signal}`,
+      url,
+    });
+  }
+
+  return {
+    ok:
+      deliveredWebPushCount > 0 ||
+      deliveredToNtfy ||
+      deliveredToTelegram ||
+      localNotificationShown,
+    deliveredWebPushCount,
+    deliveredToNtfy,
+    deliveredToTelegram,
+    telegramError,
+    telegramMissingToken,
+    localNotificationShown,
+    deduplicated,
+  };
+}

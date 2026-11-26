@@ -1,12 +1,12 @@
 {
   "id": "/",
-  "name": "Stoch",
-  "short_name": "Stoch",
-  "description": "ระบบเฝ้ากราฟ Stoch(15,3,3) M5 อัตโนมัติ แจ้งเตือนเมื่อปิดสูงกว่า 80 และต่ำกว่า 20 เข้ามือถือและ Telegram",
+  "name": "ท่า T01",
+  "short_name": "ท่า T01",
+  "description": "ระบบเฝ้ากราฟ US100 CISD M15 และ Stoch(15,3,3) M1 แบบ Real-Time แจ้งเตือนเข้ามือถือและ Telegram ทันที",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "theme_color": "#090d16",
+  "theme_color": "#ffffff",
   "background_color": "#090d16",
   "icons": [
     {
