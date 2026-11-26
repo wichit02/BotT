@@ -27,7 +27,7 @@ import {
   SYSTEM_TELEGRAM_CHAT_ID,
 } from './lib/telegramStorage';
 import { loadSavedGithubConfig } from './lib/githubStorage';
-import cisdLogoImg from './assets/images/cisd_brand_logo_1795106433027.jpg';
+import cstLogoImg from './assets/images/cst_brand_logo_1795675963467.jpg';
 
 type ActiveSection =
   | 't01'
@@ -248,7 +248,7 @@ export default function App() {
         {!isWebMode && (
           <header className="border-b border-slate-200/80 bg-white">
             <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 lg:gap-6 px-4 py-3.5 sm:px-6 lg:px-8">
-              {/* Zone 1: Brand Logo & ท่า T01 wordmark */}
+              {/* Zone 1: Brand Logo & CST wordmark */}
               <a
                 href="#top"
                 onClick={(e) => {
@@ -258,12 +258,12 @@ export default function App() {
                 className="inline-flex items-center gap-2.5 text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
               >
                 <img
-                  src={cisdLogoImg}
-                  alt="โลโก้ ท่า T01"
+                  src={cstLogoImg}
+                  alt="โลโก้ CST"
                   referrerPolicy="no-referrer"
-                  className="h-8 w-8 rounded-lg object-cover ring-1 ring-slate-900/15 shadow-xs"
+                  className="h-9 w-9 rounded-xl bg-white object-cover ring-1 ring-slate-200 shadow-xs"
                 />
-                <span>ท่า T01</span>
+                <span>CST</span>
               </a>
 
               {/* Zone 2: concise single-line nav links */}
@@ -387,14 +387,14 @@ export default function App() {
               <div>
                 <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
                   {activeSection === 't01'
-                    ? 'ท่า T01 · กราฟคู่ M15 CISD + M1 Stoch(15,3,3)'
+                    ? 'CST · กราฟคู่ M15 CISD + M1 Stoch(15,3,3)'
                     : activeSection === 'm1'
-                    ? 'ท่า T01 · Stoch(15,3,3) M1'
+                    ? 'CST · Stoch(15,3,3) M1'
                     : activeSection === 'mtf'
-                    ? 'สรุปสถานะ ท่า T01 (M15 CISD · M1 Stoch)'
+                    ? 'CST · สรุปสถานะ M15 CISD & M1 Stoch'
                     : activeSection === 'telegram'
-                    ? 'เชื่อมต่อ Telegram แจ้งเตือน ท่า T01'
-                    : `ท่า T01 · CISD Timeframe ${cisdTimeframe}`}
+                    ? 'เชื่อมต่อ Telegram แจ้งเตือน CST'
+                    : `CST · CISD Timeframe ${cisdTimeframe}`}
                 </h1>
                 <p className="mt-1.5 text-[13px] leading-relaxed text-slate-600">
                   {SECTION_DESCRIPTIONS[activeSection]}
@@ -565,14 +565,14 @@ export default function App() {
         {!isWebMode && (
           <footer className="border-t border-slate-200/80 bg-white py-5">
             <div className="mx-auto flex max-w-6xl items-center justify-between px-4 text-xs text-slate-500 sm:px-6 lg:px-8">
-              <span className="inline-flex items-center gap-2 font-medium text-slate-700">
+              <span className="inline-flex items-center gap-2 font-semibold text-slate-800">
                 <img
-                  src={cisdLogoImg}
-                  alt="โลโก้ ท่า T01"
+                  src={cstLogoImg}
+                  alt="โลโก้ CST"
                   referrerPolicy="no-referrer"
-                  className="h-5 w-5 rounded object-cover ring-1 ring-slate-900/10"
+                  className="h-6 w-6 rounded-md bg-white object-cover ring-1 ring-slate-200"
                 />
-                ท่า T01
+                CST
               </span>
               <span>US100 · CISD M15 · Stoch(15,3,3) M1</span>
             </div>
