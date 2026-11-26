@@ -1118,25 +1118,25 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
     <section className={isCombinedTop ? 'space-y-3' : 'space-y-6'}>
       {/* Compact Visual Brand Card (Studio/Preview mode only; hidden on deployed live web) */}
       {!isWebMode && (
-        <div className="rounded-2xl border border-slate-200/90 bg-white text-slate-900 shadow-xs">
+        <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0e1525] text-slate-900 dark:text-slate-100 shadow-xs">
           <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
             <div className="flex items-center gap-3.5">
               <img
                 src={cstLogoImg}
                 alt="โลโก้ CST"
                 referrerPolicy="no-referrer"
-                className="h-12 w-12 shrink-0 rounded-xl bg-white object-cover ring-1 ring-slate-200 shadow-xs"
+                className="h-12 w-12 shrink-0 rounded-xl bg-white object-cover ring-1 ring-slate-200 dark:ring-slate-700 shadow-xs"
               />
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold tracking-tight text-slate-900 sm:text-lg">
+                  <h2 className="text-base font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-lg">
                     {alertsDisabled ? `CST · กราฟ ${activeTimeframe}` : 'CST'}
                   </h2>
                   <span
                     className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ring-1 ${
                       alertsDisabled
-                        ? 'bg-sky-50 text-sky-700 ring-sky-200'
-                        : 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                        ? 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 ring-sky-200 dark:ring-sky-500/30'
+                        : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 ring-emerald-200 dark:ring-emerald-500/30'
                     }`}
                   >
                     <span
@@ -1147,15 +1147,15 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                     {alertsDisabled ? `${activeTimeframe} ดูกราฟ (ไม่แจ้งเตือน)` : 'LIVE'}
                   </span>
                 </div>
-                <p className="mt-0.5 text-xs text-slate-600">
+                <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
                   {alertsDisabled
                     ? `อัปเดตกราฟ US100 ${activeTimeframe} แบบ Real-Time ทุก 2 วินาที (ปิดการแจ้งเตือนเฉพาะหน้านี้)`
                     : 'สแกน US100 M15 + M1 ทุก 2 วินาที · ส่งแจ้งเตือน Telegram (8217822307) & มือถือ'}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-xs text-slate-700 font-mono tabular-nums">
-              <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+            <div className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 font-mono tabular-nums">
+              <span className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-2.5 py-1.5">
                 US100Cash# · {activeTimeframe}
               </span>
             </div>
@@ -1164,20 +1164,20 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
       )}
 
       {/* Control Toolbar */}
-      <div className="flex flex-col gap-3.5 rounded-xl border border-slate-200/90 bg-white p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-3.5 rounded-xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0e1525] p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-3.5">
           {/* Live vs Sim Switch */}
-          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1">
+          <div className="flex items-center gap-1 rounded-lg bg-slate-100 dark:bg-slate-900 p-1">
             <button
               type="button"
               onClick={() => handleChangeFeedMode('live')}
               className={`inline-flex h-9 items-center gap-1.5 rounded-md px-3.5 text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors ${
                 feedMode === 'live'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
-              <Radio className="h-3.5 w-3.5 text-emerald-600" />
+              <Radio className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
               กราฟจริง {activeTimeframe}
             </button>
             <button
@@ -1185,8 +1185,8 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
               onClick={() => handleChangeFeedMode('sim')}
               className={`h-9 rounded-md px-3.5 text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors ${
                 feedMode === 'sim'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
               จำลอง {activeTimeframe}
@@ -1194,12 +1194,12 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
           </div>
 
           {/* Unboxed Asset Metadata */}
-          <div className="flex items-center gap-2 text-[13px] text-slate-600">
-            <span className="font-semibold text-slate-900">US100</span>
-            <span aria-hidden="true" className="text-slate-300">·</span>
-            <span className="font-medium text-amber-700">{activeTimeframe} · CISD</span>
-            <span aria-hidden="true" className="text-slate-300">·</span>
-            <span className="text-slate-500">
+          <div className="flex items-center gap-2 text-[13px] text-slate-600 dark:text-slate-400">
+            <span className="font-semibold text-slate-900 dark:text-slate-100">US100</span>
+            <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">·</span>
+            <span className="font-medium text-amber-700 dark:text-amber-400">{activeTimeframe} · CISD</span>
+            <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">·</span>
+            <span className="text-slate-500 dark:text-slate-400">
               {alertsDisabled ? 'ดูกราฟอย่างเดียว (ไม่แจ้งเตือน)' : spec.label}
             </span>
           </div>
@@ -1208,7 +1208,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
             <button
               type="button"
               onClick={onOpenStatusWindow}
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 whitespace-nowrap shrink-0 transition-colors hover:bg-blue-100"
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-950/50 px-3 text-xs font-semibold text-blue-700 dark:text-blue-300 whitespace-nowrap shrink-0 transition-colors hover:bg-blue-100 dark:hover:bg-blue-900/60"
             >
               <LayoutGrid className="h-3.5 w-3.5" />
               สถานะ M15/M1
@@ -1223,7 +1223,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                 aria-label="ทิศทางแจ้งเตือน CISD"
                 value={directionFilter}
                 onChange={(e) => void handleDirectionChange(e.target.value as AlertDirection)}
-                className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-[13px] font-medium text-slate-700 focus:border-blue-600 focus:outline-none"
+                className="h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-[13px] font-medium text-slate-700 dark:text-slate-200 focus:border-blue-600 focus:outline-none"
               >
                 <option value="both">เตือนทั้งขาขึ้น & ขาลง</option>
                 <option value="sell_only">เฉพาะปิดต่ำกว่า CISD (SELL)</option>
@@ -1242,7 +1242,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                     })
                   }
                   disabled={isLoadingLive}
-                  className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-[13px] font-medium text-slate-700 whitespace-nowrap shrink-0 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 text-[13px] font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
                 >
                   <RefreshCw
                     className={`h-3.5 w-3.5 ${isLoadingLive ? 'animate-spin' : ''}`}
@@ -1278,8 +1278,8 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                   }}
                   className={`inline-flex h-10 items-center gap-1.5 rounded-lg px-3.5 text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors ${
                     isPlaying
-                      ? 'bg-slate-900 text-white hover:bg-slate-800'
-                      : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                      ? 'bg-slate-900 dark:bg-blue-600 text-white hover:bg-slate-800 dark:hover:bg-blue-700'
+                      : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
                   }`}
                 >
                   {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
@@ -1293,7 +1293,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                     advanceBar();
                   }}
                   aria-label={`แท่งถัดไป ${activeTimeframe}`}
-                  className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-[13px] font-medium text-slate-700 whitespace-nowrap shrink-0 transition-colors hover:bg-slate-50"
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 text-[13px] font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
                 >
                   <SkipForward className="h-3.5 w-3.5" />
                   ถัดไป
@@ -1309,7 +1309,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                     setSeriesState(generateInitialCisdSeries(symbol, activeTimeframe));
                   }}
                   aria-label={`รีเซ็ตกราฟ ${activeTimeframe}`}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-800"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-100"
                 >
                   <RotateCcw className="h-4 w-4" />
                 </button>
@@ -1328,12 +1328,12 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                   aria-label="สลับเสียงเตือน 10 วินาที"
                   className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3.5 text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors ${
                     soundEnabled
-                      ? 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                      : 'border-slate-200 bg-slate-100 text-slate-500'
+                      ? 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
+                      : 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/50 text-slate-500 dark:text-slate-500'
                   }`}
                 >
                   {soundEnabled ? (
-                    <Volume2 className="h-4 w-4 text-blue-600" />
+                    <Volume2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
                   ) : (
                     <VolumeX className="h-4 w-4" />
                   )}
@@ -1344,7 +1344,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                   type="button"
                   onClick={handleTestSound}
                   aria-label="ทดสอบเสียงเตือน"
-                  className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50/70 px-3.5 text-[13px] font-medium text-blue-700 whitespace-nowrap shrink-0 transition-colors hover:bg-blue-100"
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-blue-200 dark:border-blue-500/30 bg-blue-50/70 dark:bg-blue-950/50 px-3.5 text-[13px] font-medium text-blue-700 dark:text-blue-300 whitespace-nowrap shrink-0 transition-colors hover:bg-blue-100 dark:hover:bg-blue-900/60"
                 >
                   <Bell className="h-3.5 w-3.5" />
                   ทดสอบเสียง
@@ -1357,8 +1357,8 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                   aria-label="เปิดแจ้งเตือนเข้ามือถือ"
                   className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3.5 text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors disabled:opacity-60 ${
                     mobileNotifyReady
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                      ? 'border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
                   }`}
                 >
                   <Smartphone className="h-3.5 w-3.5" />
@@ -1371,8 +1371,8 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                   aria-label="เปิดหน้าเชื่อมต่อ Telegram"
                   className={`inline-flex h-10 items-center gap-1.5 rounded-lg border px-3.5 text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors ${
                     telegramSyncedReady
-                      ? 'border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100'
-                      : 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                      ? 'border-sky-200 dark:border-sky-500/30 bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60'
+                      : 'border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60'
                   }`}
                 >
                   <Send className="h-3.5 w-3.5" />
@@ -1396,9 +1396,9 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
       </div>
 
       {!alertsDisabled && !isWebMode && telegramSyncedReady === false && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-950/45 px-4 py-3 text-xs text-amber-900 dark:text-amber-200">
           <div className="flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
+            <AlertCircle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
             <span>
               <strong>ยังไม่ได้ใส่ Telegram Bot Token บนเซิร์ฟเวอร์</strong> (แชท{' '}
               <span className="font-mono font-semibold">8217822307</span> พร้อมรับข้อความแล้ว — กรุณาบันทึก Bot Token 1 ครั้งเพื่อให้แจ้งเตือนจริงทั้งกราฟจริงและจำลอง)
@@ -1419,16 +1419,16 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
         <div
           className={`flex flex-wrap items-start justify-between gap-3 rounded-xl border px-4 py-3 text-xs shadow-xs ${
             alertToast.signal === 'BUY'
-              ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
-              : 'border-amber-200 bg-amber-50 text-amber-950'
+              ? 'border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950/45 text-emerald-950 dark:text-emerald-100'
+              : 'border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-950/45 text-amber-950 dark:text-amber-100'
           }`}
         >
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2 font-semibold text-[13px]">
               {alertToast.signal === 'BUY' ? (
-                <ArrowUpRight className="h-4 w-4 text-emerald-700" />
+                <ArrowUpRight className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
               ) : (
-                <ArrowDownRight className="h-4 w-4 text-amber-700" />
+                <ArrowDownRight className="h-4 w-4 text-amber-700 dark:text-amber-400" />
               )}
               <span>
                 {alertToast.mode === 'sim' ? '[จำลอง] ' : '[กราฟจริง] '}
@@ -1440,8 +1440,8 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
               <span className="inline-flex items-center gap-1">
                 {alertToast.telegramDelivered ? (
                   <>
-                    <CheckCircle2 className="h-3.5 w-3.5 text-sky-600" />
-                    <span className="text-sky-800 font-medium">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+                    <span className="text-sky-800 dark:text-sky-300 font-medium">
                       ส่งเข้า Telegram (8217822307) แล้ว
                     </span>
                   </>
@@ -1449,19 +1449,19 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                   <button
                     type="button"
                     onClick={onGoToTelegram}
-                    className="inline-flex items-center gap-1 font-semibold text-rose-700 underline"
+                    className="inline-flex items-center gap-1 font-semibold text-rose-700 dark:text-rose-400 underline"
                   >
                     <AlertCircle className="h-3.5 w-3.5" />
                     ยังไม่ได้ใส่ Bot Token (คลิกเพื่อตั้งค่า Telegram)
                   </button>
                 ) : (
-                  <span className="text-slate-600">
+                  <span className="text-slate-600 dark:text-slate-400">
                     {alertToast.telegramError || 'กำลังส่งเข้า Telegram...'}
                   </span>
                 )}
               </span>
-              <span className="text-slate-300">·</span>
-              <span className="inline-flex items-center gap-1 text-slate-700">
+              <span className="text-slate-300 dark:text-slate-700">·</span>
+              <span className="inline-flex items-center gap-1 text-slate-700 dark:text-slate-300">
                 <Smartphone className="h-3.5 w-3.5" />
                 {alertToast.mobileDelivered
                   ? 'เด้งแจ้งเตือนมือถือแล้ว'
@@ -1473,7 +1473,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
             type="button"
             onClick={() => setAlertToast(null)}
             aria-label="ปิดการแจ้งเตือน"
-            className="rounded p-1 text-slate-500 hover:bg-black/5 hover:text-slate-800"
+            className="rounded p-1 text-slate-500 dark:text-slate-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-slate-800 dark:hover:text-slate-100"
           >
             <X className="h-4 w-4" />
           </button>
@@ -1481,13 +1481,13 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
       )}
 
       {mobileNotifyHint && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+        <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-950/45 px-4 py-2.5 text-xs text-amber-800 dark:text-amber-200">
           {mobileNotifyHint}
         </div>
       )}
 
       {liveError && feedMode === 'live' && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-800">
+        <div className="rounded-lg border border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-950/45 px-4 py-2.5 text-xs text-rose-800 dark:text-rose-200">
           {liveError}
         </div>
       )}
@@ -1930,14 +1930,14 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
 
       {/* Server Auto-Monitor US100 M15 + One-Tap Mobile Push Card (hidden on M5 silent view & combined split view) */}
       {!isCombinedTop && (alertsDisabled ? (
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0e1525] p-4 sm:p-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
             <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-sky-500" />
             <div>
-              <p className="text-sm font-semibold text-slate-900">
+              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 หน้ากราฟ US100 {activeTimeframe} (ดูกราฟและแนว CISD อย่างเดียว · ไม่ส่งแจ้งเตือน)
               </p>
-              <p className="mt-0.5 text-xs text-slate-500">
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                 หน้านี้ปิดเสียงเตือน, Telegram และ Push Notification ทั้งหมด — ระบบเฝ้ากราฟแจ้งเตือนอัตโนมัติยังทำงานปกติที่ Timeframe M15
               </p>
             </div>
@@ -1946,14 +1946,14 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
             <button
               type="button"
               onClick={onGoToM15}
-              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-4 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100"
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-950/50 px-4 text-xs font-semibold text-blue-700 dark:text-blue-300 transition-colors hover:bg-blue-100 dark:hover:bg-blue-900/60"
             >
               กลับไปหน้า M15 (มีแจ้งเตือน)
             </button>
           )}
         </div>
       ) : (
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 space-y-3.5">
+        <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0e1525] p-4 sm:p-5 space-y-3.5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 min-w-0">
               <span
@@ -1961,7 +1961,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                   serverM15Enabled ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-500/50'
                 }`}
               />
-              <span className="text-sm font-semibold text-slate-900 truncate">
+              <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
                 เซิร์ฟเวอร์เฝ้ากราฟ US100 M15 (Step 1 ท่า T01)
               </span>
             </div>
@@ -1973,8 +1973,8 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
               title="แตะเพื่อสลับเปิด/พักชั่วคราว การเฝ้ากราฟ M15 บนเซิร์ฟเวอร์"
               className={`shrink-0 text-xs font-medium transition-colors disabled:opacity-50 ${
                 serverM15Enabled
-                  ? 'text-emerald-700 hover:text-emerald-800'
-                  : 'text-slate-500 hover:text-slate-800'
+                  ? 'text-emerald-700 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-300'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
             >
               {togglingServerMonitor
@@ -1985,7 +1985,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
             </button>
           </div>
 
-          <div className="rounded-xl bg-[#0d1629] px-3.5 py-3 text-xs leading-relaxed text-slate-200">
+          <div className="rounded-xl bg-[#0d1629] dark:bg-[#080d1a] dark:border dark:border-slate-800 px-3.5 py-3 text-xs leading-relaxed text-slate-200">
             {serverM15Standalone ? (
               'เปิดโหมดแจ้งเตือน M15 CISD แยกต่างหาก + ส่งต่อให้ M1 Stoch ท่า T01'
             ) : t01Bias === 'BUY' ? (
@@ -2028,14 +2028,14 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
           </button>
 
           {mobileNotifySuccess && (
-            <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950/45 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-200">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
               <span>{mobileNotifySuccess}</span>
             </div>
           )}
 
           {mobileNotifyHint && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-950/45 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
               <span>{mobileNotifyHint}</span>
               {typeof window !== 'undefined' && window.self !== window.top && (
                 <a
@@ -2050,7 +2050,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
             </div>
           )}
 
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
             <span>
               {serverSubscribersCount > 0
                 ? `อุปกรณ์รับ Push เชื่อมต่ออยู่ ${serverSubscribersCount} เครื่อง`
@@ -2074,32 +2074,32 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
 
       {/* 4-Column Summary Strip (shown in Studio mode only) */}
       {!isWebMode && !isCombinedTop && (
-        <div className="grid grid-cols-2 gap-4 rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 lg:grid-cols-4 lg:gap-0 lg:divide-x lg:divide-slate-100">
+        <div className="grid grid-cols-2 gap-4 rounded-xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0e1525] p-5 sm:p-6 lg:grid-cols-4 lg:gap-0 lg:divide-x lg:divide-slate-100 dark:lg:divide-slate-800">
           <div className="lg:pr-6">
-            <p className="text-xs font-medium text-slate-500">สินทรัพย์ · ไทม์เฟรม</p>
-            <p className="mt-1.5 text-lg font-semibold text-slate-900 tabular-nums">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">สินทรัพย์ · ไทม์เฟรม</p>
+            <p className="mt-1.5 text-lg font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
               {symbol} · {activeTimeframe}
             </p>
           </div>
           <div className="lg:px-6">
-            <p className="text-xs font-medium text-slate-500">ระดับ CISD เตือนขาลง (SELL)</p>
-            <p className="mt-1.5 font-mono text-lg font-semibold text-amber-600 tabular-nums">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">ระดับ CISD เตือนขาลง (SELL)</p>
+            <p className="mt-1.5 font-mono text-lg font-semibold text-amber-600 dark:text-amber-400 tabular-nums">
               {seriesState.latestBearCisdLevel !== null
                 ? seriesState.latestBearCisdLevel.toFixed(spec.digits)
                 : 'รอโครงสร้างใหม่'}
             </p>
           </div>
           <div className="lg:px-6">
-            <p className="text-xs font-medium text-slate-500">ระดับ CISD เตือนขาขึ้น (BUY)</p>
-            <p className="mt-1.5 font-mono text-lg font-semibold text-emerald-700 tabular-nums">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">ระดับ CISD เตือนขาขึ้น (BUY)</p>
+            <p className="mt-1.5 font-mono text-lg font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums">
               {seriesState.latestBullCisdLevel !== null
                 ? seriesState.latestBullCisdLevel.toFixed(spec.digits)
                 : 'รอโครงสร้างใหม่'}
             </p>
           </div>
           <div className="lg:pl-6">
-            <p className="text-xs font-medium text-slate-500">จุดเปลี่ยนเทรนด์บนกราฟ</p>
-            <p className="mt-1.5 text-lg font-semibold text-slate-900 tabular-nums">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">จุดเปลี่ยนเทรนด์บนกราฟ</p>
+            <p className="mt-1.5 text-lg font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
               {detectedInVisible} ครั้ง
             </p>
           </div>
@@ -2108,16 +2108,18 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
 
       {/* XM MT5 Live Bridge Card (shown in Studio/preview mode only; hidden on deployed live web) */}
       {!isWebMode && !isCombinedTop && (
-        <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6">
+        <div className="rounded-xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0e1525] p-5 sm:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1.5 max-w-2xl">
               <div className="flex flex-wrap items-center gap-2.5">
-                <h3 className="text-sm font-semibold text-slate-900">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   XM MT5 Live Bridge (XM_MT5_LiveBridge_EA.mq5)
                 </h3>
                 <span
                   className={`inline-flex items-center gap-1.5 text-xs font-semibold ${
-                    xmBridgeStatus?.connected ? 'text-emerald-700' : 'text-sky-700'
+                    xmBridgeStatus?.connected
+                      ? 'text-emerald-700 dark:text-emerald-400'
+                      : 'text-sky-700 dark:text-sky-400'
                   }`}
                 >
                   <span
@@ -2138,10 +2140,10 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                     : 'กำลังเชื่อมต่อฟีดตลาด Forex MT5 CFD...'}
                 </span>
               </div>
-              <p className="text-xs leading-relaxed text-slate-600">
+              <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-400">
                 เนื่องจากเซิร์ฟเวอร์ภายนอกไม่สามารถล็อกอินเข้าบัญชี MT5 ของโบรกเกอร์ XM โดยตรงได้หากไม่มีเทอร์มินัล MT5 รันอยู่ — หากต้องการราคาและสเปรดตรงกับ{' '}
-                <span className="font-mono font-semibold text-slate-800">US100Cash#</span> บน XM MT5 ของคุณ 100% สามารถดาวน์โหลด{' '}
-                <span className="font-mono font-medium text-slate-800">XM_MT5_LiveBridge_EA.mq5</span>{' '}
+                <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">US100Cash#</span> บน XM MT5 ของคุณ 100% สามารถดาวน์โหลด{' '}
+                <span className="font-mono font-medium text-slate-800 dark:text-slate-200">XM_MT5_LiveBridge_EA.mq5</span>{' '}
                 ไปติดบนกราฟ MT5 เพื่อส่งแท่ง M1, M15 และราคา Bid เข้าเว็บทุก 2 วินาที (หากไม่ได้ติด ระบบจะใช้ฟีด Forex MT5 CFD แบบ Real-Time ให้อัตโนมัติ)
               </p>
             </div>
@@ -2150,7 +2152,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
               <a
                 href="/api/mt5/bridge-ea"
                 download="XM_MT5_LiveBridge_EA.mq5"
-                className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white whitespace-nowrap transition-colors hover:bg-slate-800"
+                className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-slate-900 dark:bg-blue-600 px-4 text-xs font-semibold text-white whitespace-nowrap transition-colors hover:bg-slate-800 dark:hover:bg-blue-700"
               >
                 <Download className="h-4 w-4" />
                 ดาวน์โหลด XM_MT5_LiveBridge_EA.mq5
@@ -2164,11 +2166,11 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
                   setCopiedBridgeUrl(true);
                   window.setTimeout(() => setCopiedBridgeUrl(false), 1800);
                 }}
-                className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700 whitespace-nowrap transition-colors hover:bg-slate-50"
+                className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 text-xs font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
               >
                 {copiedBridgeUrl ? (
                   <>
-                    <Check className="h-3.5 w-3.5 text-emerald-600" />
+                    <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                     คัดลอก URL แล้ว
                   </>
                 ) : (
