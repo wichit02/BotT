@@ -8,9 +8,9 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('push', (event) => {
   let payload = {
-    title: 'Stoch M5 Alert',
+    title: 'Stoch Alert',
     body: 'ตรวจพบสัญญาณ Stoch(15,3,3) ปิดทะลุระดับ 80 / 20',
-    tag: 'stoch-m5-signal',
+    tag: 'stoch-signal',
     url: '/',
   };
 

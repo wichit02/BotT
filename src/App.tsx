@@ -316,7 +316,7 @@ export default function App() {
                 {isWebMode ? 'Stoch' : 'Stoch · กราฟ M5 / M1 (15,3,3)'}
               </h1>
               <p className="mt-1 text-xs text-slate-500">
-                MetaTrader 5 · US100 M5 / M1 · Stoch(15,3,3) เส้นสีฟ้าเส้นเดียว · แจ้งเตือนเฉพาะ M5 (ปิด &gt; 80 / &lt; 20)
+                MetaTrader 5 · US100 M5 / M1 · Stoch(15,3,3) เส้นสีฟ้าเส้นเดียว · แจ้งเตือน M5 &amp; M1 (ปิด &gt; 80 / &lt; 20)
               </p>
             </div>
           </div>
@@ -368,7 +368,7 @@ export default function App() {
         <footer className="border-t border-slate-200/80 bg-white py-4">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-4 text-xs text-slate-400 sm:px-6 lg:px-8">
             <span>Stoch</span>
-            <span>US100 · M5 (US 100 Index Cash)</span>
+            <span>US100 · M5 / M1 (US 100 Index Cash)</span>
           </div>
         </footer>
       )}
