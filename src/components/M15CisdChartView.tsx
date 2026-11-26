@@ -1607,7 +1607,13 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
               role="img"
               aria-label={`กราฟราคา US100 Timeframe ${activeTimeframe} พร้อมเส้นระดับ CISD และสัญลักษณ์เมื่อปิดทะลุ CISD`}
             >
-              <rect x={0} y={0} width={svgW} height={totalH} fill="#000000" />
+              <rect
+                x={0}
+                y={0}
+                width={svgW}
+                height={totalH}
+                fill={isCombinedTop ? '#05080f' : '#000000'}
+              />
 
               {!isWebMode && (
                 <>

@@ -54,6 +54,7 @@ interface StochM1ChartViewProps {
   onGoToTelegram: () => void;
   telegramSyncedReady?: boolean | null;
   isWebMode?: boolean;
+  splitRole?: 'combined_bottom';
 }
 
 export interface T01StateSnapshot {
@@ -132,7 +133,9 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
   onGoToTelegram,
   telegramSyncedReady,
   isWebMode = false,
+  splitRole,
 }) => {
+  const isCombinedBottom = splitRole === 'combined_bottom';
   const symbol: TradingSymbol = 'US100';
   const spec = SYMBOL_SPECS[symbol];
 
@@ -1192,9 +1195,13 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
     feedMode === 'live' ? serverLastSide ?? seriesState.currentSide : seriesState.currentSide;
 
   return (
-    <section className="space-y-5">
+    <section className={isCombinedBottom ? 'flex flex-col gap-4' : 'space-y-5'}>
       {/* Control Toolbar matching clean mobile/desktop layout */}
-      <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 space-y-3.5">
+      <div
+        className={`${
+          isCombinedBottom ? 'order-3 ' : ''
+        }rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 space-y-3.5`}
+      >
         <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Live vs Sim Switch (M1 only, no M5 toggle) */}
           <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
@@ -1411,7 +1418,11 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
       </div>
 
       {simNoticeToast && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs font-medium text-sky-900">
+        <div
+          className={`${
+            isCombinedBottom ? 'order-2 ' : ''
+          }flex items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs font-medium text-sky-900`}
+        >
           <span>{simNoticeToast}</span>
           <button
             type="button"
@@ -1426,7 +1437,9 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
 
       {alertToast && (
         <div
-          className={`flex flex-wrap items-start justify-between gap-3 rounded-xl border px-4 py-3 text-xs shadow-xs ${
+          className={`${
+            isCombinedBottom ? 'order-2 ' : ''
+          }flex flex-wrap items-start justify-between gap-3 rounded-xl border px-4 py-3 text-xs shadow-xs ${
             alertToast.side === 'UNDER_20'
               ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
               : 'border-rose-200 bg-rose-50 text-rose-950'
@@ -1491,13 +1504,23 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
       )}
 
       {liveError && feedMode === 'live' && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-800">
+        <div
+          className={`${
+            isCombinedBottom ? 'order-2 ' : ''
+          }rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-800`}
+        >
           {liveError}
         </div>
       )}
 
       {/* Dark MT5 Chart Container + Stoch(15,3,3) Sub-Pane */}
-      <div className="flex flex-col rounded-2xl border border-slate-800 bg-[#05080f] p-3.5 sm:p-4 text-neutral-200 shadow-sm">
+      <div
+        className={
+          isCombinedBottom
+            ? 'order-1 flex flex-col rounded-t-none rounded-b-2xl border border-t-0 border-neutral-800 bg-[#05080f] p-3.5 sm:p-4 text-neutral-200 shadow-sm'
+            : 'flex flex-col rounded-2xl border border-slate-800 bg-[#05080f] p-3.5 sm:p-4 text-neutral-200 shadow-sm'
+        }
+      >
         {/* Top Telemetry Header */}
         <div className="mb-2.5 space-y-1.5 border-b border-slate-800/80 px-1 pb-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -1958,7 +1981,11 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
       </div>
 
       {/* Bottom Alert Status Card matching reference screenshot */}
-      <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 space-y-4">
+      <div
+        className={`${
+          isCombinedBottom ? 'order-4 ' : ''
+        }rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 space-y-4`}
+      >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-base font-semibold text-slate-900">
             <Smartphone className="h-4 w-4 text-slate-700" />
