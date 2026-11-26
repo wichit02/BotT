@@ -1200,21 +1200,21 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
       <div
         className={`${
           isCombinedBottom ? 'order-3 ' : ''
-        }rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 space-y-3.5`}
+        }rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0e1525] p-4 sm:p-5 space-y-3.5`}
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Live vs Sim Switch (M1 only, no M5 toggle) */}
-          <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+          <div className="flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-900 p-1">
             <button
               type="button"
               onClick={() => handleChangeFeedMode('live')}
               className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors ${
                 feedMode === 'live'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
-              <Radio className="h-3.5 w-3.5 text-emerald-600" />
+              <Radio className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
               กราฟจริง
             </button>
             <button
@@ -1222,31 +1222,31 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
               onClick={() => handleChangeFeedMode('sim')}
               className={`h-9 rounded-lg px-3.5 text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors ${
                 feedMode === 'sim'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
               จำลอง
             </button>
           </div>
 
-          <div className="flex items-center gap-2 text-[13px] text-slate-600">
-            <span className="font-semibold text-blue-600">US100</span>
-            <span aria-hidden="true" className="text-slate-300">·</span>
-            <span className="font-medium text-slate-700">M1 · Stoch(15,3,3)</span>
+          <div className="flex items-center gap-2 text-[13px] text-slate-600 dark:text-slate-400">
+            <span className="font-semibold text-blue-600 dark:text-blue-400">US100</span>
+            <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">·</span>
+            <span className="font-medium text-slate-700 dark:text-slate-300">M1 · Stoch(15,3,3)</span>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {feedMode === 'sim' && (
-            <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+            <div className="flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-900 p-1">
               <button
                 type="button"
                 onClick={() => handleSimBiasChange('BUY')}
                 className={`h-9 rounded-lg px-3 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
                   simBias === 'BUY'
                     ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 M15 CISD ขึ้น (รอ &lt; 20)
@@ -1257,7 +1257,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                 className={`h-9 rounded-lg px-3 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
                   simBias === 'SELL'
                     ? 'bg-rose-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                 }`}
               >
                 M15 CISD ลง (รอ &gt; 80)
@@ -1272,7 +1272,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                 void fetchLiveStochBars({ updateChart: true, fresh: true })
               }
               disabled={isLoadingLive}
-              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 text-[13px] font-medium text-slate-700 whitespace-nowrap shrink-0 transition-colors hover:bg-slate-50 disabled:opacity-50"
+              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 text-[13px] font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
             >
               <RefreshCw
                 className={`h-3.5 w-3.5 ${isLoadingLive ? 'animate-spin' : ''}`}
@@ -1313,8 +1313,8 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                 }}
                 className={`inline-flex h-10 items-center gap-1.5 rounded-xl px-3.5 text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors ${
                   isPlaying
-                    ? 'bg-slate-900 text-white hover:bg-slate-800'
-                    : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    ? 'bg-slate-900 dark:bg-blue-600 text-white hover:bg-slate-800 dark:hover:bg-blue-700'
+                    : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
                 }`}
               >
                 {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
@@ -1327,7 +1327,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                   unlockAudioAlert();
                   advanceBar();
                 }}
-                className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 text-[13px] font-medium text-slate-700 whitespace-nowrap shrink-0 transition-colors hover:bg-slate-50"
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 text-[13px] font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
               >
                 <SkipForward className="h-3.5 w-3.5" />
                 +1 แท่ง
@@ -1347,7 +1347,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                   setSeriesState(generateInitialStochM1Series(symbol));
                 }}
                 aria-label="รีเซ็ตกราฟ M1"
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-800"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-100"
               >
                 <RotateCcw className="h-4 w-4" />
               </button>
@@ -1364,12 +1364,12 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
             aria-label="สลับเสียงเตือน 10 วินาที"
             className={`inline-flex h-10 items-center gap-1.5 rounded-xl border px-3.5 text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors ${
               soundEnabled
-                ? 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                : 'border-slate-200 bg-slate-100 text-slate-500'
+                ? 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
+                : 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/50 text-slate-500 dark:text-slate-500'
             }`}
           >
             {soundEnabled ? (
-              <Volume2 className="h-4 w-4 text-blue-600" />
+              <Volume2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
             ) : (
               <VolumeX className="h-4 w-4" />
             )}
@@ -1384,7 +1384,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                 setSoundEnabled(true);
                 trigger10sSound('SELL', true);
               }}
-              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50/70 px-3.5 text-[13px] font-medium text-blue-700 whitespace-nowrap shrink-0 transition-colors hover:bg-blue-100"
+              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50/70 dark:bg-blue-950/50 px-3.5 text-[13px] font-medium text-blue-700 dark:text-blue-300 whitespace-nowrap shrink-0 transition-colors hover:bg-blue-100 dark:hover:bg-blue-900/60"
             >
               <Bell className="h-3.5 w-3.5" />
               ทดสอบเสียง
@@ -1397,7 +1397,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
             onChange={(e) =>
               void handleDirectionChange(e.target.value as StochM1DirectionFilter)
             }
-            className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-[13px] font-medium text-slate-700 focus:border-blue-600 focus:outline-none"
+            className="h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-[13px] font-medium text-slate-700 dark:text-slate-200 focus:border-blue-600 focus:outline-none"
           >
             <option value="both">ท่า T01 ทั้ง BUY &amp; SELL</option>
             <option value="under20_only">เฉพาะ BUY (M15 ขึ้น + M1 &lt; 20)</option>
@@ -1421,14 +1421,14 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
         <div
           className={`${
             isCombinedBottom ? 'order-2 ' : ''
-          }flex items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs font-medium text-sky-900`}
+          }flex items-center justify-between gap-3 rounded-xl border border-sky-200 dark:border-sky-500/30 bg-sky-50 dark:bg-sky-950/45 px-4 py-2.5 text-xs font-medium text-sky-900 dark:text-sky-200`}
         >
           <span>{simNoticeToast}</span>
           <button
             type="button"
             onClick={() => setSimNoticeToast(null)}
             aria-label="ปิดข้อความสถานะจำลอง"
-            className="rounded p-1 text-sky-700 hover:bg-sky-100"
+            className="rounded p-1 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -1441,16 +1441,16 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
             isCombinedBottom ? 'order-2 ' : ''
           }flex flex-wrap items-start justify-between gap-3 rounded-xl border px-4 py-3 text-xs shadow-xs ${
             alertToast.side === 'UNDER_20'
-              ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
-              : 'border-rose-200 bg-rose-50 text-rose-950'
+              ? 'border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950/45 text-emerald-950 dark:text-emerald-100'
+              : 'border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-950/45 text-rose-950 dark:text-rose-100'
           }`}
         >
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2 font-semibold text-[13px]">
               {alertToast.side === 'UNDER_20' ? (
-                <ArrowDownRight className="h-4 w-4 text-emerald-700" />
+                <ArrowDownRight className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
               ) : (
-                <ArrowUpRight className="h-4 w-4 text-rose-700" />
+                <ArrowUpRight className="h-4 w-4 text-rose-700 dark:text-rose-400" />
               )}
               <span>
                 {alertToast.mode === 'sim' ? '[จำลอง] ' : '[กราฟจริง] '}
@@ -1463,8 +1463,8 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
               <span className="inline-flex items-center gap-1">
                 {alertToast.telegramDelivered ? (
                   <>
-                    <CheckCircle2 className="h-3.5 w-3.5 text-sky-600" />
-                    <span className="text-sky-800 font-medium">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+                    <span className="text-sky-800 dark:text-sky-300 font-medium">
                       ส่งเข้า Telegram (8217822307) แล้ว
                     </span>
                   </>
@@ -1472,19 +1472,19 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                   <button
                     type="button"
                     onClick={onGoToTelegram}
-                    className="inline-flex items-center gap-1 font-semibold text-rose-700 underline"
+                    className="inline-flex items-center gap-1 font-semibold text-rose-700 dark:text-rose-400 underline"
                   >
                     <AlertCircle className="h-3.5 w-3.5" />
                     ยังไม่ได้ใส่ Bot Token (คลิกเพื่อตั้งค่า Telegram)
                   </button>
                 ) : (
-                  <span className="text-slate-600">
+                  <span className="text-slate-600 dark:text-slate-400">
                     {alertToast.telegramError || 'กำลังส่งเข้า Telegram...'}
                   </span>
                 )}
               </span>
-              <span className="text-slate-300">·</span>
-              <span className="inline-flex items-center gap-1 text-slate-700">
+              <span className="text-slate-300 dark:text-slate-700">·</span>
+              <span className="inline-flex items-center gap-1 text-slate-700 dark:text-slate-300">
                 <Smartphone className="h-3.5 w-3.5" />
                 {alertToast.mobileDelivered
                   ? 'เด้งแจ้งเตือนมือถือแล้ว'
@@ -1496,7 +1496,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
             type="button"
             onClick={() => setAlertToast(null)}
             aria-label="ปิดการแจ้งเตือน"
-            className="rounded p-1 text-slate-500 hover:bg-black/5 hover:text-slate-800"
+            className="rounded p-1 text-slate-500 dark:text-slate-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-slate-800 dark:hover:text-slate-100"
           >
             <X className="h-4 w-4" />
           </button>
@@ -1507,7 +1507,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
         <div
           className={`${
             isCombinedBottom ? 'order-2 ' : ''
-          }rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-800`}
+          }rounded-lg border border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-950/45 px-4 py-2.5 text-xs text-rose-800 dark:text-rose-200`}
         >
           {liveError}
         </div>
@@ -1984,20 +1984,20 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
       <div
         className={`${
           isCombinedBottom ? 'order-4 ' : ''
-        }rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 space-y-4`}
+        }rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0e1525] p-4 sm:p-5 space-y-4`}
       >
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-base font-semibold text-slate-900">
-            <Smartphone className="h-4 w-4 text-slate-700" />
+          <div className="flex items-center gap-2 text-base font-semibold text-slate-900 dark:text-slate-100">
+            <Smartphone className="h-4 w-4 text-slate-700 dark:text-slate-300" />
             <span>แจ้งเตือน ท่า T01 (M15 CISD + M1 Stoch)</span>
           </div>
-          <span className="font-mono text-xs font-medium text-slate-500">
+          <span className="font-mono text-xs font-medium text-slate-500 dark:text-slate-400">
             {feedMode === 'live' ? 'Live M1' : 'Sim M1'}
           </span>
         </div>
 
         {/* Dark Alert Status Box */}
-        <div className="rounded-xl bg-[#0d1629] px-4 py-4 text-sm leading-relaxed text-slate-200">
+        <div className="rounded-xl bg-[#0d1629] dark:bg-[#080d1a] dark:border dark:border-slate-800 px-4 py-4 text-sm leading-relaxed text-slate-200">
           {latestAlertBanner ? (
             latestAlertBanner
           ) : feedMode === 'live' ? (
@@ -2052,10 +2052,10 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
           <div className="flex items-center gap-2.5 min-w-0">
             <Radio
               className={`h-4 w-4 shrink-0 ${
-                serverStochEnabled ? 'text-emerald-600' : 'text-slate-400'
+                serverStochEnabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'
               }`}
             />
-            <span className="text-sm font-semibold text-slate-900 truncate">
+            <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
               เซิร์ฟเวอร์เฝ้ากราฟ ท่า T01 (M15 + M1) อัตโนมัติ
             </span>
           </div>
@@ -2066,8 +2066,8 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
             onClick={() => void handleToggleServerMonitor()}
             className={`shrink-0 text-xs font-semibold transition-colors disabled:opacity-50 ${
               serverStochEnabled
-                ? 'text-emerald-700 hover:text-emerald-800'
-                : 'text-slate-500 hover:text-slate-800'
+                ? 'text-emerald-700 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-300'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
             {togglingServerMonitor
@@ -2094,14 +2094,14 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
         </button>
 
         {mobileNotifySuccess && (
-          <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+          <div className="flex items-center gap-2 rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950/45 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-200">
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
             <span>{mobileNotifySuccess}</span>
           </div>
         )}
 
         {mobileNotifyHint && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-950/45 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
             <span>{mobileNotifyHint}</span>
             {typeof window !== 'undefined' && window.self !== window.top && (
               <a
@@ -2119,10 +2119,12 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
         {/* Telegram Connection Row */}
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs pt-0.5">
           <div className="flex items-center gap-1.5">
-            <span className="text-slate-500">Telegram:</span>
+            <span className="text-slate-500 dark:text-slate-400">Telegram:</span>
             <span
               className={`font-semibold ${
-                effectiveTelegramConfigured ? 'text-emerald-700' : 'text-amber-700'
+                effectiveTelegramConfigured
+                  ? 'text-emerald-700 dark:text-emerald-400'
+                  : 'text-amber-700 dark:text-amber-400'
               }`}
             >
               {effectiveTelegramConfigured
@@ -2136,7 +2138,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
           <button
             type="button"
             onClick={onGoToTelegram}
-            className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:underline"
+            className="inline-flex items-center gap-1 font-semibold text-blue-600 dark:text-blue-400 hover:underline"
           >
             <Send className="h-3.5 w-3.5" />
             ตั้งค่า Telegram
@@ -2144,8 +2146,8 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
         </div>
 
         {/* Secondary Channel: ntfy */}
-        <details className="border-t border-slate-100 pt-3 text-xs text-slate-600">
-          <summary className="cursor-pointer select-none font-medium text-slate-700 hover:text-slate-900">
+        <details className="border-t border-slate-100 dark:border-slate-800 pt-3 text-xs text-slate-600 dark:text-slate-400">
+          <summary className="cursor-pointer select-none font-medium text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100">
             ช่องทางเสริม: ntfy (เลือกเสียง 10 วิได้)
           </summary>
           <div className="mt-3 space-y-2.5">
@@ -2155,13 +2157,13 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                 value={ntfyTopic}
                 onChange={(e) => setNtfyTopic(e.target.value)}
                 placeholder="เช่น us100-m1-alert"
-                className="h-9 flex-1 rounded-lg border border-slate-200 px-3 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+                className="h-9 flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 font-mono text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-blue-600 focus:outline-none"
               />
               <button
                 type="button"
                 disabled={ntfySaving}
                 onClick={() => void handleSaveAndTestNtfy()}
-                className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg bg-slate-900 px-3.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg bg-slate-900 dark:bg-blue-600 px-3.5 text-xs font-medium text-white hover:bg-slate-800 dark:hover:bg-blue-700 disabled:opacity-50"
               >
                 {ntfySaving ? 'กำลังส่ง...' : 'บันทึก & ทดสอบ ntfy'}
               </button>
@@ -2169,13 +2171,15 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
             {ntfyFeedback && (
               <p
                 className={
-                  ntfyFeedback.type === 'ok' ? 'text-emerald-700' : 'text-rose-700'
+                  ntfyFeedback.type === 'ok'
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : 'text-rose-700 dark:text-rose-400'
                 }
               >
                 {ntfyFeedback.text}
               </p>
             )}
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
               <span>
                 {serverSubscribersCount > 0
                   ? `อุปกรณ์รับ Web Push เชื่อมต่ออยู่ ${serverSubscribersCount} เครื่อง`
