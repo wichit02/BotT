@@ -91,8 +91,14 @@ export function computeStochasticSeries(
   }
 
   const out: StochPoint[] = [];
-  const warmup = kPeriod + slowing - 1;
+  const warmup = Math.min(bars.length, kPeriod + slowing - 1);
   let lastSide: Exclude<StochTriggerType, null> | null = null;
+
+  for (let i = 0; i < warmup; i++) {
+    const k = kValues[i];
+    if (k > params.upperLevel) lastSide = 'ABOVE_80';
+    else if (k < params.lowerLevel) lastSide = 'BELOW_20';
+  }
 
   for (let i = 0; i < bars.length; i++) {
     const k = kValues[i];

@@ -300,6 +300,7 @@ const monitorRuntime = {
   isRunningCycle: false,
   lastBarBySymbol: {} as Partial<Record<TradingSymbol, string>>,
   lastClosedBarBucketMsBySymbol: {} as Partial<Record<TradingSymbol, number>>,
+  lastFeedSourceBySymbol: {} as Partial<Record<TradingSymbol, string>>,
   dispatchedLiveSignalKeys: new Set<string>(),
   dispatchedStochSignalKeys: new Set<string>(),
 };
@@ -1046,8 +1047,13 @@ function computeStochMainSeries(
     kValues[i] = Math.min(100, Math.max(0, rawK));
   }
 
-  const warmup = kPeriod + slowing - 1;
+  const warmup = Math.min(bars.length, kPeriod + slowing - 1);
   let lastSide: 'ABOVE_80' | 'BELOW_20' | null = null;
+  for (let i = 0; i < warmup; i++) {
+    const k = kValues[i];
+    if (k > cfg.upperLevel) lastSide = 'ABOVE_80';
+    else if (k < cfg.lowerLevel) lastSide = 'BELOW_20';
+  }
   return kValues.map((k, i) => {
     const prevK = i > 0 ? kValues[i - 1] : k;
     let signal: 'BUY' | 'SELL' | null = null;
@@ -1339,7 +1345,7 @@ function buildCfdMarketFeed(
   });
 
   const bars = computeAwesomeOscillator(warmupSlice)
-    .slice(-180)
+    .slice(-260)
     .map((b, idx) => ({ ...b, index: idx }));
 
   const latestBar = bars[bars.length - 1];
@@ -1445,7 +1451,7 @@ async function fetchYahooM5(
   }
 
   const bars = computeAwesomeOscillator(warmupSlice)
-    .slice(-180)
+    .slice(-260)
     .map((b, idx) => ({ ...b, index: idx }));
 
   const latestBarTs = new Date(bars[bars.length - 1].timestampIso).getTime();
@@ -1461,11 +1467,14 @@ async function fetchYahooM5(
   };
 }
 
-async function getLiveM5Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
+async function getLiveM5Feed(
+  symbol: TradingSymbol,
+  opts?: { waitCfdMs?: number }
+): Promise<MarketFeedResult> {
   // Priority 1: Direct XM MT5 Bridge data pushed from user's MT5 terminal (within 15s)
   if (xmMt5Bridge.bars.length >= 36 && Date.now() - xmMt5Bridge.updatedAtMs <= 15000) {
     const bars = computeAwesomeOscillator(xmMt5Bridge.bars.slice(-260))
-      .slice(-180)
+      .slice(-260)
       .map((b, idx) => ({ ...b, index: idx }));
     return {
       symbol,
@@ -1479,9 +1488,10 @@ async function getLiveM5Feed(symbol: TradingSymbol): Promise<MarketFeedResult> {
     };
   }
 
-  // Priority 2: Wait briefly up to 1.8s on cold start for real-time CFD stream handshake
+  // Priority 2: Wait briefly on cold start for real-time CFD stream handshake
+  const maxWaitMs = opts?.waitCfdMs ?? 1800;
   if (cfdStreamState.barsMap.size < 36) {
-    const deadline = Date.now() + 1800;
+    const deadline = Date.now() + maxWaitMs;
     while (cfdStreamState.barsMap.size < 36 && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 120));
     }
@@ -1821,11 +1831,15 @@ async function runBackgroundMonitorCycle() {
   try {
     for (const sym of persisted.symbols) {
       try {
-        const feed = await getLiveM5Feed(sym);
+        const isBaselinePending =
+          monitorRuntime.lastClosedBarBucketMsBySymbol[sym] === undefined;
+        const feed = await getLiveM5Feed(sym, {
+          waitCfdMs: isBaselinePending ? 4000 : 1800,
+        });
         const bars = feed.bars;
         if (bars.length < 4) continue;
 
-        // Confirmed closed M5 bar [1] vs previous closed bar [2] (AO[2] <= 0 -> AO[1] > 0 or AO[2] >= 0 -> AO[1] < 0)
+        // Confirmed closed M5 bar [1] vs previous closed bar [2]
         const closedBar = bars[bars.length - 2];
         const prevClosedBar = bars[bars.length - 3];
         if (!closedBar || !prevClosedBar) continue;
@@ -1837,9 +1851,13 @@ async function runBackgroundMonitorCycle() {
         // Stoch(15,3,3) single cyan %K line threshold alert (>80 or <20 on candle close, strictly once per side until switching to opposite side)
         const stochSeries = computeStochMainSeries(bars, persisted.stochConfig);
 
-        // First observation after server startup: record baseline silently and sync latest observed side
+        // First observation after server startup or feed-source change: record baseline silently and sync latest observed side
         const prevBaselineMs = monitorRuntime.lastClosedBarBucketMsBySymbol[sym];
-        if (prevBaselineMs === undefined) {
+        const prevSource = monitorRuntime.lastFeedSourceBySymbol[sym];
+        const sourceSwitched = Boolean(prevSource && prevSource !== feed.source);
+        monitorRuntime.lastFeedSourceBySymbol[sym] = feed.source;
+
+        if (prevBaselineMs === undefined || sourceSwitched) {
           monitorRuntime.lastClosedBarBucketMsBySymbol[sym] = closedBucketMs;
           for (let i = stochSeries.length - 2; i >= 0; i--) {
             const trig = stochSeries[i]?.triggerType;
@@ -1877,6 +1895,13 @@ async function runBackgroundMonitorCycle() {
           }
         }
         const effectivePriorSide = lastPriorSideInWindow ?? persisted.lastStochSideBySymbol[sym] ?? null;
+        const latestStochEventForSym = persisted.events.find(
+          (ev) => ev.symbol === sym && ev.id.startsWith('stoch-')
+        );
+        const lastEventSameSide =
+          latestStochEventForSym &&
+          closedStoch &&
+          latestStochEventForSym.signal === closedStoch.signal;
 
         if (
           closedStoch &&
@@ -1884,6 +1909,7 @@ async function runBackgroundMonitorCycle() {
           closedStoch.signal &&
           closedStoch.triggerType &&
           effectivePriorSide !== closedStoch.triggerType &&
+          !lastEventSameSide &&
           !hasClosedStochBarBeenAlerted(sym, closedBar.timestampIso)
         ) {
           recordClosedStochBarAlerted(sym, closedBar.timestampIso);
@@ -2346,6 +2372,7 @@ void OnTick()
     persisted.telegramMode = 'always';
     monitorRuntime.lastBarBySymbol = {};
     monitorRuntime.lastClosedBarBucketMsBySymbol = {};
+    monitorRuntime.lastFeedSourceBySymbol = {};
     monitorRuntime.dispatchedLiveSignalKeys.clear();
     monitorRuntime.dispatchedStochSignalKeys.clear();
     syncPersistence();
