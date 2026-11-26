@@ -75,7 +75,7 @@ export default function App() {
     parseInitialCisdTimeframe
   );
   const [activeSection, setActiveSection] = useState<ActiveSection>(() => {
-    if (typeof window === 'undefined') return 'm1';
+    if (typeof window === 'undefined') return 'm15';
     const params = new URLSearchParams(window.location.search);
     const view = params.get('tab')?.toLowerCase();
     const tf = params.get('tf')?.toUpperCase();
@@ -83,7 +83,7 @@ export default function App() {
     if (view === 'm1' || tf === 'M1') return 'm1';
     if (view === 'mtf') return 'mtf';
     if (view === 'telegram') return 'telegram';
-    return 'm1';
+    return 'm15';
   });
   const [mql5Config, setMql5Config] = useState<Mql5Config>(DEFAULT_MQL5_CONFIG);
   const [signals, setSignals] = useState<SignalLogRecord[]>([]);
@@ -249,7 +249,7 @@ export default function App() {
                 href="#top"
                 onClick={(e) => {
                   e.preventDefault();
-                  setActiveSection('m1');
+                  setActiveSection('m15');
                 }}
                 className="inline-flex items-center gap-2.5 text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
               >
@@ -363,7 +363,7 @@ export default function App() {
               <div className="mb-4">
                 <button
                   type="button"
-                  onClick={() => setActiveSection('m1')}
+                  onClick={() => setActiveSection('m15')}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" />
@@ -402,17 +402,6 @@ export default function App() {
                 <div className="inline-flex flex-wrap items-center gap-1 self-start rounded-lg bg-slate-200/75 p-1">
                   <button
                     type="button"
-                    onClick={() => setActiveSection('m1')}
-                    className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
-                      activeSection === 'm1'
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Stoch M1
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => setActiveSection('m15')}
                     className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
                       activeSection === 'm15'
@@ -421,6 +410,17 @@ export default function App() {
                     }`}
                   >
                     CISD ({cisdTimeframe})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSection('m1')}
+                    className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
+                      activeSection === 'm1'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Stoch M1
                   </button>
                   <button
                     type="button"
@@ -507,7 +507,7 @@ export default function App() {
             <ServerDeployPanel
               onPreviewWebMode={() => {
                 setDevPreviewWeb(true);
-                setActiveSection('m1');
+                setActiveSection('m15');
               }}
             />
           )}
