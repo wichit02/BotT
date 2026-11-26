@@ -302,20 +302,20 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
 
   if (needsAuth) {
     return (
-      <section className="rounded-xl border border-slate-200/90 bg-white p-10 sm:p-12">
+      <section className="rounded-xl border border-slate-200/90 bg-white p-10 sm:p-12 dark:border-slate-800/90 dark:bg-[#0e1525]">
         <div className="mx-auto max-w-md text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-300">
             <FileSpreadsheet className="h-6 w-6" />
           </div>
-          <h2 className="mt-4 text-lg font-semibold text-slate-900">
+          <h2 className="mt-4 text-lg font-semibold text-slate-900 dark:text-slate-100">
             เชื่อมต่อ Google Sheets
           </h2>
-          <p className="mt-2 text-[13px] leading-relaxed text-slate-600">
+          <p className="mt-2 text-[13px] leading-relaxed text-slate-600 dark:text-slate-400">
             เข้าสู่ระบบด้วยบัญชี Google เพื่อบันทึกและดูประวัติสัญญาณ AO M5 แบบเป็นระเบียบ
           </p>
 
           {errorMsg && (
-            <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-800">
+            <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-800 dark:border-rose-500/30 dark:bg-rose-950/50 dark:text-rose-200">
               {errorMsg}
             </div>
           )}
@@ -369,13 +369,13 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
   return (
     <section className="space-y-6">
       {/* Account & Spreadsheet Connection Header */}
-      <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6">
-        <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 dark:border-slate-800/90 dark:bg-[#0e1525]">
+        <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
               Google Sheets
             </h2>
-            <p className="mt-0.5 text-[13px] text-slate-600">
+            <p className="mt-0.5 text-[13px] text-slate-600 dark:text-slate-400">
               {user?.displayName || 'Google User'} · {user?.email}
             </p>
           </div>
@@ -383,7 +383,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
           <button
             type="button"
             onClick={handleLogout}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700 whitespace-nowrap transition-colors hover:bg-slate-50"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700 whitespace-nowrap transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             <LogOut className="h-3.5 w-3.5" />
             ออกจากระบบ
@@ -393,10 +393,10 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
         {/* Two ways to connect: Create New OR Connect Existing */}
         <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
           {/* Create New Sheet */}
-          <div className="rounded-xl bg-slate-50/90 p-4">
+          <div className="rounded-xl border border-transparent bg-slate-50/90 p-4 dark:border-slate-800 dark:bg-slate-900/80">
             <label
               htmlFor="new-sheet-title"
-              className="block text-[13px] font-medium text-slate-700"
+              className="block text-[13px] font-medium text-slate-700 dark:text-slate-300"
             >
               สร้างไฟล์ใหม่
             </label>
@@ -407,7 +407,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                 value={newSheetTitle}
                 onChange={(e) => setNewSheetTitle(e.target.value)}
                 placeholder="AO M5 Signal Logbook"
-                className="h-10 flex-1 rounded-lg border border-slate-200 bg-white px-3.5 text-[13px] text-slate-900 focus:border-blue-600 focus:outline-none"
+                className="h-10 flex-1 rounded-lg border border-slate-200 bg-white px-3.5 text-[13px] text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-400"
               />
               <button
                 type="button"
@@ -429,11 +429,11 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
           {/* Connect Existing Sheet */}
           <form
             onSubmit={handleConnectExisting}
-            className="rounded-xl bg-slate-50/90 p-4"
+            className="rounded-xl border border-transparent bg-slate-50/90 p-4 dark:border-slate-800 dark:bg-slate-900/80"
           >
             <label
               htmlFor="existing-sheet-url"
-              className="block text-[13px] font-medium text-slate-700"
+              className="block text-[13px] font-medium text-slate-700 dark:text-slate-300"
             >
               เชื่อมต่อไฟล์ที่มีอยู่ (URL / ID)
             </label>
@@ -444,12 +444,12 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                 value={sheetUrlInput}
                 onChange={(e) => setSheetUrlInput(e.target.value)}
                 placeholder="https://docs.google.com/spreadsheets/d/..."
-                className="h-10 flex-1 rounded-lg border border-slate-200 bg-white px-3.5 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+                className="h-10 flex-1 rounded-lg border border-slate-200 bg-white px-3.5 font-mono text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-400"
               />
               <button
                 type="submit"
                 disabled={isLoadingSheet}
-                className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-medium text-slate-800 whitespace-nowrap transition-colors hover:bg-slate-100 disabled:opacity-50"
+                className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-medium text-slate-800 whitespace-nowrap transition-colors hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
               >
                 <Link2 className="h-4 w-4" />
                 เชื่อมต่อ
@@ -466,7 +466,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
               transition={{ duration: 0.2 }}
-              className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-800"
+              className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs text-rose-800 dark:border-rose-500/30 dark:bg-rose-950/50 dark:text-rose-200"
             >
               {errorMsg}
             </motion.div>
@@ -478,13 +478,13 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -4 }}
               transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-              className="mt-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800"
+              className="mt-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/50 dark:text-emerald-200"
             >
               <motion.span
                 initial={{ scale: 0.5, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 transition={{ type: 'spring', stiffness: 420, damping: 22 }}
-                className="inline-flex shrink-0 text-emerald-600"
+                className="inline-flex shrink-0 text-emerald-600 dark:text-emerald-400"
               >
                 <CheckCircle2 className="h-4 w-4" />
               </motion.span>
@@ -497,16 +497,16 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
       {/* Pending Signals Queue & Sheet Viewer */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
         {/* Local Signal Queue ready to sync */}
-        <div className="lg:col-span-4 rounded-xl border border-slate-200 bg-white p-5">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+        <div className="lg:col-span-4 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0e1525]">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
+            <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
               <span>คิวรอบันทึก</span>
               <motion.span
                 key={unsyncedSignals.length}
-                initial={{ scale: 1.18, color: '#059669' }}
-                animate={{ scale: 1, color: '#0f172a' }}
+                initial={{ scale: 1.18 }}
+                animate={{ scale: 1 }}
                 transition={{ duration: 0.28, ease: 'easeOut' }}
-                className="tabular-nums"
+                className="tabular-nums text-slate-900 dark:text-slate-100"
               >
                 ({unsyncedSignals.length})
               </motion.span>
@@ -517,8 +517,8 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
               onClick={handleAddManualClick}
               className={`inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs font-medium transition-colors ${
                 manualAddedFeedback
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/50 dark:text-emerald-300'
+                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800'
               }`}
             >
               <AnimatePresence mode="wait" initial={false}>
@@ -531,7 +531,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                     transition={{ duration: 0.16 }}
                     className="inline-flex items-center gap-1"
                   >
-                    <Check className="h-3.5 w-3.5 text-emerald-600" />
+                    <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                     เพิ่มแล้ว
                   </motion.span>
                 ) : (
@@ -567,21 +567,21 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                       initial={{ scale: 0.7, opacity: 0.6 }}
                       animate={{ scale: 1.55, opacity: 0 }}
                       transition={{ duration: 0.9, ease: 'easeOut' }}
-                      className="absolute inset-0 rounded-full bg-emerald-200"
+                      className="absolute inset-0 rounded-full bg-emerald-200 dark:bg-emerald-500/30"
                     />
                     <motion.div
                       initial={{ scale: 0.6, opacity: 0 }}
                       animate={{ scale: 1, opacity: 1 }}
                       transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-                      className="relative flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"
+                      className="relative flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400"
                     >
                       <CheckCircle2 className="h-5 w-5" />
                     </motion.div>
                   </div>
-                  <p className="mt-2.5 text-xs font-medium text-emerald-700">
+                  <p className="mt-2.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
                     ส่งลง Google Sheets สำเร็จ
                   </p>
-                  <p className="mt-0.5 text-[11px] text-slate-500">
+                  <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                     บันทึกแล้ว {syncSuccessInfo.count} รายการใน “{syncSuccessInfo.sheetTitle}”
                   </p>
                 </motion.div>
@@ -594,7 +594,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                   transition={{ duration: 0.2 }}
                   className="py-8 text-center"
                 >
-                  <p className="text-xs text-slate-400">ยังไม่มีสัญญาณค้างส่ง</p>
+                  <p className="text-xs text-slate-400 dark:text-slate-500">ยังไม่มีสัญญาณค้างส่ง</p>
                 </motion.div>
               )
             ) : (
@@ -606,7 +606,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                 transition={{ duration: 0.18 }}
                 className="mt-3 space-y-2.5"
               >
-                <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+                <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto dark:divide-slate-800">
                   <AnimatePresence initial={false}>
                     {unsyncedSignals.map((sig) => {
                       const isNewlyAdded = recentAddedIds.has(sig.id);
@@ -620,7 +620,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                             y: 0,
                             scale: 1,
                             backgroundColor: isNewlyAdded
-                              ? ['rgba(236, 253, 245, 0.9)', 'rgba(236, 253, 245, 0)']
+                              ? ['rgba(16, 185, 129, 0.16)', 'rgba(16, 185, 129, 0)']
                               : 'rgba(255, 255, 255, 0)',
                           }}
                           exit={{ opacity: 0, x: 14, scale: 0.97 }}
@@ -632,23 +632,23 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                           className="rounded-md px-1.5 py-2.5 text-xs"
                         >
                           <div className="flex items-center justify-between">
-                            <span className="font-semibold text-slate-900">
+                            <span className="font-semibold text-slate-900 dark:text-slate-100">
                               <span
                                 className={
                                   sig.signal === 'BUY'
-                                    ? 'text-emerald-700'
-                                    : 'text-rose-700'
+                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                    : 'text-rose-700 dark:text-rose-400'
                                 }
                               >
                                 {sig.signal}
                               </span>{' '}
                               · {sig.symbol} · {sig.timeframe}
                             </span>
-                            <span className="font-mono text-slate-500 tabular-nums">
+                            <span className="font-mono text-slate-500 tabular-nums dark:text-slate-400">
                               {sig.price}
                             </span>
                           </div>
-                          <p className="mt-1 font-mono text-[11px] text-slate-400 tabular-nums">
+                          <p className="mt-1 font-mono text-[11px] text-slate-400 tabular-nums dark:text-slate-500">
                             AO {sig.aoPrev.toFixed(5)} → {sig.aoCurr.toFixed(5)}
                           </p>
                         </motion.li>
@@ -681,10 +681,10 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
         </div>
 
         {/* Connected Google Sheet Data Grid */}
-        <div className="lg:col-span-8 rounded-xl border border-slate-200/90 bg-white overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+        <div className="lg:col-span-8 rounded-xl border border-slate-200/90 bg-white overflow-hidden dark:border-slate-800/90 dark:bg-[#0e1525]">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
             <div className="flex flex-wrap items-center gap-3">
-              <h3 className="text-[15px] font-semibold text-slate-900">
+              <h3 className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">
                 {spreadsheet ? spreadsheet.title : 'ตารางข้อมูล Google Sheets'}
               </h3>
               {spreadsheet && (
@@ -692,7 +692,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                   href={spreadsheet.spreadsheetUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:underline"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400"
                 >
                   เปิดไฟล์
                   <ExternalLink className="h-3.5 w-3.5" />
@@ -706,7 +706,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.92 }}
                     transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                    className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-400"
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     อัปเดต +{syncSuccessInfo.count} แถว
@@ -721,7 +721,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                   aria-label="เลือกแท็บชีต"
                   value={selectedTab}
                   onChange={(e) => handleSelectTab(e.target.value)}
-                  className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 focus:border-blue-600 focus:outline-none"
+                  className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 focus:border-blue-600 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-blue-400"
                 >
                   {spreadsheet.sheets.map((tab) => (
                     <option key={tab.sheetId} value={tab.title}>
@@ -733,7 +733,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                   type="button"
                   onClick={handleRefreshSheet}
                   disabled={isLoadingSheet}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
                   <RefreshCw
                     className={`h-3.5 w-3.5 ${isLoadingSheet ? 'animate-spin' : ''}`}
@@ -746,7 +746,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
 
           {!spreadsheet ? (
             <div className="p-12 text-center">
-              <p className="text-[13px] text-slate-500">
+              <p className="text-[13px] text-slate-500 dark:text-slate-400">
                 สร้างไฟล์ใหม่หรือวางลิงก์ Google Sheet ด้านบนเพื่อดูและบันทึกข้อมูล
               </p>
             </div>
@@ -755,13 +755,13 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
               {[0, 1, 2, 3].map((row) => (
                 <div
                   key={row}
-                  className="h-10 w-full animate-pulse rounded bg-slate-100"
+                  className="h-10 w-full animate-pulse rounded bg-slate-100 dark:bg-slate-800"
                 />
               ))}
             </div>
           ) : sheetRows.length === 0 ? (
             <div className="p-12 text-center">
-              <p className="text-[13px] text-slate-500">
+              <p className="text-[13px] text-slate-500 dark:text-slate-400">
                 แท็บ “{selectedTab}” ยังไม่มีข้อมูล
               </p>
             </div>
@@ -769,7 +769,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-[13px]">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-xs text-slate-600">
+                  <tr className="border-b border-slate-200 bg-slate-50 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
                     {(sheetRows[0] || []).map((header, idx) => (
                       <th
                         key={idx}
@@ -780,7 +780,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {sheetRows.slice(1).map((row, rIdx, dataRows) => {
                     const isFreshSyncedRow =
                       syncSuccessInfo !== null &&
@@ -811,7 +811,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                             : undefined
                         }
                         transition={{ duration: 1.6, ease: 'easeOut' }}
-                        className="hover:bg-slate-50/80"
+                        className="hover:bg-slate-50/80 dark:hover:bg-slate-900/60"
                       >
                         {row.map((cell, cIdx) => {
                           const isSignalCol = cIdx === 3;
@@ -823,10 +823,10 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({
                                 isNumeric ? 'font-mono text-xs tabular-nums text-right' : ''
                               } ${
                                 isSignalCol && cell === 'BUY'
-                                  ? 'font-semibold text-emerald-700'
+                                  ? 'font-semibold text-emerald-700 dark:text-emerald-400'
                                   : isSignalCol && cell === 'SELL'
-                                  ? 'font-semibold text-rose-700'
-                                  : 'text-slate-700'
+                                  ? 'font-semibold text-rose-700 dark:text-rose-400'
+                                  : 'text-slate-700 dark:text-slate-300'
                               }`}
                             >
                               {cell}

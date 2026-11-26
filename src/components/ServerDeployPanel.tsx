@@ -403,19 +403,19 @@ TELEGRAM_MODE=always`;
   return (
     <div className="space-y-6">
       {/* Top Full-Width Section: Direct Real-Time GitHub.com Sync */}
-      <section className="rounded-xl border border-slate-200/90 bg-white p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-4">
+      <section className="rounded-xl border border-slate-200/90 bg-white p-6 dark:border-slate-800/90 dark:bg-[#0e1525]">
+        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-4 dark:border-slate-800">
           <div className="flex items-start gap-3.5">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white dark:bg-slate-800">
               <GitBranch className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-slate-900">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                 เชื่อมต่อ GitHub.com (ควบคุมด้วยปุ่มอนุญาตอัปโหลด)
               </h2>
-              <p className="mt-1 text-[13px] leading-relaxed text-slate-600">
+              <p className="mt-1 text-[13px] leading-relaxed text-slate-600 dark:text-slate-400">
                 เชื่อม Repository ไว้ได้โดยยังไม่ส่งไฟล์อัตโนมัติ — ระบบจะอัปโหลดโค้ดและบันทึกสัญญาณ{' '}
-                <code className="font-mono text-xs text-slate-800">data/signals-log.json</code>{' '}
+                <code className="font-mono text-xs text-slate-800 dark:text-slate-200">data/signals-log.json</code>{' '}
                 ก็ต่อเมื่อคุณกดปุ่ม <strong>อนุญาตอัปโหลด</strong> แล้วเท่านั้น
               </p>
             </div>
@@ -426,7 +426,7 @@ TELEGRAM_MODE=always`;
               <button
                 type="button"
                 onClick={onPreviewWebMode}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3.5 text-xs font-medium text-blue-700 whitespace-nowrap transition-colors hover:bg-blue-100"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3.5 text-xs font-medium text-blue-700 whitespace-nowrap transition-colors hover:bg-blue-100 dark:border-blue-500/30 dark:bg-blue-950/50 dark:text-blue-300 dark:hover:bg-blue-900/50"
               >
                 <Eye className="h-4 w-4" />
                 ดูตัวอย่างหน้าเว็บออนไลน์
@@ -434,18 +434,18 @@ TELEGRAM_MODE=always`;
             )}
             {ghStatus?.connected ? (
               ghUploadAllowed ? (
-                <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-700">
+                <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-400">
                   <CheckCircle2 className="h-4 w-4" />
                   {ghStatus.isSyncing ? 'กำลังอัปโหลด...' : 'อนุญาตอัปโหลดแล้ว'}
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1.5 font-semibold text-amber-700">
+                <span className="inline-flex items-center gap-1.5 font-semibold text-amber-700 dark:text-amber-400">
                   <ShieldOff className="h-4 w-4" />
                   เชื่อมต่อแล้ว (ยังไม่อนุญาตอัปโหลด)
                 </span>
               )
             ) : (
-              <span className="text-xs font-medium text-slate-500">ยังไม่เชื่อมต่อ GitHub</span>
+              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">ยังไม่เชื่อมต่อ GitHub</span>
             )}
           </div>
         </div>
@@ -455,15 +455,15 @@ TELEGRAM_MODE=always`;
             {/* GitHub Token Input */}
             <div className="lg:col-span-5 space-y-1.5">
               <div className="flex items-center justify-between">
-                <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">
-                  <KeyRound className="h-3.5 w-3.5 text-slate-500" />
+                <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  <KeyRound className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
                   <span>GitHub Personal Access Token (สิทธิ์ repo)</span>
                 </label>
                 <a
                   href="https://github.com/settings/tokens/new?scopes=repo&description=AO-Signal-Studio"
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:underline"
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:underline dark:text-blue-400"
                 >
                   สร้าง Token ด่วน <ExternalLink className="h-3 w-3" />
                 </a>
@@ -478,12 +478,12 @@ TELEGRAM_MODE=always`;
                       ? '•••••••••••• (บันทึกไว้แล้ว หรือวาง Token ใหม่)'
                       : 'ghp_xxxxxxxxxxxxxxxxxxxx'
                   }
-                  className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 pr-10 font-mono text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none"
+                  className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 pr-10 font-mono text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-400 dark:focus:bg-slate-950"
                 />
                 <button
                   type="button"
                   onClick={() => setShowGhToken((v) => !v)}
-                  className="absolute inset-y-0 right-2 flex items-center px-1 text-slate-400 hover:text-slate-600"
+                  className="absolute inset-y-0 right-2 flex items-center px-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                   aria-label="สลับการแสดง Token"
                 >
                   {showGhToken ? (
@@ -497,7 +497,7 @@ TELEGRAM_MODE=always`;
 
             {/* Repo Name */}
             <div className="lg:col-span-3 space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                 ชื่อ Repository (สร้างใหม่ให้อัตโนมัติถ้ายังไม่มี)
               </label>
               <input
@@ -505,13 +505,13 @@ TELEGRAM_MODE=always`;
                 value={ghRepo}
                 onChange={(e) => setGhRepo(e.target.value)}
                 placeholder="ao-signal-studio"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-400 dark:focus:bg-slate-950"
               />
             </div>
 
             {/* Owner (optional auto-detect) */}
             <div className="lg:col-span-2 space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                 ชื่อผู้ใช้ GitHub
               </label>
               <input
@@ -519,33 +519,33 @@ TELEGRAM_MODE=always`;
                 value={ghOwner}
                 onChange={(e) => setGhOwner(e.target.value)}
                 placeholder="ดึงจาก Token อัตโนมัติ"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-400 dark:focus:bg-slate-950"
               />
             </div>
 
             {/* Branch */}
             <div className="lg:col-span-2 space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">Branch</label>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Branch</label>
               <input
                 type="text"
                 value={ghBranch}
                 onChange={(e) => setGhBranch(e.target.value)}
                 placeholder="main"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-400 dark:focus:bg-slate-950"
               />
             </div>
           </div>
 
           {/* Sync Options */}
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-700">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-900/80 dark:text-slate-300">
             <label className="inline-flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
                 checked={ghPrivate}
                 onChange={(e) => setGhPrivate(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900"
               />
-              <Lock className="h-3.5 w-3.5 text-slate-500" />
+              <Lock className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
               <span>สร้างเป็น Private Repository</span>
             </label>
 
@@ -554,7 +554,7 @@ TELEGRAM_MODE=always`;
                 type="checkbox"
                 checked={ghAutoSyncCode}
                 onChange={(e) => setGhAutoSyncCode(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900"
               />
               <span>อัปโหลดไฟล์โค้ดทั้งหมดอัตโนมัติแบบเรียลไทม์เมื่อมีการแก้ไข</span>
             </label>
@@ -564,7 +564,7 @@ TELEGRAM_MODE=always`;
                 type="checkbox"
                 checked={ghSyncSignals}
                 onChange={(e) => setGhSyncSignals(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900"
               />
               <span>
                 บันทึกข้อมูลสัญญาณ M15 ล่าสุด (<code className="font-mono">data/signals-log.json</code>) ขึ้น GitHub อัตโนมัติ
@@ -578,7 +578,7 @@ TELEGRAM_MODE=always`;
               <button
                 type="submit"
                 disabled={ghSaving || ghTogglingAllow || ghSyncingNow}
-                className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-xs font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60 dark:bg-blue-600 dark:hover:bg-blue-700"
               >
                 <GitBranch className="h-4 w-4" />
                 {ghSaving
@@ -595,7 +595,7 @@ TELEGRAM_MODE=always`;
                 className={`inline-flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-semibold transition-colors disabled:opacity-60 ${
                   ghUploadAllowed
                     ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                    : 'border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                    : 'border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-950/50 dark:text-amber-200 dark:hover:bg-amber-900/50'
                 }`}
               >
                 {ghUploadAllowed ? (
@@ -617,7 +617,7 @@ TELEGRAM_MODE=always`;
                     type="button"
                     disabled={ghSaving || ghTogglingAllow || ghSyncingNow || !ghUploadAllowed}
                     onClick={() => void handleSyncGithubNow()}
-                    className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                   >
                     <UploadCloud
                       className={`h-4 w-4 ${ghSyncingNow ? 'animate-pulse' : ''}`}
@@ -629,7 +629,7 @@ TELEGRAM_MODE=always`;
                     type="button"
                     disabled={ghSaving || ghTogglingAllow || ghSyncingNow}
                     onClick={() => void handleDisconnectGithub()}
-                    className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3.5 text-xs font-medium text-rose-700 transition-colors hover:bg-rose-50 disabled:opacity-60"
+                    className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3.5 text-xs font-medium text-rose-700 transition-colors hover:bg-rose-50 disabled:opacity-60 dark:border-rose-500/30 dark:bg-slate-900 dark:text-rose-400 dark:hover:bg-rose-950/50"
                   >
                     <Unlink className="h-3.5 w-3.5" />
                     ยกเลิกเชื่อมต่อ
@@ -639,17 +639,17 @@ TELEGRAM_MODE=always`;
             </div>
 
             {ghStatus?.connected && ghStatus.repoUrl && (
-              <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600">
+              <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 dark:text-slate-400">
                 <span>
                   จำนวนไฟล์ที่ซิงค์:{' '}
-                  <strong className="font-mono text-slate-900">
+                  <strong className="font-mono text-slate-900 dark:text-slate-100">
                     {ghStatus.fileCount}
                   </strong>
                 </span>
                 {formattedLastSync && (
                   <span>
                     อัปเดตล่าสุด:{' '}
-                    <strong className="font-mono text-slate-900">
+                    <strong className="font-mono text-slate-900 dark:text-slate-100">
                       {formattedLastSync} น.
                     </strong>
                   </span>
@@ -658,7 +658,7 @@ TELEGRAM_MODE=always`;
                   href={ghStatus.repoUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 font-medium text-blue-600 hover:underline"
+                  className="inline-flex items-center gap-1 font-medium text-blue-600 hover:underline dark:text-blue-400"
                 >
                   เปิดดู Repo <ExternalLink className="h-3.5 w-3.5" />
                 </a>
@@ -667,7 +667,7 @@ TELEGRAM_MODE=always`;
                     href={ghStatus.lastCommitUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1 font-medium text-emerald-700 hover:underline"
+                    className="inline-flex items-center gap-1 font-medium text-emerald-700 hover:underline dark:text-emerald-400"
                   >
                     Commit ล่าสุด <ExternalLink className="h-3.5 w-3.5" />
                   </a>
@@ -680,8 +680,8 @@ TELEGRAM_MODE=always`;
             <div
               className={`flex items-start gap-2 rounded-lg border px-3.5 py-2.5 text-xs ${
                 ghFeedback.type === 'success'
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                  : 'border-rose-200 bg-rose-50 text-rose-800'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/50 dark:text-emerald-200'
+                  : 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/30 dark:bg-rose-950/50 dark:text-rose-200'
               }`}
             >
               {ghFeedback.type === 'success' ? (
@@ -694,13 +694,13 @@ TELEGRAM_MODE=always`;
           )}
 
           {ghStatus?.lastError && !ghFeedback && (
-            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/50 dark:text-amber-200">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>สถานะซิงค์ล่าสุด: {ghStatus.lastError}</span>
             </div>
           )}
 
-          <p className="text-xs leading-relaxed text-slate-600">
+          <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-400">
             ความปลอดภัย: ระบบตัดไฟล์ลับ (<code className="font-mono">.env</code>,{' '}
             <code className="font-mono">.data/</code>, Bot Token และ GitHub Token)
             ออกก่อนอัปโหลดขึ้น GitHub ทุกครั้งเพื่อไม่ให้รหัสผ่านรั่วไหล
@@ -711,28 +711,28 @@ TELEGRAM_MODE=always`;
       {/* Bottom Grid: ZIP Download & 24/7 Cloud Hosting Guide */}
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-12 items-start">
         {/* Left: One-click ZIP Download & Run Commands */}
-        <div className="lg:col-span-7 space-y-5 rounded-xl border border-slate-200/90 bg-white p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+        <div className="lg:col-span-7 space-y-5 rounded-xl border border-slate-200/90 bg-white p-6 dark:border-slate-800/90 dark:bg-[#0e1525]">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4 dark:border-slate-800">
             <div className="flex items-center gap-2.5">
-              <FileArchive className="h-5 w-5 text-blue-600" />
+              <FileArchive className="h-5 w-5 text-blue-600 dark:text-blue-400" />
               <div>
-                <h2 className="text-base font-semibold text-slate-900">
+                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                   ดาวน์โหลดซอร์สโค้ด (.zip) ขึ้น Server เอง
                 </h2>
-                <p className="mt-0.5 text-[13px] text-slate-600">
+                <p className="mt-0.5 text-[13px] text-slate-600 dark:text-slate-400">
                   แพ็กเกจเต็มพร้อมไฟล์ server.ts, หน้าเว็บ React, Dockerfile และ render.yaml
                 </p>
               </div>
             </div>
             {fileCount !== null && (
-              <span className="font-mono text-xs font-medium text-slate-600 tabular-nums">
+              <span className="font-mono text-xs font-medium text-slate-600 tabular-nums dark:text-slate-400">
                 {fileCount} ไฟล์
               </span>
             )}
           </div>
 
-          <div className="rounded-xl bg-blue-50/70 p-4 sm:p-5 space-y-3.5">
-            <p className="text-[13px] text-slate-700 leading-relaxed">
+          <div className="rounded-xl border border-transparent bg-blue-50/70 p-4 sm:p-5 space-y-3.5 dark:border-blue-500/20 dark:bg-blue-950/35">
+            <p className="text-[13px] text-slate-700 leading-relaxed dark:text-slate-300">
               ไฟล์ <strong>.zip</strong> นี้ตัดข้อมูลชั่วคราว (<code>node_modules</code>,{' '}
               <code>.data</code>, และ secret ส่วนตัว) ออกเรียบร้อยแล้ว สามารถแตกไฟล์ไปติดตั้งบน{' '}
               <strong>Render, Railway, Fly.io, Docker</strong> หรือ <strong>VPS</strong> ได้ทันที
@@ -749,21 +749,21 @@ TELEGRAM_MODE=always`;
                 : 'ดาวน์โหลดโค้ดทั้งหมด (ao-signal-studio-server.zip)'}
             </button>
             {downloadErr && (
-              <p className="text-xs text-rose-700">{downloadErr}</p>
+              <p className="text-xs text-rose-700 dark:text-rose-400">{downloadErr}</p>
             )}
           </div>
 
           {/* Commands to Run on Any Server */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
-                <Terminal className="h-3.5 w-3.5 text-slate-500" />
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200">
+                <Terminal className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
                 <span>คำสั่งติดตั้งและรันจริง (Node.js 22+)</span>
               </div>
               <button
                 type="button"
                 onClick={() => void handleCopy('cmds', runCommands)}
-                className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
+                className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
               >
                 {copiedId === 'cmds' ? (
                   <>
@@ -778,12 +778,12 @@ TELEGRAM_MODE=always`;
                 )}
               </button>
             </div>
-            <pre className="overflow-x-auto rounded-lg bg-slate-900 p-3.5 font-mono text-xs text-slate-100 leading-relaxed">
+            <pre className="overflow-x-auto rounded-lg border border-transparent bg-slate-900 p-3.5 font-mono text-xs text-slate-100 leading-relaxed dark:border-slate-800 dark:bg-slate-950">
               {runCommands}
             </pre>
-            <p className="text-[11px] text-slate-500">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
               หมายเหตุ: หากเซิร์ฟเวอร์ใช้ Node 18 หรือ 20 ให้รันด้วย{' '}
-              <code className="font-mono text-slate-700">
+              <code className="font-mono text-slate-700 dark:text-slate-300">
                 NODE_ENV=production npx tsx server.ts
               </code>
             </p>
@@ -792,13 +792,13 @@ TELEGRAM_MODE=always`;
           {/* .env Template */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-800">
+              <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
                 ค่า Environment Variables (.env) เพื่อให้แจ้งเตือนไม่หลุดเมื่อรีสตาร์ท
               </span>
               <button
                 type="button"
                 onClick={() => void handleCopy('env', envTemplate)}
-                className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
+                className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
               >
                 {copiedId === 'env' ? (
                   <>
@@ -813,7 +813,7 @@ TELEGRAM_MODE=always`;
                 )}
               </button>
             </div>
-            <pre className="overflow-x-auto rounded-lg bg-slate-900 p-3.5 font-mono text-xs text-emerald-300 leading-relaxed">
+            <pre className="overflow-x-auto rounded-lg border border-transparent bg-slate-900 p-3.5 font-mono text-xs text-emerald-300 leading-relaxed dark:border-slate-800 dark:bg-slate-950">
               {envTemplate}
             </pre>
           </div>
@@ -821,56 +821,56 @@ TELEGRAM_MODE=always`;
 
         {/* Right: Free 24/7 Cloud Hosting Guide + File List */}
         <div className="lg:col-span-5 space-y-5">
-          <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 space-y-3.5">
+          <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 space-y-3.5 dark:border-slate-800/90 dark:bg-[#0e1525]">
             <div className="flex items-center gap-2">
-              <Cloud className="h-4 w-4 text-blue-600" />
-              <h3 className="text-[15px] font-semibold text-slate-900">
+              <Cloud className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              <h3 className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">
                 วิธีนำไปรันฟรี 24 ชม. บน Render / Railway
               </h3>
             </div>
-            <ol className="space-y-2.5 text-[13px] text-slate-600 list-decimal list-inside leading-relaxed">
+            <ol className="space-y-2.5 text-[13px] text-slate-600 list-decimal list-inside leading-relaxed dark:text-slate-400">
               <li>
                 เชื่อมต่อ <strong>GitHub.com</strong> ด้านบนเพื่อให้โค้ดทั้งหมดอัปโหลดขึ้น Repo อัตโนมัติ
                 (หรือแตกไฟล์ <strong>.zip</strong> อัปโหลดขึ้นเองก็ได้)
               </li>
               <li>
                 ไปที่ <strong>Render.com</strong> → New Web Service → เลือก Repo ที่ซิงค์ไว้ (ระบบจะอ่าน{' '}
-                <code className="font-mono text-slate-800">render.yaml</code> และ Deploy ให้อัตโนมัติทุกครั้งที่โค้ดอัปเดต)
+                <code className="font-mono text-slate-800 dark:text-slate-200">render.yaml</code> และ Deploy ให้อัตโนมัติทุกครั้งที่โค้ดอัปเดต)
               </li>
               <li>
-                ใส่ค่า <code className="font-mono text-slate-800">TELEGRAM_BOT_TOKEN</code> และ{' '}
-                <code className="font-mono text-slate-800">TELEGRAM_CHAT_ID</code> ใน{' '}
+                ใส่ค่า <code className="font-mono text-slate-800 dark:text-slate-200">TELEGRAM_BOT_TOKEN</code> และ{' '}
+                <code className="font-mono text-slate-800 dark:text-slate-200">TELEGRAM_CHAT_ID</code> ใน{' '}
                 <strong>Environment Variables</strong>
               </li>
               <li>
                 ตั้ง <strong>UptimeRobot</strong> (ฟรี) ให้เรียก{' '}
-                <code className="font-mono text-slate-800">https://โดเมนของคุณ/api/health</code>{' '}
+                <code className="font-mono text-slate-800 dark:text-slate-200">https://โดเมนของคุณ/api/health</code>{' '}
                 ทุก 5 นาที เพื่อกัน Render Free Tier หลับ ระบบจะได้เฝ้า M15 และส่งเข้า Telegram ตลอด 24 ชม.
               </li>
             </ol>
           </div>
 
-          <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 space-y-3">
+          <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 space-y-3 dark:border-slate-800/90 dark:bg-[#0e1525]">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Server className="h-4 w-4 text-slate-600" />
-                <h3 className="text-[15px] font-semibold text-slate-900">
+                <Server className="h-4 w-4 text-slate-600 dark:text-slate-400" />
+                <h3 className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">
                   ไฟล์โค้ดที่จะถูกซิงค์ขึ้น GitHub
                 </h3>
               </div>
-              <span className="font-mono text-xs text-slate-500 tabular-nums">
+              <span className="font-mono text-xs text-slate-500 tabular-nums dark:text-slate-400">
                 {filesPreview.length} + signals-log.json
               </span>
             </div>
             {filesPreview.length > 0 ? (
-              <div className="max-h-56 overflow-y-auto rounded-lg bg-slate-50 p-3.5 font-mono text-xs text-slate-700 space-y-1">
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-transparent bg-slate-50 p-3.5 font-mono text-xs text-slate-700 space-y-1 dark:border-slate-800 dark:bg-slate-900/80 dark:text-slate-300">
                 {filesPreview.map((file) => (
                   <div key={file}>{file}</div>
                 ))}
-                <div className="text-blue-700 font-medium">data/signals-log.json (อัปเดตสัญญาณ M15)</div>
+                <div className="text-blue-700 font-medium dark:text-blue-400">data/signals-log.json (อัปเดตสัญญาณ M15)</div>
               </div>
             ) : (
-              <p className="text-[13px] text-slate-500">กำลังโหลดรายการไฟล์...</p>
+              <p className="text-[13px] text-slate-500 dark:text-slate-400">กำลังโหลดรายการไฟล์...</p>
             )}
           </div>
         </div>
