@@ -67,6 +67,7 @@ interface M15CisdChartViewProps {
   onOpenStatusWindow?: () => void;
   disableAlerts?: boolean;
   onGoToM15?: () => void;
+  splitRole?: 'combined_top';
 }
 
 interface LiveM15FeedResponse {
@@ -170,7 +171,9 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
   onOpenStatusWindow,
   disableAlerts = false,
   onGoToM15,
+  splitRole,
 }) => {
+  const isCombinedTop = splitRole === 'combined_top';
   const activeTimeframe: CisdTimeframe = controlledTimeframe ?? 'M15';
   const alertsDisabled = Boolean(disableAlerts);
 
@@ -1059,7 +1062,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
 
   // Geometry matching MT5 Black Terminal Layout (single clean candlestick pane)
   const svgW = 860;
-  const priceH = 420;
+  const priceH = isCombinedTop ? 310 : 420;
   const xAxisY = priceH;
   const totalH = xAxisY + 26;
 
@@ -1113,7 +1116,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
   const priceTickRatios = [0.06, 0.21, 0.36, 0.51, 0.66, 0.81, 0.94];
 
   return (
-    <section className="space-y-6">
+    <section className={isCombinedTop ? 'space-y-3' : 'space-y-6'}>
       {/* Compact Visual Brand Card (Studio/Preview mode only; hidden on deployed live web) */}
       {!isWebMode && (
         <div className="relative overflow-hidden rounded-2xl border border-slate-800/80 bg-[#090d16] text-white shadow-sm">
@@ -1500,7 +1503,13 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
       )}
 
       {/* Full-Width MT5 Black CISD Chart */}
-      <div className="flex flex-col rounded-xl border border-neutral-800 bg-black p-3 sm:p-4 text-neutral-200 shadow-sm">
+      <div
+        className={
+          isCombinedTop
+            ? 'flex flex-col rounded-t-2xl rounded-b-none border border-neutral-800 border-b-2 border-b-neutral-700 bg-[#05080f] p-3 sm:p-4 text-neutral-200 shadow-sm'
+            : 'flex flex-col rounded-xl border border-neutral-800 bg-black p-3 sm:p-4 text-neutral-200 shadow-sm'
+        }
+      >
           {/* Top Readout Strip */}
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-neutral-900 px-1 pb-2 text-xs">
             <div className="flex flex-wrap items-center gap-2.5">
@@ -1923,8 +1932,8 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
           </div>
       </div>
 
-      {/* Server Auto-Monitor US100 M15 + One-Tap Mobile Push Card (hidden on M5 silent view) */}
-      {alertsDisabled ? (
+      {/* Server Auto-Monitor US100 M15 + One-Tap Mobile Push Card (hidden on M5 silent view & combined split view) */}
+      {!isCombinedTop && (alertsDisabled ? (
         <div className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
             <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-sky-500" />
@@ -2065,10 +2074,10 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
             )}
           </div>
         </div>
-      )}
+      ))}
 
       {/* 4-Column Summary Strip (shown in Studio mode only) */}
-      {!isWebMode && (
+      {!isWebMode && !isCombinedTop && (
         <div className="grid grid-cols-2 gap-4 rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6 lg:grid-cols-4 lg:gap-0 lg:divide-x lg:divide-slate-100">
           <div className="lg:pr-6">
             <p className="text-xs font-medium text-slate-500">สินทรัพย์ · ไทม์เฟรม</p>
@@ -2102,7 +2111,7 @@ export const M15CisdChartView: React.FC<M15CisdChartViewProps> = ({
       )}
 
       {/* XM MT5 Live Bridge Card (shown in Studio/preview mode only; hidden on deployed live web) */}
-      {!isWebMode && (
+      {!isWebMode && !isCombinedTop && (
         <div className="rounded-xl border border-slate-200/90 bg-white p-5 sm:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1.5 max-w-2xl">
