@@ -3178,8 +3178,8 @@ function formatTelegramSignalMessage(params: {
             : ''
         }`;
     const step2 = isSell
-      ? 'Step 2 (M1): เด้งปิด Stoch(15,3,3) > 80 🔴⬆️'
-      : 'Step 2 (M1): ย่อปิด Stoch(15,3,3) < 20 🟢⬇️';
+      ? 'Step 2 (M1): เด้งปิด Stoch(15,3,3) &gt; 80 🔴⬆️'
+      : 'Step 2 (M1): ย่อปิด Stoch(15,3,3) &lt; 20 🟢⬇️';
     const stochText =
       typeof params.stochK === 'number' && Number.isFinite(params.stochK)
         ? params.stochK.toFixed(2)
@@ -3196,13 +3196,13 @@ function formatTelegramSignalMessage(params: {
     return [
       `<b>${header}</b>`,
       '──────────────',
-      step1,
+      escapeTelegramHtml(step1),
       step2,
-      `ค่า Stoch(15,3,3): ${stochText}`,
-      `ราคาปิดแท่ง M1: ${priceText}`,
-      ...(roundLine ? [roundLine] : []),
-      `โหมด: ${modeLabel}`,
-      `เวลาปิดแท่ง: ${timeText} น.`,
+      `ค่า Stoch(15,3,3): ${escapeTelegramHtml(stochText)}`,
+      `ราคาปิดแท่ง M1: ${escapeTelegramHtml(priceText)}`,
+      ...(roundLine ? [escapeTelegramHtml(roundLine)] : []),
+      `โหมด: ${escapeTelegramHtml(modeLabel)}`,
+      `เวลาปิดแท่ง: ${escapeTelegramHtml(timeText)} น.`,
     ].join('\n');
   }
 
