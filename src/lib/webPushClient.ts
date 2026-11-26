@@ -170,6 +170,7 @@ export async function dispatchMobileSignalNotification(params: {
   mode: 'live' | 'sim';
   timestampIso: string;
   prefix?: string;
+  skipServerNotify?: boolean;
 }): Promise<MobileSignalDispatchResult> {
   let deliveredWebPushCount = 0;
   let deliveredToNtfy = false;
@@ -179,32 +180,36 @@ export async function dispatchMobileSignalNotification(params: {
   let deduplicated = false;
   let skipped = false;
 
-  try {
-    const res = await fetch('/api/monitor/notify-signal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-    if (res.ok) {
-      const data = (await res.json().catch(() => ({}))) as {
-        deliveredWebPushCount?: number;
-        deliveredToNtfy?: boolean;
-        deliveredToTelegram?: boolean;
-        telegramError?: string;
-        telegramMissingToken?: boolean;
-        deduplicated?: boolean;
-        skipped?: boolean;
-      };
-      deliveredWebPushCount = Number(data.deliveredWebPushCount ?? 0);
-      deliveredToNtfy = Boolean(data.deliveredToNtfy);
-      deliveredToTelegram = Boolean(data.deliveredToTelegram);
-      telegramError = data.telegramError;
-      telegramMissingToken = Boolean(data.telegramMissingToken);
-      deduplicated = Boolean(data.deduplicated);
-      skipped = Boolean(data.skipped);
+  if (!params.skipServerNotify) {
+    try {
+      const res = await fetch('/api/monitor/notify-signal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      if (res.ok) {
+        const data = (await res.json().catch(() => ({}))) as {
+          deliveredWebPushCount?: number;
+          deliveredToNtfy?: boolean;
+          deliveredToTelegram?: boolean;
+          telegramError?: string;
+          telegramMissingToken?: boolean;
+          deduplicated?: boolean;
+          skipped?: boolean;
+        };
+        deliveredWebPushCount = Number(data.deliveredWebPushCount ?? 0);
+        deliveredToNtfy = Boolean(data.deliveredToNtfy);
+        deliveredToTelegram = Boolean(data.deliveredToTelegram);
+        telegramError = data.telegramError;
+        telegramMissingToken = Boolean(data.telegramMissingToken);
+        deduplicated = Boolean(data.deduplicated);
+        skipped = Boolean(data.skipped);
+      }
+    } catch {
+      // Fallback to local mobile notification below if browser permitted
     }
-  } catch {
-    // Fallback to local mobile notification below if browser permitted
+  } else {
+    deduplicated = true;
   }
 
   // Always show local browser/PWA notification if no Web Push delivered to phone (even when server deduplicated background cycle)
