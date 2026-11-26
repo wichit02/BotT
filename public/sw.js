@@ -8,8 +8,8 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('push', (event) => {
   let payload = {
-    title: 'Cisd เตือน',
-    body: 'ตรวจพบสัญญาณ US100 M15',
+    title: 'CST',
+    body: 'ตรวจพบสัญญาณ US100 M15 / M1',
     tag: 'cisd-m15-signal',
     url: '/',
   };
