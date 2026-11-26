@@ -30,6 +30,7 @@ import { loadSavedGithubConfig } from './lib/githubStorage';
 import cisdLogoImg from './assets/images/cisd_brand_logo_1795106433027.jpg';
 
 type ActiveSection =
+  | 't01'
   | 'm15'
   | 'm1'
   | 'mtf'
@@ -40,8 +41,9 @@ type ActiveSection =
   | 'deploy';
 
 const NAV_ITEMS: Array<{ id: ActiveSection; label: string }> = [
-  { id: 'm15', label: 'กราฟ M15' },
-  { id: 'm1', label: 'Stoch M1' },
+  { id: 't01', label: 'กราฟ M15 + M1' },
+  { id: 'm15', label: 'เฉพาะ M15' },
+  { id: 'm1', label: 'เฉพาะ M1' },
   { id: 'mtf', label: 'สถานะ M15/M1' },
   { id: 'mql5', label: 'โค้ด MQL5' },
   { id: 'android', label: 'ตั้งค่ามือถือ' },
@@ -51,6 +53,7 @@ const NAV_ITEMS: Array<{ id: ActiveSection; label: string }> = [
 ];
 
 const SECTION_DESCRIPTIONS: Record<ActiveSection, string> = {
+  t01: 'หน้าจอแยก 2 กราฟ ท่า T01: ด้านบน M15 CISD · ด้านล่าง M1 + Stoch(15,3,3) อัปเดตและแจ้งเตือนครบในหน้าเดียว',
   m15: 'ตรวจสอบแท่งเทียนระบบ CISD Timeframe M15 พร้อมขีดเส้นและแจ้งเตือนทันที',
   m1: 'กราฟ US100 Timeframe M1 พร้อม Stoch(15,3,3) แจ้งเตือนปิด > 80 / < 20 ครั้งเดียวต่อฝั่ง',
   mtf: 'สรุปสถานะล่าสุดของ CISD M15 และ Stoch(15,3,3) M1 ดูง่าย สบายตา',
@@ -75,15 +78,16 @@ export default function App() {
     parseInitialCisdTimeframe
   );
   const [activeSection, setActiveSection] = useState<ActiveSection>(() => {
-    if (typeof window === 'undefined') return 'm15';
+    if (typeof window === 'undefined') return 't01';
     const params = new URLSearchParams(window.location.search);
     const view = params.get('tab')?.toLowerCase();
     const tf = params.get('tf')?.toUpperCase();
+    if (view === 't01') return 't01';
     if (view === 'm15' || tf === 'M15') return 'm15';
     if (view === 'm1' || tf === 'M1') return 'm1';
     if (view === 'mtf') return 'mtf';
     if (view === 'telegram') return 'telegram';
-    return 'm15';
+    return 't01';
   });
   const [mql5Config, setMql5Config] = useState<Mql5Config>(DEFAULT_MQL5_CONFIG);
   const [signals, setSignals] = useState<SignalLogRecord[]>([]);
@@ -249,7 +253,7 @@ export default function App() {
                 href="#top"
                 onClick={(e) => {
                   e.preventDefault();
-                  setActiveSection('m15');
+                  setActiveSection('t01');
                 }}
                 className="inline-flex items-center gap-2.5 text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
               >
@@ -357,13 +361,14 @@ export default function App() {
 
           {/* Back button when opening sub-views outside the main Web Mode tabs */}
           {isWebMode &&
+            activeSection !== 't01' &&
             activeSection !== 'm15' &&
             activeSection !== 'm1' &&
             activeSection !== 'mtf' && (
               <div className="mb-4">
                 <button
                   type="button"
-                  onClick={() => setActiveSection('m15')}
+                  onClick={() => setActiveSection('t01')}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" />
@@ -381,7 +386,9 @@ export default function App() {
             {!isWebMode && (
               <div>
                 <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl text-balance">
-                  {activeSection === 'm1'
+                  {activeSection === 't01'
+                    ? 'ท่า T01 · กราฟคู่ M15 CISD + M1 Stoch(15,3,3)'
+                    : activeSection === 'm1'
                     ? 'ท่า T01 · Stoch(15,3,3) M1'
                     : activeSection === 'mtf'
                     ? 'สรุปสถานะ ท่า T01 (M15 CISD · M1 Stoch)'
@@ -396,10 +403,22 @@ export default function App() {
             )}
 
             {isWebMode &&
-              (activeSection === 'm15' ||
+              (activeSection === 't01' ||
+                activeSection === 'm15' ||
                 activeSection === 'm1' ||
                 activeSection === 'mtf') && (
                 <div className="inline-flex flex-wrap items-center gap-1 self-start rounded-lg bg-slate-200/75 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setActiveSection('t01')}
+                    className={`h-9 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors ${
+                      activeSection === 't01'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    M15 + M1
+                  </button>
                   <button
                     type="button"
                     onClick={() => setActiveSection('m15')}
@@ -438,6 +457,35 @@ export default function App() {
           </div>
 
           {/* Active Workspace View */}
+          {activeSection === 't01' && (
+            <div className="space-y-0">
+              <M15CisdChartView
+                key="cisd-m15-split-top"
+                customPrefix={mql5Config.customPrefix}
+                onSignalDetected={handleSignalDetected}
+                recentSignals={signals}
+                onGoToSheets={() => setActiveSection('sheets')}
+                onGoToTelegram={() => setActiveSection('telegram')}
+                telegramSyncedReady={telegramSyncedReady}
+                isWebMode={isWebMode}
+                timeframe={cisdTimeframe}
+                onChangeTimeframe={setCisdTimeframe}
+                onOpenStatusWindow={() => setActiveSection('mtf')}
+                disableAlerts={false}
+                splitRole="combined_top"
+              />
+              <StochM1ChartView
+                key="stoch-m1-split-bottom"
+                customPrefix={mql5Config.customPrefix}
+                onSignalDetected={handleSignalDetected}
+                onGoToTelegram={() => setActiveSection('telegram')}
+                telegramSyncedReady={telegramSyncedReady}
+                isWebMode={isWebMode}
+                splitRole="combined_bottom"
+              />
+            </div>
+          )}
+
           {activeSection === 'm1' && (
             <StochM1ChartView
               key="stoch-m1"
@@ -507,7 +555,7 @@ export default function App() {
             <ServerDeployPanel
               onPreviewWebMode={() => {
                 setDevPreviewWeb(true);
-                setActiveSection('m15');
+                setActiveSection('t01');
               }}
             />
           )}
