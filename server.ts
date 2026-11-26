@@ -206,6 +206,7 @@ interface PersistedServerState {
   telegramBotToken: string;
   telegramChatId: string;
   telegramMode: 'fallback' | 'always';
+  telegramSenderEnabled: boolean;
   direction: 'both' | 'buy_only' | 'sell_only';
   m15Direction: 'both' | 'buy_only' | 'sell_only';
   aoImmediateCross: boolean;
@@ -213,6 +214,7 @@ interface PersistedServerState {
   cisdTimeframes: CisdTimeframe[];
   subscriptions: StoredPushSubscription[];
   events: MonitorAlertEvent[];
+  dispatchedKeys: string[];
   githubToken: string;
   githubOwner: string;
   githubRepo: string;
@@ -347,6 +349,10 @@ function loadPersistedState(): PersistedServerState {
           parsed.telegramMode === 'fallback' || parsed.telegramMode === 'always'
             ? parsed.telegramMode
             : envTgMode,
+        telegramSenderEnabled:
+          typeof parsed.telegramSenderEnabled === 'boolean'
+            ? parsed.telegramSenderEnabled
+            : true,
         direction:
           parsed.direction === 'buy_only' || parsed.direction === 'sell_only'
             ? parsed.direction
@@ -361,6 +367,9 @@ function loadPersistedState(): PersistedServerState {
         cisdTimeframes: ['M15'],
         subscriptions: Array.isArray(parsed.subscriptions) ? parsed.subscriptions : [],
         events: Array.isArray(parsed.events) ? parsed.events.slice(0, 30) : [],
+        dispatchedKeys: Array.isArray(parsed.dispatchedKeys)
+          ? parsed.dispatchedKeys.filter((k): k is string => typeof k === 'string').slice(-300)
+          : [],
         githubToken:
           typeof parsed.githubToken === 'string' && parsed.githubToken
             ? parsed.githubToken
@@ -426,6 +435,7 @@ function loadPersistedState(): PersistedServerState {
     telegramBotToken: envTgToken,
     telegramChatId: envTgChatId,
     telegramMode: envTgMode,
+    telegramSenderEnabled: true,
     direction: 'both',
     m15Direction: 'both',
     aoImmediateCross: true,
@@ -433,6 +443,7 @@ function loadPersistedState(): PersistedServerState {
     cisdTimeframes: ['M15'],
     subscriptions: [],
     events: [],
+    dispatchedKeys: [],
     githubToken: envGithubToken,
     githubOwner: envGithubOwner,
     githubRepo: envGithubRepo,
@@ -476,17 +487,51 @@ const monitorRuntime = {
   dispatchedLiveSignalKeys: new Set<string>(),
 };
 
-function markLiveSignalDispatched(key: string) {
+function getCanonicalLiveSignalKey(
+  strategy: 'AO' | 'CISD' | 'STOCH',
+  timeframe: string,
+  symbol: string,
+  timestampIso: string,
+  signal: 'BUY' | 'SELL'
+): string {
+  const tf = timeframe.toUpperCase();
+  const sym = symbol.toUpperCase();
+  if (strategy === 'STOCH') {
+    return `live-${tf}-T01-${sym}-${timestampIso}-${signal}`;
+  }
+  return `live-${tf}-${strategy}-${sym}-${timestampIso}-${signal}`;
+}
+
+function markLiveSignalDispatched(key: string, persistState = true) {
   monitorRuntime.dispatchedLiveSignalKeys.add(key);
   if (monitorRuntime.dispatchedLiveSignalKeys.size > 300) {
     const first = monitorRuntime.dispatchedLiveSignalKeys.values().next().value;
     if (first) monitorRuntime.dispatchedLiveSignalKeys.delete(first);
   }
+  if (!persisted.dispatchedKeys.includes(key)) {
+    persisted.dispatchedKeys.push(key);
+    if (persisted.dispatchedKeys.length > 300) {
+      persisted.dispatchedKeys = persisted.dispatchedKeys.slice(-300);
+    }
+    if (persistState) {
+      savePersistedState(persisted);
+    }
+  }
 }
 
+for (const key of persisted.dispatchedKeys) {
+  monitorRuntime.dispatchedLiveSignalKeys.add(key);
+}
 for (const ev of persisted.events) {
   if (ev.id) {
-    markLiveSignalDispatched(`live-${ev.id}`);
+    markLiveSignalDispatched(`live-${ev.id}`, false);
+    const roundMatch = ev.id.match(/^M1-T01-([A-Z0-9]+)-(.+)-(BUY|SELL)-R\d+$/);
+    if (roundMatch) {
+      markLiveSignalDispatched(
+        getCanonicalLiveSignalKey('STOCH', 'M1', roundMatch[1], roundMatch[2], roundMatch[3] as 'BUY' | 'SELL'),
+        false
+      );
+    }
   }
 }
 
@@ -3291,12 +3336,21 @@ async function fetchTelegramBotInfo(botToken: string): Promise<{
   }
 }
 
+const recentTelegramSignalCache = new Map<string, number>();
+
 async function sendTelegramPush(
   botToken: string,
   chatId: string,
   text: string,
-  parseMode?: 'HTML'
-): Promise<{ ok: boolean; error?: string; botUrl?: string; botUsername?: string }> {
+  parseMode?: 'HTML',
+  options?: { dedupeKey?: string; dedupeWindowMs?: number }
+): Promise<{
+  ok: boolean;
+  deduplicated?: boolean;
+  error?: string;
+  botUrl?: string;
+  botUsername?: string;
+}> {
   const token = sanitizeTelegramToken(botToken);
   const chat = chatId.trim();
   if (!token || !chat) {
@@ -3314,6 +3368,25 @@ async function sendTelegramPush(
     };
   }
 
+  const dedupeWindowMs = options?.dedupeWindowMs ?? 0;
+  let signalFingerprint: string | null = null;
+  if (dedupeWindowMs > 0) {
+    const rawKey = options?.dedupeKey
+      ? `${chat}|${options.dedupeKey}`
+      : `${chat}|${crypto.createHash('sha256').update(text).digest('hex')}`;
+    const now = Date.now();
+    for (const [k, exp] of recentTelegramSignalCache.entries()) {
+      if (exp <= now) recentTelegramSignalCache.delete(k);
+    }
+    const existingExp = recentTelegramSignalCache.get(rawKey);
+    if (existingExp && existingExp > now) {
+      return { ok: true, deduplicated: true };
+    }
+    signalFingerprint = rawKey;
+    // Reserve immediately before awaiting network fetch to block concurrent duplicate dispatches
+    recentTelegramSignalCache.set(rawKey, now + dedupeWindowMs);
+  }
+
   try {
     const res = await fetch(
       `https://api.telegram.org/bot${token}/sendMessage`,
@@ -3329,6 +3402,9 @@ async function sendTelegramPush(
       }
     );
     if (!res.ok) {
+      if (signalFingerprint) {
+        recentTelegramSignalCache.delete(signalFingerprint);
+      }
       const errBody = (await res.json().catch(() => ({}))) as { description?: string };
       const rawDesc = errBody.description || `Telegram HTTP ${res.status}`;
       const info = await fetchTelegramBotInfo(token);
@@ -3364,6 +3440,9 @@ async function sendTelegramPush(
     }
     return { ok: true };
   } catch (err: any) {
+    if (signalFingerprint) {
+      recentTelegramSignalCache.delete(signalFingerprint);
+    }
     return { ok: false, error: err?.message || 'เชื่อมต่อ Telegram API ไม่สำเร็จ' };
   }
 }
@@ -3482,7 +3561,13 @@ async function runBackgroundMonitorCycle() {
 
                 const eventId = `${cisdTf}-CISD-${sym}-${closedBar.timestampIso}-${closedBar.cisdSignal}`;
                 const legacyEventId = `${cisdTf}-${sym}-${closedBar.timestampIso}-${closedBar.cisdSignal}`;
-                const dedupeKey = `live-${eventId}`;
+                const dedupeKey = getCanonicalLiveSignalKey(
+                  'CISD',
+                  cisdTf,
+                  sym,
+                  closedBar.timestampIso,
+                  closedBar.cisdSignal
+                );
                 const alreadyRecorded = persisted.events.some(
                   (e) => e.id === eventId || e.id === legacyEventId
                 );
@@ -3519,6 +3604,7 @@ async function runBackgroundMonitorCycle() {
                   ]);
 
                   const shouldSendTelegram =
+                    persisted.telegramSenderEnabled &&
                     Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
                     (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
 
@@ -3538,7 +3624,8 @@ async function runBackgroundMonitorCycle() {
                           mode: 'live',
                           timestampIso: closedBar.timestampIso,
                         }),
-                        'HTML'
+                        'HTML',
+                        { dedupeKey, dedupeWindowMs: 15 * 60 * 1000 }
                       )
                     : { ok: false, error: undefined };
 
@@ -3668,7 +3755,18 @@ async function runBackgroundMonitorCycle() {
                 }
                 // closedBar.stochK < 20
                 persisted.stochM1LastSide = 'UNDER_20';
-                if (persisted.t01WaitingReset || closedBar.timestampIso === persisted.t01LastAlertBarIso) {
+                const dedupeKey = getCanonicalLiveSignalKey(
+                  'STOCH',
+                  'M1',
+                  sym,
+                  closedBar.timestampIso,
+                  'BUY'
+                );
+                if (
+                  persisted.t01WaitingReset ||
+                  closedBar.timestampIso === persisted.t01LastAlertBarIso ||
+                  monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)
+                ) {
                   syncPersistence();
                   continue;
                 }
@@ -3677,6 +3775,7 @@ async function runBackgroundMonitorCycle() {
                 persisted.t01RoundCount += 1;
                 persisted.t01LastAlertBarIso = closedBar.timestampIso;
                 persisted.stochM1LastAlertBarIso = closedBar.timestampIso;
+                markLiveSignalDispatched(dedupeKey, false);
                 syncPersistence();
 
                 const dirMatch =
@@ -3684,11 +3783,9 @@ async function runBackgroundMonitorCycle() {
                   persisted.stochM1Direction === 'under20_only';
                 const roundNum = persisted.t01RoundCount;
                 const eventId = `M1-T01-${sym}-${closedBar.timestampIso}-BUY-R${roundNum}`;
-                const dedupeKey = `live-${eventId}`;
-                if (!dirMatch || monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)) {
+                if (!dirMatch) {
                   continue;
                 }
-                markLiveSignalDispatched(dedupeKey);
 
                 const title = `ท่า T01 BUY (รอบ ${roundNum}): ${sym}`;
                 const body = `${sym} M15 CISD ขึ้น + M1 Stoch ปิด < 20 (${closedBar.stochK.toFixed(
@@ -3708,6 +3805,7 @@ async function runBackgroundMonitorCycle() {
                 ]);
 
                 const shouldSendTelegram =
+                  persisted.telegramSenderEnabled &&
                   Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
                   (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
 
@@ -3729,7 +3827,8 @@ async function runBackgroundMonitorCycle() {
                         mode: 'live',
                         timestampIso: closedBar.timestampIso,
                       }),
-                      'HTML'
+                      'HTML',
+                      { dedupeKey, dedupeWindowMs: 15 * 60 * 1000 }
                     )
                   : { ok: false, error: undefined };
 
@@ -3771,7 +3870,18 @@ async function runBackgroundMonitorCycle() {
                 }
                 // closedBar.stochK > 80
                 persisted.stochM1LastSide = 'OVER_80';
-                if (persisted.t01WaitingReset || closedBar.timestampIso === persisted.t01LastAlertBarIso) {
+                const dedupeKey = getCanonicalLiveSignalKey(
+                  'STOCH',
+                  'M1',
+                  sym,
+                  closedBar.timestampIso,
+                  'SELL'
+                );
+                if (
+                  persisted.t01WaitingReset ||
+                  closedBar.timestampIso === persisted.t01LastAlertBarIso ||
+                  monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)
+                ) {
                   syncPersistence();
                   continue;
                 }
@@ -3780,6 +3890,7 @@ async function runBackgroundMonitorCycle() {
                 persisted.t01RoundCount += 1;
                 persisted.t01LastAlertBarIso = closedBar.timestampIso;
                 persisted.stochM1LastAlertBarIso = closedBar.timestampIso;
+                markLiveSignalDispatched(dedupeKey, false);
                 syncPersistence();
 
                 const dirMatch =
@@ -3787,11 +3898,9 @@ async function runBackgroundMonitorCycle() {
                   persisted.stochM1Direction === 'over80_only';
                 const roundNum = persisted.t01RoundCount;
                 const eventId = `M1-T01-${sym}-${closedBar.timestampIso}-SELL-R${roundNum}`;
-                const dedupeKey = `live-${eventId}`;
-                if (!dirMatch || monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)) {
+                if (!dirMatch) {
                   continue;
                 }
-                markLiveSignalDispatched(dedupeKey);
 
                 const title = `ท่า T01 SELL (รอบ ${roundNum}): ${sym}`;
                 const body = `${sym} M15 CISD ลง + M1 Stoch ปิด > 80 (${closedBar.stochK.toFixed(
@@ -3811,6 +3920,7 @@ async function runBackgroundMonitorCycle() {
                 ]);
 
                 const shouldSendTelegram =
+                  persisted.telegramSenderEnabled &&
                   Boolean(persisted.telegramBotToken && persisted.telegramChatId) &&
                   (persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
 
@@ -3832,7 +3942,8 @@ async function runBackgroundMonitorCycle() {
                         mode: 'live',
                         timestampIso: closedBar.timestampIso,
                       }),
-                      'HTML'
+                      'HTML',
+                      { dedupeKey, dedupeWindowMs: 15 * 60 * 1000 }
                     )
                   : { ok: false, error: undefined };
 
@@ -4394,6 +4505,7 @@ async function startServer() {
       ),
       telegramChatId: persisted.telegramChatId,
       telegramMode: persisted.telegramMode,
+      telegramSenderEnabled: persisted.telegramSenderEnabled,
       direction: persisted.direction,
       m15Direction: persisted.m15Direction,
       aoImmediateCross: persisted.aoImmediateCross,
@@ -4482,6 +4594,9 @@ async function startServer() {
     if (body.telegramMode === 'fallback' || body.telegramMode === 'always') {
       persisted.telegramMode = body.telegramMode;
     }
+    if (typeof body.telegramSenderEnabled === 'boolean') {
+      persisted.telegramSenderEnabled = body.telegramSenderEnabled;
+    }
     if (
       body.direction === 'both' ||
       body.direction === 'buy_only' ||
@@ -4523,6 +4638,7 @@ async function startServer() {
       ),
       telegramChatId: persisted.telegramChatId,
       telegramMode: persisted.telegramMode,
+      telegramSenderEnabled: persisted.telegramSenderEnabled,
       direction: persisted.direction,
       m15Direction: persisted.m15Direction,
       aoImmediateCross: persisted.aoImmediateCross,
@@ -4673,6 +4789,11 @@ async function startServer() {
       return;
     }
 
+    const canonicalLiveKey =
+      mode === 'live'
+        ? getCanonicalLiveSignalKey(strategy, timeframe, symbol, timestampIso, signal)
+        : '';
+
     if (mode === 'live') {
       if (strategy === 'AO') {
         res.json({ ok: false, skipped: true, reason: 'ao_disabled' });
@@ -4713,7 +4834,8 @@ async function startServer() {
         }
         if (
           persisted.t01WaitingReset ||
-          persisted.t01LastAlertBarIso === timestampIso
+          persisted.t01LastAlertBarIso === timestampIso ||
+          monitorRuntime.dispatchedLiveSignalKeys.has(canonicalLiveKey)
         ) {
           const existingStochEv = persisted.events.find(
             (e) =>
@@ -4737,26 +4859,33 @@ async function startServer() {
         persisted.t01LastAlertBarIso = timestampIso;
         persisted.stochM1LastSide = targetSide;
         persisted.stochM1LastAlertBarIso = timestampIso;
+        const barMs = new Date(timestampIso).getTime();
+        const prevProcMs = persisted.t01LastProcessedM1BarIso
+          ? new Date(persisted.t01LastProcessedM1BarIso).getTime()
+          : 0;
+        if (Number.isFinite(barMs) && barMs > prevProcMs) {
+          persisted.t01LastProcessedM1BarIso = timestampIso;
+        }
+        markLiveSignalDispatched(canonicalLiveKey, false);
         syncPersistence();
+      } else {
+        if (monitorRuntime.dispatchedLiveSignalKeys.has(canonicalLiveKey)) {
+          const existingEv = persisted.events.find(
+            (e) => e.id.includes(timestampIso) && e.signal === signal
+          );
+          res.json({
+            ok: true,
+            deduplicated: true,
+            deliveredWebPushCount: existingEv?.deliveredWebPushCount ?? 0,
+            deliveredToNtfy: existingEv?.deliveredToNtfy ?? false,
+            deliveredToTelegram: existingEv?.deliveredToTelegram ?? false,
+            telegramError: existingEv?.telegramError,
+            telegramMissingToken: !persisted.telegramBotToken,
+          });
+          return;
+        }
+        markLiveSignalDispatched(canonicalLiveKey);
       }
-      const dedupeKey = `live-${timeframe}-${strategy}-${symbol}-${timestampIso}-${signal}`;
-      if (monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)) {
-        const existingEv = persisted.events.find(
-          (e) =>
-            e.id.includes(timestampIso) && e.signal === signal
-        );
-        res.json({
-          ok: true,
-          deduplicated: true,
-          deliveredWebPushCount: existingEv?.deliveredWebPushCount ?? 0,
-          deliveredToNtfy: existingEv?.deliveredToNtfy ?? false,
-          deliveredToTelegram: existingEv?.deliveredToTelegram ?? false,
-          telegramError: existingEv?.telegramError,
-          telegramMissingToken: !persisted.telegramBotToken,
-        });
-        return;
-      }
-      markLiveSignalDispatched(dedupeKey);
     }
 
     const modePrefix = mode === 'sim' ? '[จำลอง] ' : '';
@@ -4808,7 +4937,9 @@ async function startServer() {
     ]);
 
     const hasTelegram = Boolean(persisted.telegramBotToken && persisted.telegramChatId);
+    const allowTelegramForMode = mode === 'sim' || persisted.telegramSenderEnabled;
     const shouldSendTelegram =
+      allowTelegramForMode &&
       hasTelegram &&
       (mode === 'sim' || persisted.telegramMode === 'always' || deliveredWebPushCount === 0);
 
@@ -4834,12 +4965,22 @@ async function startServer() {
           persisted.telegramBotToken,
           persisted.telegramChatId,
           text,
-          'HTML'
+          'HTML',
+          mode === 'live'
+            ? { dedupeKey: canonicalLiveKey, dedupeWindowMs: 15 * 60 * 1000 }
+            : undefined
         )
       : { ok: false, error: undefined };
 
+    const canonicalEventId =
+      mode === 'live' && strategy === 'STOCH'
+        ? `M1-T01-${symbol}-${timestampIso}-${signal}-R${effectiveRound}`
+        : mode === 'live' && strategy === 'CISD'
+        ? `${timeframe}-CISD-${symbol}-${timestampIso}-${signal}`
+        : `${mode}-${strategy}-${timeframe}-${symbol}-${Date.now()}`;
+
     persisted.events.unshift({
-      id: `${mode}-${strategy}-${timeframe}-${symbol}-${Date.now()}`,
+      id: canonicalEventId,
       timestamp: new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
       symbol: (symbol in YAHOO_SYMBOL_MAP ? symbol : 'US100') as TradingSymbol,
       timeframe: timeframe || 'M15',
