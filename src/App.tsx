@@ -3,6 +3,7 @@ import { MotionConfig } from 'motion/react';
 import { ArrowLeft, Download, Moon, Sun } from 'lucide-react';
 import { M15CisdChartView } from './components/M15CisdChartView';
 import { StochM1ChartView } from './components/StochM1ChartView';
+import { M5CandleChartView } from './components/M5CandleChartView';
 import { MultiTimeframeStatusWindow } from './components/MultiTimeframeStatusWindow';
 import { Mql5Studio } from './components/Mql5Studio';
 import { AndroidSetupGuide } from './components/AndroidSetupGuide';
@@ -41,7 +42,7 @@ type ActiveSection =
   | 'deploy';
 
 const NAV_ITEMS: Array<{ id: ActiveSection; label: string }> = [
-  { id: 't01', label: 'กราฟ M15 + M1' },
+  { id: 't01', label: 'กราฟ M15 + M1 + M5' },
   { id: 'm15', label: 'เฉพาะ M15' },
   { id: 'm1', label: 'เฉพาะ M1' },
   { id: 'mtf', label: 'สถานะ M15/M1' },
@@ -53,7 +54,7 @@ const NAV_ITEMS: Array<{ id: ActiveSection; label: string }> = [
 ];
 
 const SECTION_DESCRIPTIONS: Record<ActiveSection, string> = {
-  t01: 'หน้าจอแยก 2 กราฟ ท่า T01: ด้านบน M15 CISD · ด้านล่าง M1 + Stoch(15,3,3) อัปเดตและแจ้งเตือนครบในหน้าเดียว',
+  t01: 'หน้าจอรวม 3 กราฟ: ด้านบน M15 CISD · กลาง M1 + MA(20) + Stoch(15,3,3) · ด้านล่าง M5 (กราฟเปล่า ดูอย่างเดียว ไม่แจ้งเตือน)',
   m15: 'ตรวจสอบแท่งเทียนระบบ CISD Timeframe M15 พร้อมขีดเส้นและแจ้งเตือนทันที',
   m1: 'กราฟ US100 Timeframe M1 พร้อม Stoch(15,3,3) แจ้งเตือนปิด > 80 / < 20 ครั้งเดียวต่อฝั่ง',
   mtf: 'สรุปสถานะล่าสุดของ CISD M15 และ Stoch(15,3,3) M1 ดูง่าย สบายตา',
@@ -435,7 +436,7 @@ export default function App() {
               <div>
                 <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl text-balance">
                   {activeSection === 't01'
-                    ? 'CST · กราฟคู่ M15 CISD + M1 Stoch(15,3,3)'
+                    ? 'CST · กราฟ M15 CISD + M1 Stoch(15,3,3) + M5'
                     : activeSection === 'm1'
                     ? 'CST · Stoch(15,3,3) M1'
                     : activeSection === 'mtf'
@@ -465,7 +466,7 @@ export default function App() {
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
                     }`}
                   >
-                    M15 + M1
+                    M15 + M1 + M5
                   </button>
                   <button
                     type="button"
@@ -556,6 +557,12 @@ export default function App() {
                 telegramSyncedReady={telegramSyncedReady}
                 isWebMode={isWebMode}
                 splitRole="combined_bottom"
+                combinedM5Slot={
+                  <M5CandleChartView
+                    isWebMode={isWebMode}
+                    splitRole="combined_bottom"
+                  />
+                }
               />
             </div>
           )}

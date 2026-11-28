@@ -55,6 +55,7 @@ interface StochM1ChartViewProps {
   telegramSyncedReady?: boolean | null;
   isWebMode?: boolean;
   splitRole?: 'combined_bottom';
+  combinedM5Slot?: React.ReactNode;
 }
 
 export interface T01StateSnapshot {
@@ -144,6 +145,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
   telegramSyncedReady,
   isWebMode = false,
   splitRole,
+  combinedM5Slot,
 }) => {
   const isCombinedBottom = splitRole === 'combined_bottom';
   const symbol: TradingSymbol = 'US100';
@@ -1654,11 +1656,14 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
         </div>
       )}
 
-      {/* Dark MT5 Chart Container + Stoch(15,3,3) Sub-Pane */}
+      {/* Dark MT5 Chart Container + Stoch(15,3,3) Sub-Pane (+ optional M5 slot directly underneath) */}
+      <div className={isCombinedBottom ? 'order-1 flex flex-col' : undefined}>
       <div
         className={
           isCombinedBottom
-            ? 'order-1 flex flex-col rounded-t-none rounded-b-2xl border border-t-0 border-neutral-800 bg-[#05080f] p-3.5 sm:p-4 text-neutral-200 shadow-sm'
+            ? combinedM5Slot
+              ? 'flex flex-col rounded-none border border-t-0 border-b-2 border-b-neutral-700 border-neutral-800 bg-[#05080f] p-3.5 sm:p-4 text-neutral-200 shadow-sm'
+              : 'flex flex-col rounded-t-none rounded-b-2xl border border-t-0 border-neutral-800 bg-[#05080f] p-3.5 sm:p-4 text-neutral-200 shadow-sm'
             : 'flex flex-col rounded-2xl border border-slate-800 bg-[#05080f] p-3.5 sm:p-4 text-neutral-200 shadow-sm'
         }
       >
@@ -2234,6 +2239,8 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
             />
           </svg>
         </div>
+      </div>
+      {isCombinedBottom && combinedM5Slot}
       </div>
 
       {/* Bottom Alert Status Card matching reference screenshot */}
