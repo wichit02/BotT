@@ -1756,7 +1756,15 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                 {telemetryMaStatus === 'ABOVE' ? '▲ ปิดเหนือ MA' : '▼ ปิดต่ำกว่า MA'}
               </span>
             )}
-            <span className="font-semibold text-teal-400">
+            <span
+              className={`font-semibold ${
+                activeStochVal !== null && activeStochVal > 80
+                  ? 'text-rose-400'
+                  : activeStochVal !== null && activeStochVal < 20
+                  ? 'text-emerald-400'
+                  : 'text-teal-400'
+              }`}
+            >
               Stoch {activeStochVal !== null ? activeStochVal.toFixed(2) : '—'}
             </span>
             {activeBar?.stochSwitchSide && (
@@ -1803,6 +1811,21 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
               <clipPath id="stoch-m1-price-clip">
                 <rect x={plotLeft} y={priceTopY} width={totalPlotW} height={priceH} />
               </clipPath>
+              <linearGradient
+                id="stoch-m1-zone-gradient"
+                gradientUnits="userSpaceOnUse"
+                x1={0}
+                y1={stochToY(100)}
+                x2={0}
+                y2={stochToY(0)}
+              >
+                <stop offset="0%" stopColor="#fb7185" />
+                <stop offset="20%" stopColor="#fb7185" />
+                <stop offset="20%" stopColor="#14b8a6" />
+                <stop offset="80%" stopColor="#14b8a6" />
+                <stop offset="80%" stopColor="#22c55e" />
+                <stop offset="100%" stopColor="#22c55e" />
+              </linearGradient>
             </defs>
             <rect x={0} y={0} width={svgW} height={totalH} fill="#05080f" />
 
@@ -2086,6 +2109,24 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
               strokeWidth="1"
             />
 
+            {/* Stoch(15,3,3) Zone Shading (>80 Overbought Rose, <20 Oversold Emerald) */}
+            <rect
+              x={plotLeft}
+              y={stochToY(100)}
+              width={totalPlotW}
+              height={Math.max(0, stochToY(80) - stochToY(100))}
+              fill="#f43f5e"
+              fillOpacity={0.11}
+            />
+            <rect
+              x={plotLeft}
+              y={stochToY(20)}
+              width={totalPlotW}
+              height={Math.max(0, stochToY(0) - stochToY(20))}
+              fill="#10b981"
+              fillOpacity={0.11}
+            />
+
             {/* Stoch(15,3,3) Sub-pane Label */}
             <text
               x={plotLeft + 8}
@@ -2095,14 +2136,38 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
               className="font-sans"
             >
               Stoch(15,3,3){' '}
-              <tspan fill="#2dd4bf" fontWeight="600" className="font-mono tabular-nums">
+              <tspan
+                fill={
+                  activeStochVal !== null && activeStochVal > 80
+                    ? '#fb7185'
+                    : activeStochVal !== null && activeStochVal < 20
+                    ? '#4ade80'
+                    : '#2dd4bf'
+                }
+                fontWeight="600"
+                className="font-mono tabular-nums"
+              >
                 {activeStochVal !== null ? activeStochVal.toFixed(2) : ''}
               </tspan>
             </text>
 
-            {/* Stoch 80.00 & 20.00 Horizontal Dashed Lines */}
+            {/* Stoch 50.00 Midline */}
+            <line
+              x1={plotLeft}
+              y1={stochToY(50)}
+              x2={plotRight}
+              y2={stochToY(50)}
+              stroke="#334155"
+              strokeWidth="0.9"
+              strokeDasharray="2 4"
+              opacity={0.75}
+            />
+
+            {/* Stoch 80.00 (Coral Pink) & 20.00 (Emerald Green) Horizontal Dashed Lines */}
             {[80, 20].map((level) => {
               const yLvl = stochToY(level);
+              const isUpper = level === 80;
+              const lvlColor = isUpper ? '#fb7185' : '#22c55e';
               return (
                 <g key={`stoch-lvl-${level}`}>
                   <line
@@ -2110,15 +2175,16 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                     y1={yLvl}
                     x2={plotRight}
                     y2={yLvl}
-                    stroke="#334155"
-                    strokeWidth="1"
-                    strokeDasharray="3 3"
+                    stroke={lvlColor}
+                    strokeWidth="1.35"
+                    strokeDasharray="4 4"
+                    opacity={0.9}
                   />
                   <text
                     x={plotRight + 8}
                     y={yLvl + 3.5}
                     fontSize="11"
-                    fill="#94a3b8"
+                    fill={lvlColor}
                     className="font-mono tabular-nums"
                   >
                     {level.toFixed(2)}
@@ -2127,12 +2193,12 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
               );
             })}
 
-            {/* Stoch %K Teal Line */}
+            {/* Stoch %K Line (Coral Pink >80, Teal 20-80, Emerald Green <20) */}
             {stochKPoints && (
               <polyline
                 fill="none"
-                stroke="#14b8a6"
-                strokeWidth="1.75"
+                stroke="url(#stoch-m1-zone-gradient)"
+                strokeWidth="2.1"
                 strokeLinejoin="round"
                 strokeLinecap="round"
                 points={stochKPoints}
@@ -2156,21 +2222,21 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                     <circle
                       cx={xCenter}
                       cy={yDot}
-                      r={6.4}
+                      r={6.8}
                       fill="none"
-                      stroke={isOver80 ? '#fb7185' : '#4ade80'}
-                      strokeWidth="1.2"
-                      opacity={0.75}
+                      stroke={isOver80 ? '#fda4af' : '#86efac'}
+                      strokeWidth="1.5"
+                      opacity={0.9}
                     />
                   )}
                   <circle
                     cx={xCenter}
                     cy={yDot}
-                    r={matchesActiveBias ? 4.0 : 3.0}
-                    fill={isOver80 ? '#ef4444' : '#22c55e'}
+                    r={matchesActiveBias ? 4.0 : 3.2}
+                    fill={isOver80 ? '#ff2e4c' : '#22c55e'}
                     stroke="#05080f"
-                    strokeWidth="1.2"
-                    opacity={matchesActiveBias || !activeBias ? 1 : 0.65}
+                    strokeWidth="1.3"
+                    opacity={matchesActiveBias || !activeBias ? 1 : 0.7}
                   />
                 </g>
               );
