@@ -127,6 +127,16 @@ function formatM1Countdown(): string {
   return `00:${String(remaining === 60 ? 0 : remaining).padStart(2, '0')}`;
 }
 
+const globalAlertedLiveBarKeys = new Set<string>();
+
+function markGlobalAlertedLiveBarKey(key: string) {
+  globalAlertedLiveBarKeys.add(key);
+  if (globalAlertedLiveBarKeys.size > 200) {
+    const first = globalAlertedLiveBarKeys.values().next().value;
+    if (first) globalAlertedLiveBarKeys.delete(first);
+  }
+}
+
 export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
   customPrefix,
   onSignalDetected,
@@ -213,6 +223,10 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
   const t01StateRef = useRef<T01StateSnapshot | null>(null);
   const liveWaitingResetRef = useRef<boolean>(false);
   const liveBiasBarIsoRef = useRef<string | null>(null);
+  const pendingClientAlertUntilMsRef = useRef<number>(0);
+  const isFetchingLiveRef = useRef<boolean>(false);
+  const onSignalDetectedRef = useRef(onSignalDetected);
+  onSignalDetectedRef.current = onSignalDetected;
   const simBiasRef = useRef<'BUY' | 'SELL'>(simBias);
   simBiasRef.current = simBias;
   const simWaitingResetRef = useRef<boolean>(simWaitingReset);
@@ -337,7 +351,8 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
         if (liveBiasBarIsoRef.current !== nextT01.biasBarIso) {
           liveBiasBarIsoRef.current = nextT01.biasBarIso;
           liveWaitingResetRef.current = nextT01.waitingReset;
-        } else {
+          pendingClientAlertUntilMsRef.current = 0;
+        } else if (nextT01.waitingReset || Date.now() >= pendingClientAlertUntilMsRef.current) {
           liveWaitingResetRef.current = nextT01.waitingReset;
         }
       }
@@ -459,7 +474,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
         minute: '2-digit',
       });
 
-      onSignalDetected({
+      onSignalDetectedRef.current({
         id: `T01-M1-${symbol}-${timestampIso}-${signal}-R${t01Round}`,
         timestamp: timeStr,
         symbol,
@@ -473,7 +488,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
         syncedToSheet: false,
       });
     },
-    [customPrefix, onSignalDetected, spec.digits, symbol, trigger10sSound]
+    [customPrefix, spec.digits, symbol, trigger10sSound]
   );
 
   const fetchLiveStochBars = useCallback(
@@ -483,7 +498,10 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
       showSpinner?: boolean;
     }) => {
       const updateChart = options?.updateChart ?? true;
-      const freshParam = options?.fresh ? '&fresh=1' : '';
+      const isFresh = Boolean(options?.fresh);
+      if (!isFresh && isFetchingLiveRef.current) return;
+      isFetchingLiveRef.current = true;
+      const freshParam = isFresh ? '&fresh=1' : '';
       const showSpinner = options?.showSpinner ?? false;
       if (updateChart && (showSpinner || barsRef.current.length === 0)) {
         setIsLoadingLive(true);
@@ -528,7 +546,11 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
             if (liveBiasBarIsoRef.current !== data.t01State.biasBarIso) {
               liveBiasBarIsoRef.current = data.t01State.biasBarIso;
               liveWaitingResetRef.current = data.t01State.waitingReset;
-            } else {
+              pendingClientAlertUntilMsRef.current = 0;
+            } else if (
+              data.t01State.waitingReset ||
+              Date.now() >= pendingClientAlertUntilMsRef.current
+            ) {
               liveWaitingResetRef.current = data.t01State.waitingReset;
             }
           }
@@ -579,9 +601,15 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                   if (!shouldTrigger) continue;
 
                   const key = `T01-M1-${closedBar.timestampIso}-BUY-${currT01.biasBarIso || ''}`;
-                  if (alertedLiveBarsRef.current.has(key)) continue;
+                  if (
+                    alertedLiveBarsRef.current.has(key) ||
+                    globalAlertedLiveBarKeys.has(key)
+                  ) {
+                    continue;
+                  }
 
                   liveWaitingResetRef.current = true;
+                  pendingClientAlertUntilMsRef.current = Date.now() + 5000;
                   activeLiveSideRef.current = 'UNDER_20';
                   setServerLastSide('UNDER_20');
 
@@ -589,6 +617,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                     directionFilter === 'both' || directionFilter === 'under20_only';
                   if (dirMatch) {
                     alertedLiveBarsRef.current.add(key);
+                    markGlobalAlertedLiveBarKey(key);
                     const displayRound = serverAlreadyAlertedThisBar
                       ? Math.max(1, currT01.roundCount)
                       : currT01.roundCount + 1;
@@ -619,9 +648,15 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                   if (!shouldTrigger) continue;
 
                   const key = `T01-M1-${closedBar.timestampIso}-SELL-${currT01.biasBarIso || ''}`;
-                  if (alertedLiveBarsRef.current.has(key)) continue;
+                  if (
+                    alertedLiveBarsRef.current.has(key) ||
+                    globalAlertedLiveBarKeys.has(key)
+                  ) {
+                    continue;
+                  }
 
                   liveWaitingResetRef.current = true;
+                  pendingClientAlertUntilMsRef.current = Date.now() + 5000;
                   activeLiveSideRef.current = 'OVER_80';
                   setServerLastSide('OVER_80');
 
@@ -629,6 +664,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                     directionFilter === 'both' || directionFilter === 'over80_only';
                   if (dirMatch) {
                     alertedLiveBarsRef.current.add(key);
+                    markGlobalAlertedLiveBarKey(key);
                     const displayRound = serverAlreadyAlertedThisBar
                       ? Math.max(1, currT01.roundCount)
                       : currT01.roundCount + 1;
@@ -654,6 +690,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
           setLiveError(err?.message || 'เชื่อมต่อฟีดกราฟจริง M1 ไม่สำเร็จ');
         }
       } finally {
+        isFetchingLiveRef.current = false;
         if (updateChart) {
           setIsLoadingLive(false);
         }
@@ -1098,6 +1135,12 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
   const chartMetrics = useMemo(() => {
     const highs = visibleBars.map((b) => b.high);
     const lows = visibleBars.map((b) => b.low);
+    for (const b of visibleBars) {
+      if (b.ma20 !== null && b.ma20 !== undefined && Number.isFinite(b.ma20)) {
+        highs.push(b.ma20);
+        lows.push(b.ma20);
+      }
+    }
     const maxPrice = highs.length ? Math.max(...highs) : spec.basePrice + 10;
     const minPrice = lows.length ? Math.min(...lows) : spec.basePrice - 10;
     const span = maxPrice - minPrice || spec.stepSize;
@@ -1173,6 +1216,20 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
     return stochTopY + 14 + ((100 - clamped) / 100) * (stochH - 22);
   };
 
+  const ma20Points = useMemo(() => {
+    const pts: string[] = [];
+    const span = chartMetrics.priceTop - chartMetrics.priceBottom;
+    if (!span) return '';
+    visibleBars.forEach((b, idx) => {
+      if (b.ma20 === null || b.ma20 === undefined || !Number.isFinite(b.ma20)) return;
+      const xCenter = plotLeft + 6 + idx * slotW + slotW / 2;
+      const ratio = (chartMetrics.priceTop - b.ma20) / span;
+      const y = priceTopY + 12 + ratio * (priceH - 24);
+      pts.push(`${xCenter.toFixed(1)},${y.toFixed(1)}`);
+    });
+    return pts.join(' ');
+  }, [visibleBars, plotLeft, slotW, chartMetrics, priceTopY, priceH]);
+
   const stochKPoints = useMemo(() => {
     const pts: string[] = [];
     visibleBars.forEach((b, idx) => {
@@ -1191,6 +1248,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
     serverTelegramConfigured ?? telegramSyncedReady ?? false;
 
   const activeStochVal = activeBar?.stochK ?? seriesState.latestStochK;
+  const activeMa20Val = activeBar?.ma20 ?? null;
   const effectiveDisplaySide =
     feedMode === 'live' ? serverLastSide ?? seriesState.currentSide : seriesState.currentSide;
 
@@ -1233,7 +1291,7 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
           <div className="flex items-center gap-2 text-[13px] text-slate-600 dark:text-slate-400">
             <span className="font-semibold text-blue-600 dark:text-blue-400">US100</span>
             <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">·</span>
-            <span className="font-medium text-slate-700 dark:text-slate-300">M1 · Stoch(15,3,3)</span>
+            <span className="font-medium text-slate-700 dark:text-slate-300">M1 · MA(20) · Stoch(15,3,3)</span>
           </div>
         </div>
 
@@ -1607,6 +1665,9 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
             >
               C {activeBar ? activeBar.close.toFixed(spec.digits) : '—'}
             </span>
+            <span className="font-semibold text-[#d966d0]">
+              MA(20) {activeMa20Val !== null ? activeMa20Val.toFixed(spec.digits) : '—'}
+            </span>
             <span className="font-semibold text-teal-400">
               Stoch {activeStochVal !== null ? activeStochVal.toFixed(2) : '—'}
             </span>
@@ -1648,8 +1709,13 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
             viewBox={`0 0 ${svgW} ${totalH}`}
             className="h-auto w-full min-w-[580px] select-none"
             role="img"
-            aria-label="กราฟแท่งเทียน US100 M1 และ Stoch(15,3,3) สำหรับระบบ ท่า T01"
+            aria-label="กราฟแท่งเทียน US100 M1 พร้อมเส้น Moving Average 20 และ Stoch(15,3,3) สำหรับระบบ ท่า T01"
           >
+            <defs>
+              <clipPath id="stoch-m1-price-clip">
+                <rect x={plotLeft} y={priceTopY} width={totalPlotW} height={priceH} />
+              </clipPath>
+            </defs>
             <rect x={0} y={0} width={svgW} height={totalH} fill="#05080f" />
 
             {/* Right Y-axis border */}
@@ -1722,6 +1788,16 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
               className="font-sans"
             >
               US 100 Index Cash
+            </text>
+            <text
+              x={plotLeft + 8}
+              y={54}
+              fontSize="10.5"
+              fill="#d966d0"
+              className="font-sans"
+            >
+              MA(20) Simple · Close
+              {activeMa20Val !== null ? ` ${activeMa20Val.toFixed(spec.digits)}` : ''}
             </text>
 
             {/* Candlesticks */}
@@ -1807,6 +1883,20 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                 </g>
               );
             })}
+
+            {/* Moving Average (Period 20, Shift 0, Simple, Close) */}
+            {ma20Points && (
+              <polyline
+                fill="none"
+                stroke="#d966d0"
+                strokeWidth="2"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                clipPath="url(#stoch-m1-price-clip)"
+                pointerEvents="none"
+                points={ma20Points}
+              />
+            )}
 
             {/* Current Price Line + Right-Axis Countdown Badge */}
             {latestFormingBar && (
