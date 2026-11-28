@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { MotionConfig } from 'motion/react';
 import { ArrowLeft, Download, Moon, Sun } from 'lucide-react';
 import { M15CisdChartView } from './components/M15CisdChartView';
@@ -212,9 +212,13 @@ export default function App() {
     };
   }, []);
 
-  const handleSignalDetected = (record: SignalLogRecord) => {
-    setSignals((prev) => [record, ...prev].slice(0, 50));
-  };
+  const handleSignalDetected = useCallback((record: SignalLogRecord) => {
+    setSignals((prev) =>
+      prev.some((item) => item.id === record.id)
+        ? prev
+        : [record, ...prev].slice(0, 50)
+    );
+  }, []);
 
   const handleMarkSignalsSynced = (ids: string[]) => {
     const idSet = new Set(ids);

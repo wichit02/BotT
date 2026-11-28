@@ -99,6 +99,7 @@ export async function showLocalMobileNotification(payload: {
   body: string;
   tag?: string;
   url?: string;
+  renotify?: boolean;
 }): Promise<boolean> {
   if (typeof window === 'undefined' || !('Notification' in window)) return false;
   if (Notification.permission !== 'granted') return false;
@@ -112,7 +113,7 @@ export async function showLocalMobileNotification(payload: {
     icon: '/pwa-192x192.png',
     badge: '/pwa-192x192.png',
     tag: payload.tag || `signal-${Date.now()}`,
-    renotify: true,
+    renotify: payload.renotify ?? true,
     requireInteraction: true,
     vibrate: [450, 150, 450, 150, 450, 150, 450],
     data: { url: payload.url || '/' },
@@ -212,9 +213,14 @@ export async function dispatchMobileSignalNotification(params: {
     deduplicated = true;
   }
 
-  // Always show local browser/PWA notification if no Web Push delivered to phone (even when server deduplicated background cycle)
+  // Only show local browser/PWA notification for sim mode OR a freshly-dispatched live signal where server did NOT deliver Web Push
   let localNotificationShown = false;
-  if (!skipped && (params.mode === 'sim' || deliveredWebPushCount === 0)) {
+  const shouldShowLocal =
+    !skipped &&
+    (params.mode === 'sim' ||
+      (!params.skipServerNotify && !deduplicated && deliveredWebPushCount === 0));
+
+  if (shouldShowLocal) {
     const modePrefix = params.mode === 'sim' ? '[จำลอง] ' : '';
     let title = '';
     let body = '';
@@ -250,11 +256,19 @@ export async function dispatchMobileSignalNotification(params: {
       url = '/';
     }
 
+    const canonicalTag =
+      params.mode === 'live' && params.strategy === 'STOCH'
+        ? `t01-${params.symbol}-${params.timestampIso}-${params.signal}`
+        : params.mode === 'live' && params.strategy === 'CISD'
+        ? `cisd-${params.timeframe}-${params.symbol}-${params.timestampIso}-${params.signal}`
+        : `${params.mode}-${params.strategy}-${params.timeframe}-${params.symbol}-${params.timestampIso}-${params.signal}`;
+
     localNotificationShown = await showLocalMobileNotification({
       title,
       body,
-      tag: `${params.mode}-${params.strategy}-${params.timeframe}-${params.symbol}-${params.timestampIso}-${params.signal}`,
+      tag: canonicalTag,
       url,
+      renotify: params.mode === 'sim',
     });
   }
 

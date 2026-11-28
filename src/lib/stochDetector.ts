@@ -14,6 +14,7 @@ export interface StochRawOhlcBar {
 export interface StochM1Bar extends StochRawOhlcBar {
   stochK: number | null;
   stochD: number | null;
+  ma20: number | null;
   stochSwitchSide: StochSide | null;
   stochSignal: StochSignalType | null;
 }
@@ -32,6 +33,7 @@ export interface StochDetectionResult {
   currentSide: StochSide | null;
   latestStochK: number | null;
   latestClosedStochK: number | null;
+  latestMa20?: number | null;
   lastSwitchInfo: LastStochSwitchInfo | null;
 }
 
@@ -45,10 +47,11 @@ export interface DetectStochOptions {
   dPeriod?: number;
   upperLevel?: number;
   lowerLevel?: number;
+  maPeriod?: number;
 }
 
 /**
- * Exact MT5 iStochastic(15, 3, 3, MODE_SMA, STO_LOWHIGH) calculation
+ * Exact MT5 iStochastic(15, 3, 3, MODE_SMA, STO_LOWHIGH) + Moving Average(20, Shift 0, Simple, Close)
  * paired with one-time-per-side closed-bar alerting:
  * - Closes > 80: triggers OVER_80 (SELL / red dot) ONCE until a candle closes < 20.
  * - Closes < 20: triggers UNDER_20 (BUY / green dot) ONCE until a candle closes > 80.
@@ -64,6 +67,7 @@ export function detectStochOnBars(
       currentSide: options?.initialSide ?? null,
       latestStochK: null,
       latestClosedStochK: null,
+      latestMa20: null,
       lastSwitchInfo: null,
     };
   }
@@ -73,7 +77,21 @@ export function detectStochOnBars(
   const dPeriod = options?.dPeriod ?? 3;
   const upperLevel = options?.upperLevel ?? 80;
   const lowerLevel = options?.lowerLevel ?? 20;
+  const maPeriod = options?.maPeriod ?? 20;
   const excludeLastBar = Boolean(options?.excludeLastBar);
+
+  // Moving Average: Period 20, Shift 0, Method Simple, Apply to Close
+  const maValues: Array<number | null> = new Array(n).fill(null);
+  let closeSum = 0;
+  for (let i = 0; i < n; i++) {
+    closeSum += rawBars[i].close;
+    if (i >= maPeriod) {
+      closeSum -= rawBars[i - maPeriod].close;
+    }
+    if (i >= maPeriod - 1) {
+      maValues[i] = Number((closeSum / maPeriod).toFixed(4));
+    }
+  }
 
   const numerators: Array<number | null> = new Array(n).fill(null);
   const denominators: Array<number | null> = new Array(n).fill(null);
@@ -136,6 +154,7 @@ export function detectStochOnBars(
     const bar = rawBars[i];
     const stochK = kValues[i];
     const stochD = dValues[i];
+    const ma20 = maValues[i];
     const isOpenFormingBar = excludeLastBar && i === n - 1;
 
     let stochSwitchSide: StochSide | null = null;
@@ -174,6 +193,7 @@ export function detectStochOnBars(
       index: i,
       stochK,
       stochD,
+      ma20,
       stochSwitchSide,
       stochSignal,
     });
@@ -187,6 +207,7 @@ export function detectStochOnBars(
     currentSide,
     latestStochK: latestBar?.stochK ?? null,
     latestClosedStochK: latestClosedBar?.stochK ?? null,
+    latestMa20: latestBar?.ma20 ?? null,
     lastSwitchInfo,
   };
 }
