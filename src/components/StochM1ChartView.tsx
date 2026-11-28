@@ -1249,6 +1249,89 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
 
   const activeStochVal = activeBar?.stochK ?? seriesState.latestStochK;
   const activeMa20Val = activeBar?.ma20 ?? null;
+  const latestClosedM1Bar =
+    visibleBars.length >= 2 ? visibleBars[visibleBars.length - 2] : null;
+  const telemetryMaBar = hoveredIdx !== null ? activeBar : latestClosedM1Bar;
+  const telemetryMaStatus: 'ABOVE' | 'BELOW' | null =
+    telemetryMaBar &&
+    telemetryMaBar.ma20 !== null &&
+    telemetryMaBar.ma20 !== undefined &&
+    Number.isFinite(telemetryMaBar.ma20)
+      ? telemetryMaBar.close > telemetryMaBar.ma20
+        ? 'ABOVE'
+        : telemetryMaBar.close < telemetryMaBar.ma20
+        ? 'BELOW'
+        : null
+      : null;
+
+  const maCloseMarkers = useMemo(() => {
+    const out: Array<{
+      idx: number;
+      timestampIso: string;
+      side: 'ABOVE' | 'BELOW';
+      isCross: boolean;
+      isLatestClosed: boolean;
+      xCenter: number;
+      yHigh: number;
+      yLow: number;
+    }> = [];
+    const span = chartMetrics.priceTop - chartMetrics.priceBottom;
+    if (!span || visibleBars.length < 2) return out;
+    const toY = (p: number) =>
+      priceTopY + 12 + ((chartMetrics.priceTop - p) / span) * (priceH - 24);
+    const lastClosedIdx = visibleBars.length - 2;
+
+    for (let idx = 0; idx <= lastClosedIdx; idx++) {
+      const bar = visibleBars[idx];
+      if (bar.ma20 === null || bar.ma20 === undefined || !Number.isFinite(bar.ma20)) continue;
+      const side: 'ABOVE' | 'BELOW' | null =
+        bar.close > bar.ma20 ? 'ABOVE' : bar.close < bar.ma20 ? 'BELOW' : null;
+      if (!side) continue;
+
+      const prevBar =
+        idx > 0
+          ? visibleBars[idx - 1]
+          : visibleStartIdx > 0
+          ? seriesState.bars[visibleStartIdx - 1]
+          : undefined;
+      const hasPrevMa =
+        prevBar &&
+        prevBar.ma20 !== null &&
+        prevBar.ma20 !== undefined &&
+        Number.isFinite(prevBar.ma20);
+      const isCross = Boolean(
+        hasPrevMa &&
+          prevBar &&
+          prevBar.ma20 !== null &&
+          ((side === 'ABOVE' && prevBar.close <= prevBar.ma20) ||
+            (side === 'BELOW' && prevBar.close >= prevBar.ma20))
+      );
+      const isLatestClosed = idx === lastClosedIdx;
+      if (!isCross && !isLatestClosed) continue;
+
+      out.push({
+        idx,
+        timestampIso: bar.timestampIso,
+        side,
+        isCross,
+        isLatestClosed,
+        xCenter: plotLeft + 6 + idx * slotW + slotW / 2,
+        yHigh: toY(bar.high),
+        yLow: toY(bar.low),
+      });
+    }
+    return out;
+  }, [
+    visibleBars,
+    visibleStartIdx,
+    seriesState.bars,
+    chartMetrics,
+    priceTopY,
+    priceH,
+    plotLeft,
+    slotW,
+  ]);
+
   const effectiveDisplaySide =
     feedMode === 'live' ? serverLastSide ?? seriesState.currentSide : seriesState.currentSide;
 
@@ -1668,6 +1751,17 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
             <span className="font-semibold text-[#d966d0]">
               MA(20) {activeMa20Val !== null ? activeMa20Val.toFixed(spec.digits) : '—'}
             </span>
+            {telemetryMaStatus && (
+              <span
+                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold ${
+                  telemetryMaStatus === 'ABOVE'
+                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                }`}
+              >
+                {telemetryMaStatus === 'ABOVE' ? '▲ ปิดเหนือ MA' : '▼ ปิดต่ำกว่า MA'}
+              </span>
+            )}
             <span className="font-semibold text-teal-400">
               Stoch {activeStochVal !== null ? activeStochVal.toFixed(2) : '—'}
             </span>
@@ -1897,6 +1991,78 @@ export const StochM1ChartView: React.FC<StochM1ChartViewProps> = ({
                 points={ma20Points}
               />
             )}
+
+            {/* MA(20) Close Symbols: ▲ Emerald (Closed Above MA) / ▼ Rose (Closed Below MA) */}
+            {maCloseMarkers.map((m) => {
+              const isAbove = m.side === 'ABOVE';
+              const yArrow = isAbove
+                ? Math.min(priceTopY + priceH - 10, m.yLow + 9)
+                : Math.max(priceTopY + 10, m.yHigh - 9);
+              const fillColor = isAbove ? '#22c55e' : '#f43f5e';
+              const ringColor = isAbove ? '#4ade80' : '#fb7185';
+              const trianglePoints = isAbove
+                ? `${(m.xCenter - 4).toFixed(1)},${(yArrow + 3.5).toFixed(1)} ${m.xCenter.toFixed(
+                    1
+                  )},${(yArrow - 3.5).toFixed(1)} ${(m.xCenter + 4).toFixed(1)},${(
+                    yArrow + 3.5
+                  ).toFixed(1)}`
+                : `${(m.xCenter - 4).toFixed(1)},${(yArrow - 3.5).toFixed(1)} ${m.xCenter.toFixed(
+                    1
+                  )},${(yArrow + 3.5).toFixed(1)} ${(m.xCenter + 4).toFixed(1)},${(
+                    yArrow - 3.5
+                  ).toFixed(1)}`;
+              const pillX = Math.min(plotRight - 102, m.xCenter + 12);
+              const pillY = Math.min(Math.max(yArrow - 9, priceTopY + 6), priceTopY + priceH - 22);
+
+              return (
+                <g key={`ma-close-${m.timestampIso}-${m.idx}`} pointerEvents="none">
+                  {m.isLatestClosed && (
+                    <circle
+                      cx={m.xCenter}
+                      cy={yArrow}
+                      r={7}
+                      fill="none"
+                      stroke={ringColor}
+                      strokeWidth="1.2"
+                      opacity={0.75}
+                    />
+                  )}
+                  <polygon
+                    points={trianglePoints}
+                    fill={fillColor}
+                    stroke="#05080f"
+                    strokeWidth="1"
+                    opacity={m.isCross || m.isLatestClosed ? 1 : 0.75}
+                  />
+                  {m.isLatestClosed && (
+                    <g transform={`translate(${pillX.toFixed(1)}, ${pillY.toFixed(1)})`}>
+                      <rect
+                        x={0}
+                        y={0}
+                        width={96}
+                        height={18}
+                        rx={4}
+                        fill={isAbove ? '#052e16' : '#4c0519'}
+                        fillOpacity={0.92}
+                        stroke={fillColor}
+                        strokeWidth="1"
+                      />
+                      <text
+                        x={48}
+                        y={12.5}
+                        textAnchor="middle"
+                        fontSize="10.5"
+                        fontWeight="600"
+                        fill={isAbove ? '#86efac' : '#fda4af'}
+                        className="font-sans"
+                      >
+                        {isAbove ? '▲ ปิดเหนือ MA' : '▼ ปิดต่ำกว่า MA'}
+                      </text>
+                    </g>
+                  )}
+                </g>
+              );
+            })}
 
             {/* Current Price Line + Right-Axis Countdown Badge */}
             {latestFormingBar && (
