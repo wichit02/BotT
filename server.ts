@@ -55,6 +55,7 @@ interface StochM1Candle {
   high: number;
   low: number;
   close: number;
+  ma20: number | null;
   stochK: number | null;
   stochD: number | null;
   stochSwitchSide: StochSide | null;
@@ -114,6 +115,7 @@ interface MonitorAlertEvent {
   stochK?: number | null;
   stochSide?: StochSide | null;
   t01Round?: number | null;
+  t01BiasBarIso?: string | null;
   price: number;
   deliveredToNtfy: boolean;
   deliveredToTelegram: boolean;
@@ -1935,6 +1937,19 @@ function detectStochServer(
   const kPeriod = 15;
   const slowing = 3;
   const dPeriod = 3;
+  const maPeriod = 20;
+
+  const ma20Values: Array<number | null> = new Array(n).fill(null);
+  let closeSum = 0;
+  for (let i = 0; i < n; i++) {
+    closeSum += rawBars[i].close;
+    if (i >= maPeriod) {
+      closeSum -= rawBars[i - maPeriod].close;
+    }
+    if (i >= maPeriod - 1) {
+      ma20Values[i] = Number((closeSum / maPeriod).toFixed(4));
+    }
+  }
 
   const numerators: Array<number | null> = new Array(n).fill(null);
   const denominators: Array<number | null> = new Array(n).fill(null);
@@ -2033,6 +2048,7 @@ function detectStochServer(
     bars.push({
       ...bar,
       index: i,
+      ma20: ma20Values[i],
       stochK,
       stochD,
       stochSwitchSide,
@@ -3370,21 +3386,27 @@ async function sendTelegramPush(
 
   const dedupeWindowMs = options?.dedupeWindowMs ?? 0;
   let signalFingerprint: string | null = null;
+  let bodyFingerprint: string | null = null;
   if (dedupeWindowMs > 0) {
+    const textHash = crypto.createHash('sha256').update(text).digest('hex');
     const rawKey = options?.dedupeKey
       ? `${chat}|${options.dedupeKey}`
-      : `${chat}|${crypto.createHash('sha256').update(text).digest('hex')}`;
+      : `${chat}|${textHash}`;
+    const bodyKey = `${chat}|text|${textHash}`;
     const now = Date.now();
     for (const [k, exp] of recentTelegramSignalCache.entries()) {
       if (exp <= now) recentTelegramSignalCache.delete(k);
     }
     const existingExp = recentTelegramSignalCache.get(rawKey);
-    if (existingExp && existingExp > now) {
+    const existingBodyExp = recentTelegramSignalCache.get(bodyKey);
+    if ((existingExp && existingExp > now) || (existingBodyExp && existingBodyExp > now)) {
       return { ok: true, deduplicated: true };
     }
     signalFingerprint = rawKey;
+    bodyFingerprint = bodyKey;
     // Reserve immediately before awaiting network fetch to block concurrent duplicate dispatches
     recentTelegramSignalCache.set(rawKey, now + dedupeWindowMs);
+    recentTelegramSignalCache.set(bodyKey, now + Math.min(dedupeWindowMs, 60_000));
   }
 
   try {
@@ -3404,6 +3426,9 @@ async function sendTelegramPush(
     if (!res.ok) {
       if (signalFingerprint) {
         recentTelegramSignalCache.delete(signalFingerprint);
+      }
+      if (bodyFingerprint) {
+        recentTelegramSignalCache.delete(bodyFingerprint);
       }
       const errBody = (await res.json().catch(() => ({}))) as { description?: string };
       const rawDesc = errBody.description || `Telegram HTTP ${res.status}`;
@@ -3442,6 +3467,9 @@ async function sendTelegramPush(
   } catch (err: any) {
     if (signalFingerprint) {
       recentTelegramSignalCache.delete(signalFingerprint);
+    }
+    if (bodyFingerprint) {
+      recentTelegramSignalCache.delete(bodyFingerprint);
     }
     return { ok: false, error: err?.message || 'เชื่อมต่อ Telegram API ไม่สำเร็จ' };
   }
@@ -3762,20 +3790,36 @@ async function runBackgroundMonitorCycle() {
                   closedBar.timestampIso,
                   'BUY'
                 );
+                const nextRound = persisted.t01RoundCount + 1;
+                const roundKey = persisted.t01BiasBarIso
+                  ? `live-M1-T01-ROUND-${sym}-${persisted.t01BiasBarIso}-R${nextRound}-BUY`
+                  : null;
+                const alreadyAlertedRound = persisted.events.some(
+                  (e) =>
+                    e.strategy === 'STOCH' &&
+                    e.signal === 'BUY' &&
+                    ((e.id && e.id.includes(closedBar.timestampIso)) ||
+                      (persisted.t01BiasBarIso &&
+                        e.t01BiasBarIso === persisted.t01BiasBarIso &&
+                        e.t01Round === nextRound))
+                );
                 if (
                   persisted.t01WaitingReset ||
                   closedBar.timestampIso === persisted.t01LastAlertBarIso ||
-                  monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)
+                  monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey) ||
+                  (roundKey ? monitorRuntime.dispatchedLiveSignalKeys.has(roundKey) : false) ||
+                  alreadyAlertedRound
                 ) {
                   syncPersistence();
                   continue;
                 }
 
                 persisted.t01WaitingReset = true;
-                persisted.t01RoundCount += 1;
+                persisted.t01RoundCount = nextRound;
                 persisted.t01LastAlertBarIso = closedBar.timestampIso;
                 persisted.stochM1LastAlertBarIso = closedBar.timestampIso;
                 markLiveSignalDispatched(dedupeKey, false);
+                if (roundKey) markLiveSignalDispatched(roundKey, false);
                 syncPersistence();
 
                 const dirMatch =
@@ -3845,6 +3889,7 @@ async function runBackgroundMonitorCycle() {
                   stochK: closedBar.stochK,
                   stochSide: 'UNDER_20',
                   t01Round: roundNum,
+                  t01BiasBarIso: persisted.t01BiasBarIso,
                   price: closedBar.close,
                   deliveredToNtfy,
                   deliveredToTelegram: tgRes.ok,
@@ -3877,20 +3922,36 @@ async function runBackgroundMonitorCycle() {
                   closedBar.timestampIso,
                   'SELL'
                 );
+                const nextRound = persisted.t01RoundCount + 1;
+                const roundKey = persisted.t01BiasBarIso
+                  ? `live-M1-T01-ROUND-${sym}-${persisted.t01BiasBarIso}-R${nextRound}-SELL`
+                  : null;
+                const alreadyAlertedRound = persisted.events.some(
+                  (e) =>
+                    e.strategy === 'STOCH' &&
+                    e.signal === 'SELL' &&
+                    ((e.id && e.id.includes(closedBar.timestampIso)) ||
+                      (persisted.t01BiasBarIso &&
+                        e.t01BiasBarIso === persisted.t01BiasBarIso &&
+                        e.t01Round === nextRound))
+                );
                 if (
                   persisted.t01WaitingReset ||
                   closedBar.timestampIso === persisted.t01LastAlertBarIso ||
-                  monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey)
+                  monitorRuntime.dispatchedLiveSignalKeys.has(dedupeKey) ||
+                  (roundKey ? monitorRuntime.dispatchedLiveSignalKeys.has(roundKey) : false) ||
+                  alreadyAlertedRound
                 ) {
                   syncPersistence();
                   continue;
                 }
 
                 persisted.t01WaitingReset = true;
-                persisted.t01RoundCount += 1;
+                persisted.t01RoundCount = nextRound;
                 persisted.t01LastAlertBarIso = closedBar.timestampIso;
                 persisted.stochM1LastAlertBarIso = closedBar.timestampIso;
                 markLiveSignalDispatched(dedupeKey, false);
+                if (roundKey) markLiveSignalDispatched(roundKey, false);
                 syncPersistence();
 
                 const dirMatch =
@@ -3960,6 +4021,7 @@ async function runBackgroundMonitorCycle() {
                   stochK: closedBar.stochK,
                   stochSide: 'OVER_80',
                   t01Round: roundNum,
+                  t01BiasBarIso: persisted.t01BiasBarIso,
                   price: closedBar.close,
                   deliveredToNtfy,
                   deliveredToTelegram: tgRes.ok,
@@ -4832,21 +4894,40 @@ async function startServer() {
           res.json({ ok: false, skipped: true, reason: 'before_m15_cisd_close' });
           return;
         }
+        const nextRound = persisted.t01RoundCount + 1;
+        const roundKey = persisted.t01BiasBarIso
+          ? `live-M1-T01-ROUND-${symbol}-${persisted.t01BiasBarIso}-R${nextRound}-${signal}`
+          : null;
+        const alreadyAlertedRound = persisted.events.some(
+          (e) =>
+            e.strategy === 'STOCH' &&
+            e.signal === signal &&
+            ((e.id && e.id.includes(timestampIso)) ||
+              (persisted.t01BiasBarIso &&
+                e.t01BiasBarIso === persisted.t01BiasBarIso &&
+                e.t01Round === nextRound))
+        );
         if (
           persisted.t01WaitingReset ||
           persisted.t01LastAlertBarIso === timestampIso ||
-          monitorRuntime.dispatchedLiveSignalKeys.has(canonicalLiveKey)
+          monitorRuntime.dispatchedLiveSignalKeys.has(canonicalLiveKey) ||
+          (roundKey ? monitorRuntime.dispatchedLiveSignalKeys.has(roundKey) : false) ||
+          alreadyAlertedRound
         ) {
           const existingStochEv = persisted.events.find(
             (e) =>
               e.strategy === 'STOCH' &&
               e.signal === signal &&
-              e.id.includes(timestampIso)
+              (e.id.includes(timestampIso) ||
+                (persisted.t01BiasBarIso &&
+                  e.t01BiasBarIso === persisted.t01BiasBarIso &&
+                  e.t01Round === persisted.t01RoundCount))
           );
           res.json({
             ok: true,
             deduplicated: true,
-            deliveredWebPushCount: existingStochEv?.deliveredWebPushCount ?? 0,
+            deliveredWebPushCount:
+              existingStochEv?.deliveredWebPushCount ?? persisted.subscriptions.length,
             deliveredToNtfy: existingStochEv?.deliveredToNtfy ?? false,
             deliveredToTelegram: existingStochEv?.deliveredToTelegram ?? false,
             telegramError: existingStochEv?.telegramError,
@@ -4855,7 +4936,7 @@ async function startServer() {
           return;
         }
         persisted.t01WaitingReset = true;
-        persisted.t01RoundCount += 1;
+        persisted.t01RoundCount = nextRound;
         persisted.t01LastAlertBarIso = timestampIso;
         persisted.stochM1LastSide = targetSide;
         persisted.stochM1LastAlertBarIso = timestampIso;
@@ -4867,6 +4948,7 @@ async function startServer() {
           persisted.t01LastProcessedM1BarIso = timestampIso;
         }
         markLiveSignalDispatched(canonicalLiveKey, false);
+        if (roundKey) markLiveSignalDispatched(roundKey, false);
         syncPersistence();
       } else {
         if (monitorRuntime.dispatchedLiveSignalKeys.has(canonicalLiveKey)) {
@@ -4876,7 +4958,8 @@ async function startServer() {
           res.json({
             ok: true,
             deduplicated: true,
-            deliveredWebPushCount: existingEv?.deliveredWebPushCount ?? 0,
+            deliveredWebPushCount:
+              existingEv?.deliveredWebPushCount ?? persisted.subscriptions.length,
             deliveredToNtfy: existingEv?.deliveredToNtfy ?? false,
             deliveredToTelegram: existingEv?.deliveredToTelegram ?? false,
             telegramError: existingEv?.telegramError,
@@ -4924,11 +5007,18 @@ async function startServer() {
       )}${priceTxt}`;
     }
 
+    const pushTag =
+      mode === 'live' && strategy === 'STOCH'
+        ? `t01-${symbol}-${timestampIso}-${signal}`
+        : mode === 'live' && strategy === 'CISD'
+        ? `cisd-${timeframe}-${symbol}-${timestampIso}-${signal}`
+        : `${mode}-${strategy.toLowerCase()}-${timeframe}-${symbol}-${Date.now()}`;
+
     const [deliveredWebPushCount, deliveredToNtfy] = await Promise.all([
       broadcastWebPush({
         title: pushTitle,
         body: pushBody,
-        tag: `${mode}-${strategy.toLowerCase()}-${timeframe}-${symbol}-${Date.now()}`,
+        tag: pushTag,
         url: strategy === 'STOCH' ? '/?tab=m1' : strategy === 'CISD' ? `/?tf=${timeframe}` : '/',
       }),
       persisted.ntfyTopic
@@ -4992,6 +5082,8 @@ async function startServer() {
       stochK,
       stochSide: strategy === 'STOCH' ? (signal === 'SELL' ? 'OVER_80' : 'UNDER_20') : null,
       t01Round: strategy === 'STOCH' ? effectiveRound : null,
+      t01BiasBarIso:
+        mode === 'live' && strategy === 'STOCH' ? persisted.t01BiasBarIso : null,
       price,
       deliveredToNtfy,
       deliveredToTelegram: tgRes.ok,
