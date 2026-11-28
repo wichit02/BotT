@@ -2473,6 +2473,7 @@ const cfdStreamState: {
   lastAsk: number;
   lastTickSec: number;
   barsM1: Map<number, StreamOhlcBar>;
+  barsM5: Map<number, StreamOhlcBar>;
   barsM15: Map<number, StreamOhlcBar>;
   ws: any;
   reconnectTimer: NodeJS.Timeout | null;
@@ -2487,6 +2488,7 @@ const cfdStreamState: {
   lastAsk: 0,
   lastTickSec: 0,
   barsM1: new Map(),
+  barsM5: new Map(),
   barsM15: new Map(),
   ws: null,
   reconnectTimer: null,
@@ -2565,6 +2567,7 @@ function connectCfdWebSocket() {
   const sym = CFD_BROKER_SYMBOLS[cfdStreamState.brokerIndex] || CFD_BROKER_SYMBOLS[0];
   cfdStreamState.activeBrokerSymbol = sym;
   cfdStreamState.barsM1.clear();
+  cfdStreamState.barsM5.clear();
   cfdStreamState.barsM15.clear();
 
   let ws: any;
@@ -2584,6 +2587,7 @@ function connectCfdWebSocket() {
   const suffix = Math.random().toString(36).slice(2, 8);
   const qs = `qs_${suffix}`;
   const cs1 = `cs1_${suffix}`;
+  const cs5 = `cs5_${suffix}`;
   const cs15 = `cs15_${suffix}`;
 
   ws.onopen = () => {
@@ -2597,6 +2601,10 @@ function connectCfdWebSocket() {
     sendTvPacket(ws, 'chart_create_session', [cs1, '']);
     sendTvPacket(ws, 'resolve_symbol', [cs1, 'sds_sym_1', resolvedSpec]);
     sendTvPacket(ws, 'create_series', [cs1, 'sds_1', 's1', 'sds_sym_1', '1', 200, '']);
+
+    sendTvPacket(ws, 'chart_create_session', [cs5, '']);
+    sendTvPacket(ws, 'resolve_symbol', [cs5, 'sds_sym_5', resolvedSpec]);
+    sendTvPacket(ws, 'create_series', [cs5, 'sds_5', 's1', 'sds_sym_5', '5', 140, '']);
 
     sendTvPacket(ws, 'chart_create_session', [cs15, '']);
     sendTvPacket(ws, 'resolve_symbol', [cs15, 'sds_sym_15', resolvedSpec]);
@@ -2655,6 +2663,9 @@ function connectCfdWebSocket() {
           if (payload.sds_1?.s) {
             applyTvSeriesUpdate(cfdStreamState.barsM1, payload.sds_1.s);
           }
+          if (payload.sds_5?.s) {
+            applyTvSeriesUpdate(cfdStreamState.barsM5, payload.sds_5.s);
+          }
           if (payload.sds_15?.s) {
             applyTvSeriesUpdate(cfdStreamState.barsM15, payload.sds_15.s);
           }
@@ -2696,6 +2707,198 @@ function getCfdStreamBars(_timeframe: CisdTimeframe): StreamOhlcBar[] {
 
 function getCfdStreamM1Bars(): StreamOhlcBar[] {
   return [...cfdStreamState.barsM1.values()].sort((a, b) => a.tsSec - b.tsSec);
+}
+
+function getCfdStreamM5Bars(): StreamOhlcBar[] {
+  const m5 = [...cfdStreamState.barsM5.values()].sort((a, b) => a.tsSec - b.tsSec);
+  if (m5.length >= 15) return m5;
+  return getCfdStreamM1Bars();
+}
+
+interface PlainM5Candle {
+  index: number;
+  timeLabel: string;
+  timestampIso: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+interface PlainM5FeedResult {
+  symbol: TradingSymbol;
+  timeframe: 'M5';
+  source: string;
+  feedProvider: 'xm_bridge' | 'cfd_ws' | 'yahoo_fallback';
+  brokerSymbol?: string;
+  xmBridgeConnected: boolean;
+  cfdWsConnected: boolean;
+  marketState: string;
+  fetchedAt: string;
+  bars: PlainM5Candle[];
+}
+
+function buildM5CandleFeedFromBars(params: {
+  symbol: TradingSymbol;
+  rawBars: StreamOhlcBar[];
+  source: string;
+  feedProvider: 'xm_bridge' | 'cfd_ws';
+  brokerSymbol?: string;
+  livePrice?: number;
+  livePriceTsSec?: number;
+}): PlainM5FeedResult | null {
+  const { symbol, rawBars, source, feedProvider, brokerSymbol, livePrice, livePriceTsSec } = params;
+  if (rawBars.length < 15) return null;
+
+  const mapping = YAHOO_SYMBOL_MAP[symbol];
+  const bucketSec = 5 * 60;
+  const byBucket = new Map<number, StreamOhlcBar>();
+
+  for (const b of rawBars) {
+    if (
+      !Number.isFinite(b.tsSec) ||
+      !Number.isFinite(b.open) ||
+      !Number.isFinite(b.high) ||
+      !Number.isFinite(b.low) ||
+      !Number.isFinite(b.close) ||
+      b.close <= 0
+    ) {
+      continue;
+    }
+    const xmOffsetSec = getXmServerOffsetSeconds(b.tsSec);
+    const xmTs = b.tsSec + xmOffsetSec;
+    const bucketXmTs = Math.floor(xmTs / bucketSec) * bucketSec;
+    const bucketUtcTs = bucketXmTs - xmOffsetSec;
+    const existing = byBucket.get(bucketUtcTs);
+    if (!existing) {
+      byBucket.set(bucketUtcTs, {
+        tsSec: bucketUtcTs,
+        open: b.open,
+        high: b.high,
+        low: b.low,
+        close: b.close,
+      });
+    } else {
+      existing.high = Math.max(existing.high, b.high);
+      existing.low = Math.min(existing.low, b.low);
+      existing.close = b.close;
+    }
+  }
+
+  const sorted = [...byBucket.values()].sort((a, b) => a.tsSec - b.tsSec);
+  if (sorted.length < 15) return null;
+
+  if (livePrice && Number.isFinite(livePrice) && livePrice > 0) {
+    const tickSec = livePriceTsSec && livePriceTsSec > 0 ? livePriceTsSec : Math.floor(Date.now() / 1000);
+    const xmOffsetSec = getXmServerOffsetSeconds(tickSec);
+    const tickXmTs = tickSec + xmOffsetSec;
+    const tickBucketXmTs = Math.floor(tickXmTs / bucketSec) * bucketSec;
+    const tickBucketUtcTs = tickBucketXmTs - xmOffsetSec;
+    const lastBar = sorted[sorted.length - 1];
+    const lastXmTs = lastBar.tsSec + getXmServerOffsetSeconds(lastBar.tsSec);
+    const lastBucketXmTs = Math.floor(lastXmTs / bucketSec) * bucketSec;
+
+    if (tickBucketXmTs === lastBucketXmTs) {
+      lastBar.close = livePrice;
+      lastBar.high = Math.max(lastBar.high, livePrice);
+      lastBar.low = Math.min(lastBar.low, livePrice);
+    } else if (tickBucketXmTs > lastBucketXmTs && tickBucketXmTs - lastBucketXmTs <= bucketSec * 2) {
+      sorted.push({
+        tsSec: tickBucketUtcTs,
+        open: lastBar.close,
+        high: Math.max(lastBar.close, livePrice),
+        low: Math.min(lastBar.close, livePrice),
+        close: livePrice,
+      });
+    }
+  }
+
+  const bars: PlainM5Candle[] = sorted.slice(-110).map((b, idx) => {
+    const dt = new Date(b.tsSec * 1000);
+    return {
+      index: idx,
+      timeLabel: formatTimeLabel(dt),
+      timestampIso: dt.toISOString(),
+      open: roundTo(b.open, mapping.digits),
+      high: roundTo(b.high, mapping.digits),
+      low: roundTo(b.low, mapping.digits),
+      close: roundTo(b.close, mapping.digits),
+    };
+  });
+
+  if (bars.length < 15) return null;
+
+  const latestBarTs = new Date(bars[bars.length - 1].timestampIso).getTime();
+  const ageMinutes = (Date.now() - latestBarTs) / 60000;
+  const marketState =
+    feedProvider === 'xm_bridge' || ageMinutes <= 12 ? 'LIVE' : 'MARKET CLOSED';
+
+  return {
+    symbol,
+    timeframe: 'M5',
+    source,
+    feedProvider,
+    brokerSymbol,
+    xmBridgeConnected: isXmBridgeActive(),
+    cfdWsConnected: cfdStreamState.connected,
+    marketState,
+    fetchedAt: new Date().toISOString(),
+    bars,
+  };
+}
+
+async function getLiveM5CandleFeed(symbol: TradingSymbol): Promise<PlainM5FeedResult> {
+  if (isXmBridgeActive() && xmBridgeState.barsByTf.M1.length >= 60) {
+    const bridgeFeed = buildM5CandleFeedFromBars({
+      symbol,
+      rawBars: xmBridgeState.barsByTf.M1,
+      source: `XM MT5 Live Bridge (${xmBridgeState.symbol})`,
+      feedProvider: 'xm_bridge',
+      brokerSymbol: xmBridgeState.symbol,
+      livePrice: xmBridgeState.bid > 0 ? xmBridgeState.bid : undefined,
+      livePriceTsSec: Math.floor(xmBridgeState.lastPushMs / 1000),
+    });
+    if (bridgeFeed) return bridgeFeed;
+  }
+
+  const cfdRawBars = getCfdStreamM5Bars();
+  if (cfdRawBars.length >= 15) {
+    const cfdLivePrice = cfdStreamState.lastBid > 0 ? cfdStreamState.lastBid : cfdStreamState.lastPrice;
+    const cfdFeed = buildM5CandleFeedFromBars({
+      symbol,
+      rawBars: cfdRawBars,
+      source: `MT5 Forex CFD · NAS100 Cash (${cfdStreamState.activeBrokerSymbol})`,
+      feedProvider: 'cfd_ws',
+      brokerSymbol: cfdStreamState.activeBrokerSymbol,
+      livePrice:
+        cfdLivePrice > 0 && Date.now() - cfdStreamState.lastTickMs <= 120000
+          ? cfdLivePrice
+          : undefined,
+      livePriceTsSec: cfdStreamState.lastTickSec,
+    });
+    if (cfdFeed) return cfdFeed;
+  }
+
+  const yahooFeed = await getLiveAoFeed(symbol, 'M5');
+  return {
+    symbol,
+    timeframe: 'M5',
+    source: yahooFeed.source,
+    feedProvider: 'yahoo_fallback',
+    xmBridgeConnected: isXmBridgeActive(),
+    cfdWsConnected: cfdStreamState.connected,
+    marketState: yahooFeed.marketState,
+    fetchedAt: yahooFeed.fetchedAt,
+    bars: yahooFeed.bars.map((b, idx) => ({
+      index: idx,
+      timeLabel: b.timeLabel,
+      timestampIso: b.timestampIso,
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+    })),
+  };
 }
 
 async function getLiveCisdFeed(
@@ -4319,6 +4522,22 @@ async function startServer() {
     } catch (err: any) {
       res.status(502).json({
         error: err?.message || 'ไม่สามารถดึงข้อมูลกราฟจริงได้ในขณะนี้',
+      });
+    }
+  });
+
+  app.get('/api/market/m5-candles', async (req, res) => {
+    const rawSymbol = String(req.query.symbol || 'US100').toUpperCase();
+    if (!(rawSymbol in YAHOO_SYMBOL_MAP)) {
+      res.status(400).json({ error: 'ไม่รองรับสินทรัพย์นี้' });
+      return;
+    }
+    try {
+      const data = await getLiveM5CandleFeed(rawSymbol as TradingSymbol);
+      res.json(data);
+    } catch (err: any) {
+      res.status(502).json({
+        error: err?.message || 'ไม่สามารถดึงข้อมูลกราฟ M5 ได้ในขณะนี้',
       });
     }
   });
